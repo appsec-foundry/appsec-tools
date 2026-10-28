@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 from collections import Counter
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -59,29 +61,60 @@ from score_remote import (
 
 
 class Progress:
-    """Show progress only when detailed output was requested."""
+    """Write steps and a delayed spinner, using plain lines off a terminal."""
 
     def __init__(self, enabled=True):
         self.enabled = enabled
         self.timer = None
+        self.stop = threading.Event()
+        self.lock = threading.Lock()
+        self.stream = sys.stderr
+        self.terminal = self.stream.isatty() and os.environ.get("TERM") != "dumb"
+
+    def step(self, message):
+        if self.enabled:
+            with self.lock:
+                prefix = "\r\033[K" if self.terminal else ""
+                print(prefix + message, file=self.stream, flush=True)
+
+    def animate(self):
+        if not self.terminal:
+            self.step("Security checks are running...")
+            return
+        index = 0
+        frames = ("|", "/", "-", "\\")
+        while not self.stop.is_set():
+            with self.lock:
+                print(
+                    f"\r{frames[index % 4]} Security checks are running...",
+                    end="",
+                    file=self.stream,
+                    flush=True,
+                )
+            index += 1
+            self.stop.wait(0.1)
 
     def __enter__(self):
         if not self.enabled:
             return self
-        self.timer = threading.Timer(
-            1.0,
-            lambda: print(
-                "Security checks are running...", file=sys.stderr, flush=True
-            ),
-        )
+        self.timer = threading.Timer(1.0, self.animate)
         self.timer.daemon = True
         self.timer.start()
         return self
 
     def __exit__(self, *args):
         if self.timer is not None:
+            self.stop.set()
             self.timer.cancel()
             self.timer.join()
+            if self.terminal:
+                print("\r\033[K", end="", file=self.stream, flush=True)
+
+
+def announce(options, message):
+    step = getattr(options, "step", None)
+    if step:
+        step(message)
 
 
 def parser():
@@ -151,6 +184,13 @@ def parser():
     formatting = result.add_mutually_exclusive_group()
     formatting.add_argument("--json", action="store_true")
     formatting.add_argument("--yaml", action="store_true")
+    formatting.add_argument(
+        "--quiet",
+        "--quite",
+        dest="quiet",
+        action="store_true",
+        help="Print only the numeric index; no progress or diagnostics. Exit status retains completeness.",
+    )
     result.add_argument(
         "--timeout",
         type=float,
@@ -217,6 +257,31 @@ def yaml_text(value, indent=0):
     return space + json.dumps(value, ensure_ascii=True, allow_nan=False)
 
 
+def calculation_lines(result):
+    lines = []
+    for area in result["areas"]:
+        lines.append(f"Calculation {area['area']}:")
+        for entry in area["breakdown"]:
+            lines.append(
+                f"  {entry['rule']} ({entry['severity']}): "
+                f"{entry['instances']} x {entry['points_per_instance']} = {entry['deduction']} points"
+            )
+        lines.append(
+            f"  100 - {area['deduction']} = {100 - area['deduction']}; "
+            f"cap={area['severity_cap']}; floor=0; "
+            f"score={area['score'] if area['score'] is not None else 'withheld'}; "
+            f"observed={area.get('observed_score', area['score'])}"
+        )
+    if result["score"] is not None:
+        scores = ", ".join(
+            str(area["score"]) for area in result["areas"] if area["score"] is not None
+        )
+        lines.append(
+            f"Overall: lowest assessed area = min({scores}) = {result['score']}"
+        )
+    return lines
+
+
 def render(result, details=False):
     if result.get("analysis") == "change-relevance":
         return render_change(result, details)
@@ -280,26 +345,7 @@ def render(result, details=False):
             shown = ", ".join(str(line) for line in locations[:5])
             extra = f" (+{len(locations) - 5} more)" if len(locations) > 5 else ""
             lines.append(f"    {path}:{shown}{extra}")
-    for area in result["areas"]:
-        lines.append(f"Calculation {area['area']}:")
-        for entry in area["breakdown"]:
-            lines.append(
-                f"  {entry['rule']} ({entry['severity']}): "
-                f"{entry['instances']} x {entry['points_per_instance']} = {entry['deduction']} points"
-            )
-        lines.append(
-            f"  100 - {area['deduction']} = {100 - area['deduction']}; "
-            f"cap={area['severity_cap']}; floor=0; "
-            f"score={area['score'] if area['score'] is not None else 'withheld'}; "
-            f"observed={area.get('observed_score', area['score'])}"
-        )
-    if result["score"] is not None:
-        scores = ", ".join(
-            str(area["score"]) for area in result["areas"] if area["score"] is not None
-        )
-        lines.append(
-            f"Overall: lowest assessed area = min({scores}) = {result['score']}"
-        )
+    lines.extend(calculation_lines(result))
     architecture = result.get("architecture", {})
     for key in ("frontend", "persistence"):
         names = sorted({entry["technology"] for entry in architecture.get(key, [])})
@@ -429,8 +475,7 @@ def analyzer_score(options, budget):
                 raise SourceError(
                     "Analyzer scoring version 2 without model calls is required."
                 )
-    if options.details:
-        print("Running the selected Analyzer variant...", file=sys.stderr, flush=True)
+    announce(options, "Running the selected Analyzer variant...")
     settings = (
         host_settings(host, project, budget, read_token(options.token_env))[0]
         if is_url
@@ -549,8 +594,7 @@ def run(options):
     if options.analyzer:
         raise SourceError("--analyzer requires --engine analyzer.")
     remote = remote_identity(options)
-    if options.details:
-        print("Reading selected sources...", file=sys.stderr, flush=True)
+    announce(options, "Reading selected sources...")
     settings = []
     if "://" in options.repo:
         before, after, exclusions, scope, verify, settings = select_remote(
@@ -560,8 +604,7 @@ def run(options):
         if options.token_env:
             raise SourceError("--token-env requires an explicitly selected Git URL.")
         before, after, exclusions, scope, verify = select(options, budget)
-    if options.details:
-        print("Checking source patterns...", file=sys.stderr, flush=True)
+    announce(options, "Checking source patterns...")
     old_findings, old_checks, findings, checks = [], [], [], []
     scan_error = None
     architecture = None
@@ -631,8 +674,7 @@ def run(options):
             }
         )
     if verify and scan_error is None:
-        if options.details:
-            print("Verifying source consistency...", file=sys.stderr, flush=True)
+        announce(options, "Verifying source consistency...")
         try:
             verify()
         except SourceError as error:
@@ -701,6 +743,7 @@ def run(options):
                         "status": "unclear",
                     }
                 )
+        announce(options, "Calculating deductions, severity caps and area scores...")
         result = calculate(findings, checks, complete=complete, require_source=True)
         result["analysis"] = "repository-score"
         explain_observations(result, findings, checks)
@@ -770,6 +813,14 @@ def run(options):
 
 
 def main(argv=None):
+    selected = list(sys.argv[1:] if argv is None else argv)
+    if "--quiet" in selected or "--quite" in selected:
+        with contextlib.redirect_stderr(io.StringIO()):
+            return execute(selected)
+    return execute(selected)
+
+
+def execute(argv):
     arguments = parser()
     options = arguments.parse_args(argv)
     if options.repository and options.repo:
@@ -779,9 +830,30 @@ def main(argv=None):
         arguments.error("--timeout must be between 0.1 and 120 seconds.")
     if options.head and not options.base:
         arguments.error("--head requires --base.")
+    if options.quiet and (
+        options.list_rules
+        or options.verify_rules
+        or options.patch
+        or options.base
+        or options.commit
+        or options.staged
+        or options.unstaged
+        or options.worktree
+    ):
+        arguments.error("--quiet/--quite supports repository scores only.")
     try:
-        with Progress(enabled=options.details):
+        with Progress(
+            enabled=not options.quiet and not options.json and not options.yaml
+        ) as progress:
+            options.step = progress.step
             result, status = run(options)
+        if options.quiet:
+            value = result.get("score")
+            if value is None:
+                value = result.get("observed_score")
+            if value is not None:
+                print(value)
+            return status
         if options.json:
             output = json.dumps(result, indent=2, ensure_ascii=True, allow_nan=False)
         elif options.yaml:
@@ -806,6 +878,8 @@ def main(argv=None):
             )
         else:
             output = render(result, options.details)
+            if not options.details and result.get("analysis") == "repository-score":
+                output = "\n".join(calculation_lines(result) + [output])
         print(output)
         return status
     except KeyboardInterrupt:

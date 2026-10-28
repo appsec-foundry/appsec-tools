@@ -27,7 +27,7 @@ import score_version  # noqa: E402
 
 
 class ScoreTests(unittest.TestCase):
-    def test_compact_cli_has_no_progress_or_explanatory_output(self):
+    def test_quiet_cli_has_only_the_number_and_no_progress(self):
         self.write("app.py", "eval(payload)\n" * 4)
         self.write("large.js", "x" * (sources.MAX_FILE + 1))
         output, errors = io.StringIO(), io.StringIO()
@@ -36,11 +36,59 @@ class ScoreTests(unittest.TestCase):
             contextlib.redirect_stdout(output),
             contextlib.redirect_stderr(errors),
         ):
-            status = cli.main([str(self.repo)])
+            status = cli.main([str(self.repo), "--quiet"])
         self.assertEqual(status, 1)
-        self.assertEqual(output.getvalue(), "0/100 (partial)\n")
+        self.assertEqual(output.getvalue(), "0\n")
         self.assertEqual(errors.getvalue(), "")
         timer.assert_not_called()
+
+    def test_quite_alias_and_quiet_details_both_remain_silent(self):
+        self.write("app.py", "eval(payload)\n")
+        for args in (["--quite"], ["--quiet", "--details"]):
+            output, errors = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                status = cli.main([str(self.repo), *args])
+            self.assertEqual(status, 0)
+            self.assertEqual(output.getvalue(), "59\n")
+            self.assertEqual(errors.getvalue(), "")
+
+    def test_quiet_failure_has_no_output_and_keeps_failure_status(self):
+        for path in (str(self.repo), str(self.repo / "missing")):
+            output, errors = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                status = cli.main([path, "--quite"])
+            self.assertNotEqual(status, 0)
+            self.assertEqual(output.getvalue(), "")
+            self.assertEqual(errors.getvalue(), "")
+
+    def test_quiet_rejects_conflicting_output_without_console_text(self):
+        output, errors = io.StringIO(), io.StringIO()
+        with (
+            contextlib.redirect_stdout(output),
+            contextlib.redirect_stderr(errors),
+            self.assertRaises(SystemExit) as exited,
+        ):
+            cli.main([str(self.repo), "--quiet", "--json"])
+        self.assertEqual(exited.exception.code, 2)
+        self.assertEqual(output.getvalue(), "")
+        self.assertEqual(errors.getvalue(), "")
+
+    def test_progress_spinner_animates_on_a_terminal(self):
+        class Terminal(io.StringIO):
+            def isatty(self):
+                return True
+
+        output = Terminal()
+        with (
+            contextlib.redirect_stderr(output),
+            mock.patch.dict(os.environ, {"TERM": "xterm"}),
+        ):
+            progress = cli.Progress()
+            progress.stop = mock.Mock()
+            progress.stop.is_set.side_effect = [False, False, True]
+            progress.animate()
+        self.assertIn("\r| Security checks", output.getvalue())
+        self.assertIn("\r/ Security checks", output.getvalue())
 
     def test_partial_evidence_has_an_index_without_a_repository_grade(self):
         self.write("app.py", "eval(payload)\nsubprocess.run(command, shell=setting)\n")
@@ -905,7 +953,7 @@ class ScoreTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(command.call_count, 2)
 
-    def test_default_output_is_one_line_and_details_explain_it(self):
+    def test_default_output_shows_steps_and_calculation_and_details_add_findings(self):
         self.write("app.py", "eval(payload)\n")
         for args, expected in (
             ([], "59/100 (E)\n"),
@@ -919,8 +967,11 @@ class ScoreTests(unittest.TestCase):
                 self.assertIn(expected, output.getvalue())
                 self.assertIn("PY-EXEC", output.getvalue())
             else:
-                self.assertEqual(output.getvalue(), expected)
-                self.assertEqual(errors.getvalue(), "")
+                self.assertTrue(output.getvalue().endswith(expected))
+                self.assertIn("Calculation execution:", output.getvalue())
+                self.assertIn("Reading selected sources...", errors.getvalue())
+                self.assertIn("Checking source patterns...", errors.getvalue())
+                self.assertIn("Calculating deductions", errors.getvalue())
 
     def test_yaml_preserves_structured_result(self):
         # PyYAML is used only by this test if available, never by the runtime.
@@ -1019,7 +1070,8 @@ class ScoreTests(unittest.TestCase):
             timeout=5,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "59/100 (E)\n")
+        self.assertTrue(result.stdout.endswith("59/100 (E)\n"))
+        self.assertIn("Calculation execution:", result.stdout)
 
     def test_malformed_human_edited_catalog_fails_without_traceback(self):
         import shutil
