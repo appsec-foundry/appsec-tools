@@ -14,6 +14,7 @@ import shutil
 import sys
 import threading
 from urllib.parse import urlsplit
+from score_version import VersionAction
 
 try:
     from score_core import (
@@ -77,6 +78,12 @@ class Progress:
 def parser():
     result = argparse.ArgumentParser(
         description="Repository scores (0–100/A–F) or change security relevance; no model calls."
+    )
+    result.add_argument(
+        "--version",
+        action=VersionAction,
+        nargs=0,
+        help="Show package version and source commit, then exit",
     )
     result.add_argument(
         "repository",

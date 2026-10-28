@@ -23,9 +23,47 @@ import score_sources as sources  # noqa: E402
 import score_remote as remote  # noqa: E402
 import score_remote_sources as remote_sources  # noqa: E402
 import score_relevance as relevance  # noqa: E402
+import score_version  # noqa: E402
 
 
 class ScoreTests(unittest.TestCase):
+    def test_version_reports_release_and_commit_without_scanning(self):
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                score_version,
+                "identity",
+                return_value={"version": "0.1.1", "commit": "a" * 40, "dirty": False},
+            ),
+            mock.patch.object(
+                cli, "run", side_effect=AssertionError("version scanned sources")
+            ),
+            contextlib.redirect_stdout(output),
+            self.assertRaises(SystemExit) as exited,
+        ):
+            cli.main(["--version"])
+        self.assertEqual(exited.exception.code, 0)
+        self.assertRegex(
+            output.getvalue(), r"^security-score 0\.1\.1 \(commit [0-9a-f]{40}"
+        )
+
+    def test_source_version_reports_commit_and_modified_checkout(self):
+        commit = self.init()
+        self.assertEqual(score_version.source_identity(self.repo)["commit"], commit)
+        self.assertFalse(score_version.source_identity(self.repo)["dirty"])
+        self.write("app.py", "changed = True\n")
+        self.assertTrue(score_version.source_identity(self.repo)["dirty"])
+
+    def test_version_without_git_is_explicitly_unknown(self):
+        self.write("pyproject.toml", '[project]\nversion = "0.1.1"\n')
+        with mock.patch.object(
+            score_version.subprocess, "run", side_effect=FileNotFoundError
+        ):
+            build = score_version.source_identity(self.repo)
+        self.assertEqual(
+            build, {"version": "0.1.1", "commit": "unknown", "dirty": False}
+        )
+
     def test_unknown_application_checks_withhold_score_despite_safe_evidence(self):
         self.write(
             "app.py",

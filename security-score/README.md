@@ -14,6 +14,23 @@ pipx install "git+ssh://git@github.com/appsec-foundry/appsec-analyzer-tools.git#
 
 From an existing clone, run `pipx install ./security-score` at the repository root instead. The default engine needs no additional Python packages or AppSec Analyzer installation.
 
+Check the installed release and source revision with:
+
+```sh
+security-score --version
+```
+
+Installed wheels embed the Git commit at build time, so this does not need a local checkout or network access. Source checkouts also identify tracked modifications. Builds from sources without Git or embedded metadata report `commit unknown`.
+
+Release verification is covered by `python3 -B -m unittest test_packaging -v` from this directory, using the declared build tools (`setuptools>=61` and `wheel`). It builds a source archive and wheel, installs into an isolated environment without downloading dependencies, and checks the installed version with Git absent from `PATH`.
+
+To update an existing Git installation, use `pipx upgrade appsec-security-score`. Older pipx versions may leave the same package version installed when using `install --force`. To explicitly replace it from the current checkout, including an unchanged version number, run:
+
+```sh
+pipx install --force --pip-args="--upgrade --force-reinstall --no-cache-dir" ./security-score
+security-score --version
+```
+
 ### Local repository
 
 ```sh
@@ -77,5 +94,6 @@ Change analysis returns `high`, `medium`, `low`, or `unclear` security relevance
 | `--verify-rules` | Run bundled rule examples without scanning. |
 | `--timeout SECONDS` | Total execution budget: 0.1–120 seconds; default 15. |
 | `-h`, `--help` | Show CLI help. |
+| `--version` | Show package version and embedded source commit, then exit without scanning. |
 
 Choose one change selector: `--staged`, `--unstaged`, `--worktree`, `--base`, `--commit`, or `--patch`/`--diff`. These operate on local sources; repository URLs select a repository scan.
