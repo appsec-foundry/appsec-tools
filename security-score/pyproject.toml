@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "appsec-security-score"
-version = "0.1.2"
+version = "0.1.3"
 description = "Deterministic repository security score and change relevance"
 requires-python = ">=3.10"
 

@@ -223,7 +223,13 @@ def render(result, details=False):
                 if oversized
                 else "required source checks could not finish"
             )
-            return f"incomplete: {reason}; no score or grade. Use --details for affected files and limits."
+            observed = result.get("observed_score")
+            index = (
+                f"observed pattern index {observed}/100 (partial)"
+                if observed is not None
+                else "no observed pattern index available"
+            )
+            return f"incomplete: {index}; {reason}; no repository score or grade. Use --details for affected files and limits."
         if result["verdict"] == "partial":
             return f"partial: observed pattern index {result['observed_score']}/100; coverage remains uncertain; no repository grade. Use --details."
         return (

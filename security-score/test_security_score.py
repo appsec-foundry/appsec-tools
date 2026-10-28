@@ -597,6 +597,25 @@ class ScoreTests(unittest.TestCase):
             "1 selected file(s) exceed the 512 KiB file limit", cli.render(result)
         )
         self.assertIn("large.js", cli.render(result, details=True))
+        self.assertIn("observed pattern index 59/100 (partial)", cli.render(result))
+        self.assertIn("no repository score or grade", cli.render(result))
+        self.assertIsNone(result["grade"])
+
+    def test_incomplete_without_evidence_does_not_invent_a_pattern_index(self):
+        self.write("large.js", "x" * (sources.MAX_FILE + 1))
+        status, result, _ = self.invoke()
+        self.assertEqual(status, 1)
+        self.assertIsNone(result["observed_score"])
+        self.assertIn("no observed pattern index available", cli.render(result))
+        self.assertNotIn("/100", cli.render(result))
+
+    def test_incomplete_zero_pattern_index_is_displayed(self):
+        self.write("app.py", "eval(payload)\n" * 4)
+        self.write("large.js", "x" * (sources.MAX_FILE + 1))
+        _, result, _ = self.invoke()
+        self.assertIn("observed pattern index 0/100 (partial)", cli.render(result))
+        self.assertIsNone(result["score"])
+        self.assertIsNone(result["grade"])
 
     def test_comments_and_string_examples_do_not_become_findings(self):
         self.write("app.py", "# eval(payload)\nexample = 'eval(payload)'\n")

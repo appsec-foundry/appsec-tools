@@ -51,6 +51,8 @@ Without a path, `security-score` scans the current directory. The default output
 
 With uncertain coverage, the tool reports `partial` and an observed pattern index without a repository score or grade. `--details` groups static candidates by path hints (`source`, `tests`, `examples`, `assets`, `build`, and `repository-host`) and summarizes repeated locations and parser issues. These hints do not prove production use or third-party ownership and do not remove candidates from the assessment. JSON/YAML retain every candidate and location.
 
+An `incomplete` result also shows its observed pattern index in compact output when recognized evidence is available, alongside the processing limit or failure. With no recognized evidence it explicitly reports that no index is available. An observed index never substitutes for the withheld repository score or grade.
+
 ### Repository URL
 
 ```sh
