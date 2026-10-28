@@ -1,0 +1,36 @@
+# Ein Requirement pro Überschrift h2 einschließlich des folgenden Abschnitts.
+# URLs und Selektoren an die eigene Webseite anpassen.
+config-version: 1
+output:
+  catalog: ../out/requirements.oscal.yaml
+  report: ../out/report.json
+  title: Unternehmensanforderungen
+  version: 1.0.0
+sources:
+- id: company
+  title: Unternehmensanforderungen
+  start-urls:
+  - https://wiki.example.org/requirements/engineering
+  - https://wiki.example.org/requirements/operations
+  crawl:
+    allowed-origins:
+    - https://wiki.example.org
+    allowed-path-prefixes:
+    - /requirements/
+    exclude-path-prefixes:
+    - /requirements/archive/
+    max-depth: 2
+  auth:
+    mode: none
+  extraction:
+    content-selector: main
+    rules:
+    - id: sections
+      strategy: sections
+      item-selector: h2
+      fields:
+        original-id:
+          attribute: id
+        title:
+          selector: h2
+        statement: {}

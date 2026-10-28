@@ -1,0 +1,37 @@
+# Geschützte Quelle mit Bearer-Token aus der Umgebungsvariable HARVEST_TOKEN.
+# URLs und Selektoren an die eigene Webseite anpassen.
+config-version: 1
+output:
+  catalog: ../out/requirements.oscal.yaml
+  report: ../out/report.json
+  title: Unternehmensanforderungen
+  version: 1.0.0
+sources:
+- id: company
+  title: Unternehmensanforderungen
+  start-urls:
+  - https://wiki.example.org/requirements/engineering
+  - https://wiki.example.org/requirements/operations
+  crawl:
+    allowed-origins:
+    - https://wiki.example.org
+    allowed-path-prefixes:
+    - /requirements/
+    exclude-path-prefixes:
+    - /requirements/archive/
+    max-depth: 2
+  auth:
+    mode: token
+    token-env: HARVEST_TOKEN
+    header: Authorization
+    prefix: Bearer
+  extraction:
+    content-selector: main
+    rules:
+    - id: list-items
+      strategy: blocks
+      item-selector: ul.requirements > li
+      fields:
+        original-id:
+          attribute: id
+        statement: {}

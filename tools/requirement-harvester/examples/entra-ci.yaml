@@ -1,0 +1,40 @@
+# Entra-ID-Zugriff ohne Benutzerdialog; Tenant, Client und Scope sind Platzhalter.
+# URLs und Selektoren an die eigene Webseite anpassen.
+config-version: 1
+output:
+  catalog: ../out/requirements.oscal.yaml
+  report: ../out/report.json
+  title: Unternehmensanforderungen
+  version: 1.0.0
+sources:
+- id: company
+  title: Unternehmensanforderungen
+  start-urls:
+  - https://wiki.example.org/requirements/engineering
+  - https://wiki.example.org/requirements/operations
+  crawl:
+    allowed-origins:
+    - https://wiki.example.org
+    allowed-path-prefixes:
+    - /requirements/
+    exclude-path-prefixes:
+    - /requirements/archive/
+    max-depth: 2
+  auth:
+    mode: entra
+    flow: client-credentials
+    tenant-id: 00000000-0000-4000-8000-000000000001
+    client-id: 00000000-0000-4000-8000-000000000002
+    client-secret-env: ENTRA_CLIENT_SECRET
+    scopes:
+    - api://YOUR-RESOURCE/.default
+  extraction:
+    content-selector: main
+    rules:
+    - id: list-items
+      strategy: blocks
+      item-selector: ul.requirements > li
+      fields:
+        original-id:
+          attribute: id
+        statement: {}

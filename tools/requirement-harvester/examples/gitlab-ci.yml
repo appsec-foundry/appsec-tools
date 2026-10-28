@@ -1,0 +1,9 @@
+# Diese Datei als .gitlab-ci.yml im Repository-Root verwenden.
+# Benötigt einen non-root Shell-Runner mit Python >=3.10 und Tag python-nonroot.
+# Für den Crawl: privates Projekt, geschützter Default-Branch und Web-/Schedule-Pipeline.
+include:
+  - local: /tools/requirement-harvester/ci/gitlab-ci.yml
+
+harvest-requirements:
+  script:
+    - .venv/bin/python scripts/ci_run.py examples/tss-web.yaml

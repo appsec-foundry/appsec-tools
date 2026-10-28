@@ -1,0 +1,64 @@
+# Zwei Quellen: gemeinsamer Katalog und zusätzlicher Operations-Katalog.
+# URLs und Selektoren an die eigene Webseite anpassen.
+config-version: 1
+output:
+  report: ../out/report.json
+  catalogs:
+  - id: all
+    path: ../out/all.oscal.yaml
+    title: Alle Anforderungen
+    version: 1.0.0
+    source-ids:
+    - engineering
+    - operations
+  - id: operations
+    path: ../out/operations.oscal.yaml
+    title: Operations
+    version: 1.0.0
+    source-ids:
+    - operations
+sources:
+- id: engineering
+  title: Engineering
+  start-urls:
+  - https://wiki.example.org/requirements/engineering/
+  crawl:
+    allowed-origins:
+    - https://wiki.example.org
+    allowed-path-prefixes:
+    - /requirements/engineering/
+    max-depth: 2
+  auth:
+    mode: none
+  extraction:
+    content-selector: main
+    rules:
+    - id: list-items
+      strategy: blocks
+      item-selector: ul.requirements > li
+      fields:
+        original-id:
+          attribute: id
+        statement: {}
+- id: operations
+  title: Operations
+  start-urls:
+  - https://wiki.example.org/requirements/operations/
+  crawl:
+    allowed-origins:
+    - https://wiki.example.org
+    allowed-path-prefixes:
+    - /requirements/operations/
+    max-depth: 2
+  auth:
+    mode: none
+  extraction:
+    content-selector: main
+    rules:
+    - id: list-items
+      strategy: blocks
+      item-selector: ul.requirements > li
+      fields:
+        original-id:
+          attribute: id
+        statement: {}
