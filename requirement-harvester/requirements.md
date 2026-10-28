@@ -1,273 +1,265 @@
-# Requirement Harvester – Anforderungen und Umsetzungsplan
+# Requirement Harvester — requirements and implementation plan
 
-Stand: 2026-10-28. Status: Version 0.1.0 implementiert; Betriebsanbindung an
-geschützte Unternehmensquellen und gehostete CI-Instanzen noch vor Ort zu prüfen.
+As of 2026-10-28. Status: version 0.1.0 implemented; operational integration
+with protected company sources and hosted CI instances still needs on-site verification.
 
-## Umsetzungsstand
+## Implementation status
 
-- Python-CLI mit Config-Schema, Offline-Prüfung, Probelauf und vollständigem
-  Neuerzeugen eines oder mehrerer OSCAL-1.2.3-Kataloge ist vorhanden.
-- Crawl-Scope, Tiefe, mehrere Startseiten, Ressourcenbudgets, drei deklarative
-  Extraktionsstrategien, Provenienz und kontrollierte Fehlerbehandlung sind implementiert.
-- Die mitgelieferte TSS-WEB-Config wurde live mit 21 Seiten geprüft und erzeugte
-  121 schema-valide Requirements. Die Config enthält Regeln für die beobachteten
-  Listen-, Abschnitts- und Tabellenlayouts; eine vollständige semantische Bewertung
-  sämtlicher Quelltexte ist dadurch nicht ersetzt.
-- Authentifizierung ist als Header-Token, HTTP Basic und Entra-Bearer-Token
-  umgesetzt. Entra verwendet MSAL für interaktive Anmeldung oder Client Credentials.
-  Anwendungsspezifische Formularlogins und Webseiten mit ausschließlich eigenen
-  Browser-Session-Cookies benötigen einen gesonderten Adapter.
-- GitLab- und GitHub-Vorlagen sowie deren gemeinsamer nichtinteraktiver Einstieg
-  sind vorhanden. Gehostete Pipeline-Läufe und ein realer Entra-Mandant waren
-  nicht verfügbar; die entsprechenden Schnittstellen und Fehlerpfade sind lokal
-  mit synthetischen Quellen beziehungsweise Antworten getestet.
-- Installation, konkrete Config-Felder und betriebliche Voraussetzungen stehen
-  in der [README](README.md); das [Config-Schema](harvester/schemas/config.schema.json)
-  ist die maßgebliche Schnittstelle.
+- The Python CLI supports a configuration schema, offline validation, dry runs,
+  and complete regeneration of one or more OSCAL 1.2.3 catalogs.
+- Crawl scope and depth, multiple start pages, resource budgets, three declarative
+  extraction strategies, provenance, and controlled error handling are implemented.
+- The bundled TSS-WEB configuration was tested live on 21 pages and produced
+  121 schema-valid requirements. It includes rules for the observed list, section,
+  and table layouts; this does not replace a complete semantic review of all
+  source text.
+- Authentication is implemented with header tokens, HTTP Basic, and Entra bearer
+  tokens. Entra uses MSAL for interactive sign-in or client credentials.
+  Application-specific form logins and websites that accept only their own
+  browser session cookies require a separate adapter.
+- GitLab and GitHub templates and their shared noninteractive entry point are
+  available. Hosted pipeline runs and a real Entra tenant were unavailable;
+  the relevant interfaces and error paths were tested locally with synthetic
+  sources or responses.
+- Installation, concrete configuration fields, and operational prerequisites
+  are in the [README](README.md). The [configuration schema](harvester/schemas/config.schema.json)
+  is the authoritative interface.
 
-## Ziel und bestätigter Umfang
+## Goal and confirmed scope
 
-Das Tool soll Requirements beliebiger Art von HTTPS-Webseiten und
-Wiki-Seiten sammeln und in OSCAL-YAML ablegen. Die Inhalte können je Quelle
-unterschiedlich beschrieben und strukturiert sein. Eine Konfigurationsdatei
-steuert Quellen, Crawl-Verhalten und Erkennung der Inhalte.
+The tool collects requirements of any kind from HTTPS websites and wiki pages
+and stores them as OSCAL YAML. Content can have different descriptions and
+structures in each source. A configuration file controls sources, crawl
+behavior, and content recognition.
 
-Hauptzweck ist die Aufbereitung interner Unternehmensvorgaben als Input für
-maschinelle Automatisierungen, beispielsweise Code-Reviews gegen die Security
-Policies des Unternehmens. Verbindlichkeit, Geltungsbereich, Bedingungen,
-Ausnahmen und Herkunft müssen dabei erhalten bleiben. Die öffentliche erste
-Quelle dient als Ausgangspunkt; der Einsatzzweck umfasst interne Webseiten.
-Security Policies sind ein Anwendungsbeispiel, keine fachliche Einschränkung.
-Auch funktionale, organisatorische, technische und andere Anforderungen können
-verarbeitet werden. Das Tool setzt keine feste fachliche Taxonomie voraus.
+Its main purpose is to prepare internal company policies as input for automated
+processes, such as code reviews against the company's security policies.
+Obligation, applicability, conditions, exceptions, and provenance must be
+preserved. The first public source is a starting point; intended use includes
+internal websites. Security policies are one use case, not a subject-matter
+restriction. Functional, organizational, technical, and other requirements can
+also be processed. The tool assumes no fixed subject taxonomy.
 
-Bestätigte Entscheidungen:
+Confirmed decisions:
 
-- Umsetzung als Python-Kommandozeilen-Tool, das mit einer Config-Datei gestartet wird.
-- Eigenständige Neuentwicklung in diesem Repository; keine Übernahme von Code,
-  Extraktionsregeln oder Tests des bisherigen Harvesters aus appsec-analyzer.
-- Unbeaufsichtigte Ausführung in GitLab CI/CD und GitHub Actions wird unterstützt;
-  GitLab wird zuerst umgesetzt.
-- Erste Quelle: `https://tss-web.secodis.com`, laut Nutzer öffentlich zugänglich.
-  Eine geprüfte Beispielconfig für den Bereich `/Controls/` liegt vor.
-- Geschützte interne Seiten werden bereits im ersten Funktionsumfang unterstützt.
-  API-Token, Benutzername/Passwort und Firmen-SSO werden als je Quelle
-  konfigurierbare Zugriffsarten eingeplant.
-- Microsoft Entra ID ist die zuerst zu unterstützende Firmen-SSO-Lösung.
-- Mehrere Startseiten, rekursives Folgen von Links sowie ein konfigurierbarer
-  Scope auf Host- oder Pfadebene und eine maximale Crawl-Tiefe werden unterstützt.
-- Erwartete Größenordnung: einige Dutzend Seiten pro Lauf. Crawl-Limits bleiben
-  konfigurierbar; eine verteilte Crawl-Infrastruktur ist dafür nicht vorgesehen.
-- Standardmäßig landen alle Requirements in einer gemeinsamen OSCAL-Datei.
-  Mehrere Ausgabedateien und deren Zuordnung werden optional konfiguriert.
-- OSCAL-YAML ist das einzige fachliche Ausgabeformat. Ein zusätzlicher Export
-  in das bisherige appsec-analyzer-Katalogformat ist nicht Teil des Umfangs.
-- Jeder Lauf erzeugt die vorgesehenen Kataloge vollständig neu aus den aktuellen
-  Quellen und der Config. Bestehende Kataloginhalte und manuelle Ergänzungen
-  werden nicht zusammengeführt oder übernommen.
-- Der Scan läuft vollständig deterministisch anhand einer gespeicherten Config,
-  ohne LLM, API-Key oder laufenden Modelldienst.
-- Die Config wird manuell oder mit einem externen Assistenten erstellt und
-  überarbeitet. Die erste Version enthält keine eigene LLM-Anbindung.
-  Schema, Beispiele, Config-Prüfung und Probelauf unterstützen beide Arbeitsweisen.
+- Implement a Python command-line tool started with a configuration file.
+- Develop it independently in this repository; do not reuse code, extraction
+  rules, or tests from the existing harvester in appsec-analyzer.
+- Support unattended execution in GitLab CI/CD and GitHub Actions, implementing
+  GitLab first.
+- First source: `https://tss-web.secodis.com`, publicly accessible according to
+  the user. A verified example configuration for `/Controls/` is available.
+- Include protected internal pages in the initial feature set. Plan API tokens,
+  username/password, and company SSO as access methods configurable per source.
+- Support Microsoft Entra ID as the first company SSO solution.
+- Support multiple start pages, recursive link following, configurable host or
+  path scope, and a maximum crawl depth.
+- Expected scale: a few dozen pages per run. Crawl limits remain configurable;
+  distributed crawl infrastructure is not planned for this scale.
+- By default, put all requirements into one OSCAL file. Allow optional
+  configuration of multiple output files and their source assignments.
+- OSCAL YAML is the only semantic output format. An additional export in the
+  existing appsec-analyzer catalog format is outside scope.
+- Regenerate the intended catalogs completely from current sources and the
+  configuration on every run. Do not merge or retain existing catalog content
+  or manual additions.
+- Run the scan deterministically from a saved configuration, without an LLM,
+  API key, or running model service.
+- Create and revise configurations manually or with an external assistant.
+  The first version has no built-in LLM integration. The schema, examples,
+  configuration validation, and dry runs support both workflows.
 
-Das Tool gehört als eigenständig nutzbares Zusatztool in dieses Repository.
-Es soll für appsec-analyzer und weitere Automatisierungen nutzbare Kataloge vorbereiten. Es bewertet weder
-Anwendungen auf Compliance noch verändert es die Quellseiten.
+The tool belongs in this repository as an independently usable supplementary
+tool. It prepares catalogs for appsec-analyzer and other automation. It neither
+assesses application compliance nor changes source pages.
 
-Die folgenden Muss-Anforderungen dokumentieren das vereinbarte Zielverhalten.
-Konkrete Einschränkungen und noch erforderliche Betriebsprüfungen sind im
-Umsetzungsstand und in der README ausgewiesen.
+The following mandatory requirements record the agreed target behavior.
+Concrete limitations and outstanding operational checks are stated in the
+implementation status and README.
 
-## Fachliches Modell
+## Domain model
 
-Ein Requirement ist eine aus der Quelle übernommene Anforderung mit ihrem
-ursprünglichen Aussagegehalt, ihrer Verbindlichkeit und ihrem Geltungsbereich.
-Die Bezeichnung auf der Webseite ist nicht entscheidend für die Erfassung.
-Optionale Kategorien und Gruppierungen stammen aus der Quelle oder einer
-expliziten Config-Zuordnung; sie sind keine Voraussetzung für die Extraktion.
-Das Tool bewahrt vorhandene Semantik, ohne Anforderungen in vorgegebene
-fachliche Klassen einordnen zu müssen.
+A requirement is a statement taken from a source, with its original meaning,
+obligation, and scope. The label used on the website does not determine whether
+it is captured. Optional categories and groupings come from the source or an
+explicit configuration mapping; they are not prerequisites for extraction.
+The tool preserves existing semantics without needing to assign requirements
+to predefined subject classes.
 
-## Ablauf
+## Workflow
 
-### Optionale Vorbereitung der Config
+### Optional configuration preparation
 
-1. Betreiber wählt repräsentative Beispielseiten und den zulässigen Quellbereich.
-2. Optional schlägt ein externer Assistent deklarative Extraktionsregeln aus
-   diesen Beispielen vor. Der Harvester ruft selbst kein Modell auf.
-3. Der Vorschlag durchläuft die gleiche Schema- und Werteprüfung wie manuelle
-   Konfiguration. Der Betreiber prüft vor Übernahme insbesondere, ob die
-   vorgeschlagenen Startseiten und Scope-Angaben seinem beabsichtigten Bereich entsprechen.
-4. Ein deterministischer Probelauf zeigt die erkannten Einträge mit Quellstellen
-   und macht fehlende oder widersprüchliche Zuordnungen sichtbar.
-5. Die geprüfte Config wird gespeichert und versioniert. Erwartete Ergebnisse
-   für repräsentative Seiten dienen als Regressionstest für spätere Regeländerungen.
+1. The operator selects representative example pages and the permitted source scope.
+2. An external assistant may suggest declarative extraction rules from these
+   examples. The harvester itself does not call a model.
+3. Suggestions undergo the same schema and value validation as manual
+   configurations. Before accepting one, the operator checks in particular that
+   proposed start pages and scope match the intended boundaries.
+4. A deterministic dry run shows detected entries with source locations and
+   exposes missing or conflicting mappings.
+5. Save and version the reviewed configuration. Expected results for
+   representative pages serve as regression tests for later rule changes.
 
-Das LLM erzeugt Konfigurationsdaten, keinen auszuführenden Programmcode.
-Seiteninhalte und Modellantworten sind untrusted Daten; darin enthaltene
-Anweisungen beeinflussen weder Berechtigungen noch Abrufziele des Harvesters.
-Die Wahl eines für interne Inhalte freigegebenen Assistenten und die Freigabe
-der Beispieldaten erfolgen außerhalb des Tools. Die Harvester-Config enthält
-keine Modellanbieter-Einstellungen oder LLM-Zugangsdaten.
+The LLM generates configuration data, not executable program code. Page content
+and model responses are untrusted data; instructions within them cannot affect
+the harvester's permissions or fetch targets. Choosing an assistant approved
+for internal content and approving example data take place outside the tool.
+The harvester configuration contains no model-provider settings or LLM credentials.
 
-### Regulärer Scan
+### Regular scan
 
-1. Konfiguration laden und vollständig validieren.
-2. Freigegebene Startseiten abrufen und weitere Seiten innerhalb des Crawl-Bereichs entdecken.
-3. Hauptinhalt und relevante Strukturen mit den Regeln der jeweiligen Quelle lesen.
-4. Inhalte mit Quellbelegen in ein gemeinsames internes Modell überführen.
-5. Identitäten, Dubletten, Konflikte und unklare Zuordnungen prüfen.
-6. OSCAL-Dokument erzeugen und gegen die festgelegte Version validieren.
-7. Erst nach erfolgreicher Prüfung aller vorgesehenen Kataloge die Zieldateien
-   jeweils atomar veröffentlichen und einen Laufbericht schreiben.
+1. Load and fully validate the configuration.
+2. Fetch permitted start pages and discover further pages within crawl scope.
+3. Read main content and relevant structures using each source's rules.
+4. Map content into a shared internal model with source evidence.
+5. Check identities, duplicates, conflicts, and ambiguous mappings.
+6. Generate the OSCAL document and validate it against the selected version.
+7. Only after all intended catalogs pass validation, atomically publish each
+   target file and write a run report.
 
-Bei gleichen Seiteninhalten, gleicher Config und gleicher Tool-Version müssen
-Einträge, IDs, Reihenfolge und fachliche Aussagen reproduzierbar sein.
-Laufzeitmetadaten und OSCAL-Dokumentversionierung werden separat behandelt.
-Layoutänderungen lösen Diagnosen aus; es gibt keinen automatischen LLM-Fallback
-und keine automatische Änderung der gespeicherten Regeln während des Scans.
+With identical page content, configuration, and tool version, entries, IDs,
+ordering, and semantic statements must be reproducible. Runtime metadata and
+OSCAL document versioning are handled separately. Layout changes produce
+diagnostics; there is no automatic LLM fallback or automatic change to stored
+rules during a scan.
 
-Beschlossen: lokale Python-CLI mit getrennten Komponenten für Konfiguration,
-HTTP-Abruf, Linkermittlung, Extraktion, internes Modell und OSCAL-Export.
-Eine Weboberfläche oder ein laufender Server ist für den ersten Stand nicht vorgesehen.
+The chosen design is a local Python CLI with separate components for
+configuration, HTTP fetching, link discovery, extraction, the internal model,
+and OSCAL export. A web UI or running server is not planned for the first version.
 
-## Funktionale Anforderungen
+## Functional requirements
 
-| ID | Anforderung |
+| ID | Requirement |
 | --- | --- |
-| RH-F01 | Mehrere benannte Quellen pro Konfiguration unterstützen; jede Quelle besitzt eine stabile, eindeutige ID und eine oder mehrere Start-URLs. |
-| RH-F02 | Requirements beliebiger fachlicher Art auch aus gemischten Quellen verarbeiten. Optionale Kategorien aus Quelle oder Config nachvollziehbar erhalten; keine feste Taxonomie verlangen. |
-| RH-F03 | Von mehreren Startseiten aus rekursiv Links verfolgen. Startseiten zählen als Tiefe 0; jeder verfolgte Seitenlink erhöht die Tiefe um 1. Für mehrfach erreichbare Seiten gilt die kürzeste Entfernung zu einer Startseite derselben Quelle. |
-| RH-F04 | Hosts, Ports, Pfadbereiche, Ein-/Ausschlüsse, Tiefe und Abrufbudgets je Quelle definieren. Ausschlüsse haben Vorrang; Links außerhalb des Bereichs werden nicht abgerufen. |
-| RH-F05 | Unterschiedliche Inhaltsstrukturen über benannte Extraktionsregeln unterstützen: beispielsweise Tabellenzeilen, Überschriften mit Folgeabsätzen, Listen und markierte Inhaltsblöcke. |
-| RH-F06 | Hauptinhalt von Navigation, Footer und sonstiger Seitengestaltung trennen. Unpassende oder mehrdeutige Regeln melden, statt beliebigen Seitentext als Requirements zu übernehmen. |
-| RH-F07 | Je Eintrag mindestens stabilen Bezeichner, Aussage und Quellbeleg erfassen. Titel, Original-ID, Verbindlichkeit, Geltungsbereich, Bedingungen, Ausnahmen, Kontext, Kategorie und Quellversion übernehmen, soweit vorhanden. |
-| RH-F08 | Inhalt vollständig in der Quellsprache erhalten. Normative Begriffe, Negationen, Bedingungen, Ausnahmen, Tabellenbeziehungen und relevante Codebeispiele dürfen beim Normalisieren nicht verloren gehen. |
-| RH-F09 | Nicht jede Webseite und nicht jeden Absatz automatisch als eine Anforderung behandeln. Definition, Empfehlung, Beispiel und erläuternder Kontext müssen unterscheidbar bleiben. |
-| RH-F10 | Fehlende Verbindlichkeit als unbekannt behandeln. Ohne Quellbeleg oder ausdrücklich konfigurierte Quellkonvention weder MUST noch SHOULD oder MAY ergänzen. |
-| RH-F11 | Quelle, tatsächlich abgerufene Seiten-URL, Abschnitt oder Anker sowie Abrufzeit je Eintrag nachvollziehbar machen. Wenn verfügbar, Seitenrevision und Original-ID übernehmen. |
-| RH-F12 | Wiederholte Abrufe derselben Seite und identische Einträge innerhalb einer Quelle deduplizieren. Gleiche IDs mit abweichendem Inhalt als Konflikt behandeln; verschiedene Quellen nicht stillschweigend zusammenführen. |
-| RH-F13 | Eintrags-IDs bei unveränderter Quellidentität über Wiederholungsläufe stabil halten. Original-IDs erhalten und Quellnamensräume zur Kollisionsvermeidung verwenden. Ohne Original-ID oder stabilen Anker gilt Seiten-URL plus Aussage als Identität; eine Inhaltsänderung erzeugt dann eine neue ID. |
-| RH-F14 | Vorhandene Beziehungen und Verweise zwischen Anforderungen erhalten. Referenzierte Inhalte außerhalb des Crawl-Bereichs nicht automatisch nachladen; ungelöste Beziehungen im Bericht ausweisen. |
-| RH-F15 | Einen validen OSCAL-Katalog als UTF-8-YAML erzeugen; fachlich unvollständige, widersprüchliche oder schemawidrige Ergebnisse nicht als erfolgreich veröffentlichen. |
-| RH-F16 | Einen maschinenlesbaren Laufbericht mit abgerufenen, ausgeschlossenen und fehlgeschlagenen Seiten sowie Eintragszahlen, Konflikten und Extraktionslücken schreiben. Berichte enthalten keine vollständigen Quellseiten. |
-| RH-F17 | Konfigurationsprüfung ohne Netzwerkzugriff sowie einen Probelauf mit Abruf und Extraktion ohne Ersetzen des Zielkatalogs anbieten. |
-| RH-F18 | Bei Abruffehlern, ausgeschöpften Ressourcenbudgets mit offenen Seiten innerhalb des gewählten Scopes und der Tiefe, Extraktionskonflikten oder unerwartet leerem Ergebnis standardmäßig mit Fehlerstatus enden und den letzten gültigen Katalog unverändert lassen. Gewollte Scope- und Tiefengrenzen sind keine Fehler. Seiten ohne relevante Inhalte separat von Extraktionsfehlern ausweisen. |
-| RH-F19 | Den vollständigen Scan einschließlich OSCAL-Export ohne LLM-Abhängigkeit, Modellzugriff oder API-Key ermöglichen. Bei identischem Input und gleicher Tool-Version fachlich reproduzierbare Ergebnisse erzeugen. |
-| RH-F20 | Ein dokumentiertes Config-Schema und Beispiele für manuelle Erstellung oder Erstellung mit einem externen Assistenten bereitstellen. Importierte Configs unabhängig von ihrer Herkunft validieren und per Probelauf prüfbar machen. Die erste Version enthält keine Modellaufrufe oder LLM-Anbieterintegration. |
-| RH-F21 | Standardmäßig einen gemeinsamen OSCAL-Katalog aus allen Quellen erzeugen. Optional mehrere benannte Kataloge mit konfigurierten Zielpfaden und Quellzuordnungen unterstützen. Jede Ausgabe muss eigenständig valide sein und die Provenienz ihrer Einträge erhalten. |
-| RH-F22 | Neben öffentlichen Quellen Zugriff mit API-Token, Benutzername/Passwort und Firmen-SSO unterstützen. Verfahren und Credential-Referenzen je Quelle konfigurieren; Anmeldung und Session-Verwaltung bleiben unabhängig von einem LLM. |
-| RH-F23 | Bei jedem Lauf die Kataloge vollständig aus den aktuell erfassten Quellen und der Config erzeugen. Nach erfolgreichem Abruf, Extraktion und Validierung die bisherigen Ausgabedateien ersetzen. Keine manuell ergänzten oder inzwischen aus den Quellen entfernten Requirements aus alten Ausgabedateien übernehmen. Stabile Requirement-Identitäten bleiben gemäß RH-F13 erhalten. |
-| RH-F24 | Nichtinteraktive Läufe und dokumentierte CI-Vorlagen für GitLab CI/CD sowie GitHub Actions bereitstellen, zuerst für GitLab. Beide verwenden dieselbe CLI und Config wie lokale Läufe. Erfolg, ungültige Konfiguration, Zugriffsprobleme und unvollständige Ergebnisse müssen über dokumentierte Exit-Codes und den Laufbericht unterscheidbar sein. |
+| RH-F01 | Support multiple named sources per configuration; each source has a stable, unique ID and one or more start URLs. |
+| RH-F02 | Process requirements of any subject matter, including mixed sources. Preserve optional categories from the source or configuration with traceability; do not require a fixed taxonomy. |
+| RH-F03 | Follow links recursively from multiple start pages. Start pages are depth 0; each followed page link increases depth by 1. For a page reachable through multiple paths, use the shortest distance from a start page of the same source. |
+| RH-F04 | Define hosts, ports, path scopes, inclusions/exclusions, depth, and fetch budgets per source. Exclusions take precedence; links outside scope are not fetched. |
+| RH-F05 | Support different content structures through named extraction rules, such as table rows, headings with following paragraphs, lists, and marked content blocks. |
+| RH-F06 | Separate main content from navigation, footer, and other page chrome. Report mismatched or ambiguous rules instead of treating arbitrary page text as requirements. |
+| RH-F07 | Capture at least a stable identifier, statement, and source evidence for each entry. Include title, original ID, obligation, applicability, conditions, exceptions, context, category, and source version where available. |
+| RH-F08 | Preserve full content in the source language. Normalization must not lose normative terms, negations, conditions, exceptions, table relationships, or relevant code examples. |
+| RH-F09 | Do not automatically treat every web page or paragraph as a requirement. Definitions, recommendations, examples, and explanatory context must remain distinguishable. |
+| RH-F10 | Treat missing obligation as unknown. Do not add MUST, SHOULD, or MAY without source evidence or an explicitly configured source convention. |
+| RH-F11 | Make the source, actual fetched page URL, section or anchor, and fetch time traceable for each entry. Include page revision and original ID when available. |
+| RH-F12 | Deduplicate repeated fetches of the same page and identical entries within one source. Treat matching IDs with differing content as conflicts; do not silently merge different sources. |
+| RH-F13 | Keep entry IDs stable across repeated runs when source identity is unchanged. Preserve original IDs and use source namespaces to avoid collisions. Without an original ID or stable anchor, identity is the page URL plus statement; changing content then creates a new ID. |
+| RH-F14 | Preserve existing relationships and references between requirements. Do not automatically fetch referenced content outside crawl scope; report unresolved relationships. |
+| RH-F15 | Generate a valid OSCAL catalog as UTF-8 YAML; do not publish semantically incomplete, conflicting, or schema-invalid results as successful. |
+| RH-F16 | Write a machine-readable run report listing fetched, excluded, and failed pages, entry counts, conflicts, and extraction gaps. Reports do not contain complete source pages. |
+| RH-F17 | Offer configuration validation without network access and a dry run with fetching and extraction that does not replace the target catalog. |
+| RH-F18 | By default, end with an error and leave the last valid catalog unchanged on fetch errors, exhausted resource budgets with pending pages within the chosen scope and depth, extraction conflicts, or unexpectedly empty output. Intended scope and depth limits are not errors. Report pages without relevant content separately from extraction errors. |
+| RH-F19 | Support a full scan including OSCAL export without an LLM dependency, model access, or API key. Produce semantically reproducible results for identical input and tool version. |
+| RH-F20 | Provide a documented configuration schema and examples for manual creation or creation with an external assistant. Validate imported configurations regardless of origin and make them testable with dry runs. The first version has no model calls or LLM-provider integration. |
+| RH-F21 | By default, produce one OSCAL catalog from all sources. Optionally support multiple named catalogs with configured target paths and source assignments. Each output must be independently valid and retain entry provenance. |
+| RH-F22 | In addition to public sources, support access with API tokens, username/password, and company SSO. Configure methods and credential references per source; authentication and session management remain independent of an LLM. |
+| RH-F23 | Regenerate catalogs completely from currently captured sources and the configuration on every run. Replace previous output files after successful fetch, extraction, and validation. Do not copy manual additions or requirements no longer present in sources from old outputs. Stable requirement identities remain as specified in RH-F13. |
+| RH-F24 | Provide noninteractive runs and documented CI templates for GitLab CI/CD and GitHub Actions, with GitLab first. Both use the same CLI and configuration as local runs. Success, invalid configuration, access problems, and incomplete results must be distinguishable through documented exit codes and the run report. |
 
-## Konfiguration als zentrale Schnittstelle
+## Configuration as the central interface
 
-Versionierte YAML-Datei mit striktem Schema und verständlichen
-Fehlermeldungen einschließlich Feldpfad. Unbekannte Felder, doppelte Schlüssel,
-ungültige Selektoren, widersprüchliche Bereiche, nicht auflösbare Regelreferenzen
-und fehlende Pflichtwerte werden vor dem ersten Abruf zurückgewiesen.
-YAML wird ausschließlich als Datenformat ohne ausführbare Tags geladen.
+Use a versioned YAML file with a strict schema and understandable errors that
+include the field path. Reject unknown fields, duplicate keys, invalid selectors,
+conflicting scopes, unresolved rule references, and missing required values
+before the first fetch. Load YAML only as data, without executable tags.
 
-Die Konfiguration beschreibt:
+The configuration describes:
 
-- globale Grenzen und explizite Überschreibungen je Quelle;
-- Quellidentität, Startseiten und zulässigen Crawl-Bereich;
-- Authentifizierungsreferenzen und bei Bedarf eine organisationsinterne CA;
-- Quelltyp beziehungsweise Adapter und Regeln für unterschiedliche Seitenlayouts;
-- Feldzuordnung einschließlich Original-ID, Titel, Aussage, Kontext und Verbindlichkeit;
-- optionale Kategorien und Gruppierungen entsprechend der Quelle;
-- ein gemeinsames Ausgabeziel oder mehrere Kataloge mit Quellzuordnung,
-  Katalogmetadaten und festgelegter OSCAL-Version.
+- global limits and explicit per-source overrides;
+- source identity, start pages, and permitted crawl scope;
+- authentication references and, if needed, an internal CA;
+- source type or adapter and rules for different page layouts;
+- field mapping including original ID, title, statement, context, and obligation;
+- optional categories and groupings matching the source;
+- one shared output target or multiple catalogs with source assignments,
+  catalog metadata, and a fixed OSCAL version.
 
-Die Konfiguration darf keine Python-Ausdrücke, Shell-Kommandos oder beliebige
-Importpfade ausführen. Zunächst sind deklarative CSS-Selektoren und feste
-Extraktionsstrategien vorgesehen. Ein zusätzliches Layout erhält eine weitere
-Regel; ein grundsätzlich anderes Abrufverfahren gegebenenfalls einen Adapter.
-Für unbekannte Layouts gibt es einen Diagnosebericht statt einer stillen Ersatzregel.
+The configuration must not execute Python expressions, shell commands, or
+arbitrary import paths. Initially, use declarative CSS selectors and fixed
+extraction strategies. Another layout gets another rule; a fundamentally
+different fetch method may require an adapter. Unknown layouts produce a
+diagnostic report rather than a silent fallback rule.
 
-### Startseiten, Scope und Tiefe
+### Start pages, scope, and depth
 
-- `start-urls` enthält eine oder mehrere Startseiten pro Quelle. Jede Startseite
-  muss im konfigurierten Scope liegen; andernfalls ist die Config ungültig.
-- `allowed-origins` legt HTTPS-Host und Port exakt fest. Subdomains sind nicht
-  automatisch eingeschlossen. Der Pfadbereich `/` erlaubt den gesamten Host.
-- `allowed-path-prefixes` begrenzt den Scope auf einen oder mehrere Pfadbereiche.
-  Ein Bereich `/policies/` umfasst `/policies/` und darunterliegende Pfade,
-  aber beispielsweise nicht `/policies-old/`.
-- Host, Pfad und Ausschlüsse werden gemeinsam geprüft. Ein Link darf den Scope
-  auch dann nicht verlassen, wenn er auf einer erlaubten Seite steht.
-- `max-depth: 0` liest nur Startseiten, `1` zusätzlich deren direkte Links usw.
-  Ein endlicher Wert ist eine nichtnegative Ganzzahl; `null` erlaubt das
-  Verfolgen aller erreichbaren Links im Scope ohne Tiefengrenze. Seiten-,
-  Request- und Laufzeitbudgets gelten weiterhin.
-- Die Tiefe zählt Links, nicht URL-Pfadsegmente. Weiterleitungen erhöhen nicht
-  die Linktiefe, unterliegen aber Scope-Prüfung und eigenem Redirect-Limit.
-- Überlappende Startseiten und Linkschleifen dürfen keine mehrfachen Abrufe
-  derselben normalisierten Seiten-URL innerhalb einer Quelle verursachen.
-- Der Scope erlaubt das Abrufen erreichbarer Seiten; er garantiert nicht das
-  Auffinden unverlinkter Seiten. Solche Seiten benötigen weitere Start-URLs
-  oder später eine zusätzliche, ausdrücklich konfigurierte Discovery-Methode.
+- `start-urls` contains one or more start pages per source. Each start page
+  must be in the configured scope, or the configuration is invalid.
+- `allowed-origins` fixes the HTTPS host and port exactly. Subdomains are not
+  included automatically. The `/` path scope allows the entire host.
+- `allowed-path-prefixes` limits scope to one or more path regions. `/policies/`
+  includes that path and descendants, but not `/policies-old/`, for example.
+- Host, path, and exclusions are checked together. A link cannot leave scope
+  even when it appears on an allowed page.
+- `max-depth: 0` reads only start pages, `1` also their direct links, and so on.
+  A finite value is a nonnegative integer; `null` follows all reachable links
+  in scope without a depth limit. Page, request, and runtime budgets still apply.
+- Depth counts links, not URL path segments. Redirects do not increase link
+  depth, but are subject to scope checks and a separate redirect limit.
+- Overlapping start pages and link loops must not cause repeated fetches of
+  the same normalized page URL within a source.
+- Scope permits fetching reachable pages; it does not guarantee discovery of
+  unlinked pages. These need additional start URLs or a later, explicitly
+  configured discovery method.
 
-### Authentifizierung je Quelle
+### Authentication per source
 
-Bestätigt sind drei Zugriffsarten zusätzlich zu `auth.mode: none`:
+Three access methods are confirmed in addition to `auth.mode: none`:
 
-- **API-Token:** Extern bereitgestelltes Token über das für die Quelle festgelegte
-  Header-Verfahren senden. Kein Token in URL oder Prozessargumenten.
-- **Benutzername/Passwort:** Extern bereitgestellte Zugangsdaten über das von der
-  Quelle unterstützte Verfahren verwenden. Implementiert ist HTTP Basic über HTTPS.
-  Eine Formularanmeldung erfordert bei Bedarf einen Adapter für die Zielanwendung.
-- **Firmen-SSO:** Als Ansatz einen separaten interaktiven Anmeldeschritt über
-  den regulären Unternehmens-Login vorsehen. MFA und andere Login-Vorgaben bleiben
-  wirksam. Der Crawl verwendet den daraus vorgesehenen, gültigen Zugriffskontext.
-  Microsoft Entra ID ist als erster Anbieter beschlossen. Der konkrete
-  Integrationsweg ist anhand der geschützten Zielanwendung festzulegen;
-  die Anbieterwahl allein legt deren Login-Schnittstelle noch nicht fest.
+- **API token:** Send an externally supplied token using the header method
+  defined for the source. Do not put tokens in URLs or process arguments.
+- **Username/password:** Use externally supplied credentials through a method
+  supported by the source. HTTP Basic over HTTPS is implemented. Form login
+  requires an adapter for the target application if needed.
+- **Company SSO:** Plan a separate interactive sign-in step through the normal
+  company login. MFA and other login requirements remain in effect. The crawl
+  uses the valid access context obtained through that path. Microsoft Entra ID
+  is the first chosen provider. Determine the actual integration path from the
+  protected target application; choosing a provider alone does not establish
+  the application's login interface.
 
-Session-Daten werden, soweit eine Speicherung erforderlich ist, getrennt von
-der versionierten Config mit restriktiven Zugriffsrechten abgelegt. Credentials
-und Sessions sind an die jeweilige Quelle beziehungsweise Identität gebunden.
-Abgelaufene oder abgewiesene Zugriffe führen zu einem Authentifizierungsfehler;
-der Lauf wird nicht unbemerkt mit eingeschränktem anonymem Inhalt fortgesetzt.
-Für unbeaufsichtigte Läufe ist ein dafür geeignetes Verfahren erforderlich;
-SSO mit notwendiger Benutzerinteraktion wird nicht als unbeaufsichtigt nutzbar
-zugesagt. Anmeldeziele werden separat vom Crawl-Scope konfiguriert und nur vom
-vorgesehenen Login-Verfahren verwendet, nicht durch gewöhnliche Seitenlinks.
+When storage is needed, session data is kept separately from the versioned
+configuration with restrictive access permissions. Credentials and sessions
+are bound to the respective source or identity. Expired or rejected access
+causes an authentication error; the run does not silently continue with
+restricted anonymous content. Unattended runs need a suitable access method;
+SSO requiring user interaction is not claimed to work unattended. Login
+destinations are configured separately from crawl scope and are used only by
+the intended login method, not by ordinary page links.
 
-### Unbeaufsichtigte Ausführung und CI
+### Unattended execution and CI
 
-- Zuerst eine GitLab-CI/CD-Vorlage, anschließend einen entsprechenden
-  GitHub-Actions-Workflow bereitstellen. Beide unterstützen manuell ausgelöste
-  und zeitgesteuerte Jobs; die Zeitplanung übernimmt die jeweilige CI-Plattform.
-- Die CLI wartet im nichtinteraktiven Betrieb niemals auf Passwort-Eingaben,
-  Browser-Login oder MFA. Fehlender oder abgelaufener Zugriff führt zum Fehlerstatus.
-- Für geschützte Quellen wird ein von der Zielanwendung unterstützter und
-  freigegebener maschineller Zugriff benötigt. Die Entra-ID-Anbindung muss diesen
-  konkreten Zugriffsweg berücksichtigen; interaktives SSO allein genügt dafür nicht.
-- Credentials über die Secret-Verwaltung der jeweiligen CI-Plattform zuführen.
-  Secrets bleiben aus versionierten Configs, Logs, Caches und Artefakten ausgeschlossen.
-- Erfolgreich erzeugte OSCAL-Dateien und der Laufbericht sind Job-Artefakte.
-  Nach fehlgeschlagenen Läufen wird kein alter oder unvollständiger Katalog als
-  erfolgreiches neues Ergebnis hochgeladen. Diagnosen bleiben zugänglich.
-- Artefakte mit internen Requirements erhalten entsprechend beschränkte
-  Zugriffsrechte und eine dokumentierte Aufbewahrungsdauer. Keine automatische
-  öffentliche Veröffentlichung oder Rückschreibung in ein Repository vorsehen.
-- Runner müssen die konfigurierten internen Quellen erreichen können. Benötigte
-  Netzzugänge und interne CA werden als Betriebsanforderungen dokumentiert.
+- Provide a GitLab CI/CD template first, followed by a corresponding GitHub
+  Actions workflow. Both support manually triggered and scheduled jobs;
+  scheduling is handled by the respective CI platform.
+- In noninteractive mode, the CLI never waits for password input, browser login,
+  or MFA. Missing or expired access produces an error status.
+- Protected sources require an approved machine access method supported by the
+  target application. Entra ID integration must account for that specific path;
+  interactive SSO alone is insufficient.
+- Supply credentials through the CI platform's secret management. Exclude
+  secrets from versioned configurations, logs, caches, and artifacts.
+- Successfully generated OSCAL files and the run report are job artifacts.
+  After a failed run, do not upload an old or incomplete catalog as a new
+  successful result. Keep diagnostics accessible.
+- Restrict access to artifacts containing internal requirements and document
+  their retention period. Do not publish them publicly or write them back to
+  a repository automatically.
+- Runners must be able to reach configured internal sources. Document required
+  network access and internal CAs as operational prerequisites.
 
-### Beispiel für eine Quelle mit tabellarischen Requirements
+### Example source with tabular requirements
 
-Synthetisches Beispiel im implementierten Config-Format. Domain und Selektoren
-sind an die eigene Quelle anzupassen. Die ausführbare öffentliche Beispielconfig
-steht in [examples/tss-web.yaml](examples/tss-web.yaml).
+This synthetic example uses the implemented configuration format. Adjust the
+domain and selectors for your source. The runnable public example configuration
+is [examples/tss-web.yaml](examples/tss-web.yaml).
 
 ```yaml
 config-version: 1
 output:
   catalog: ./out/catalog.oscal.yaml
   report: ./out/harvest-report.json
-  title: Organisationsrichtlinien
+  title: Organization Policies
   version: "1.0.0"
   oscal-version: "1.2.3"
 defaults:
@@ -310,27 +302,25 @@ sources:
             obligation: {selector: "td:nth-child(4)"}
 ```
 
-Die Grenzwerte sind Vorschläge für den ersten Stand und bieten Spielraum für
-die erwarteten wenigen Dutzend Seiten pro Lauf. Request-Budget und
-Laufzeit gelten auch für Wiederholungen und Weiterleitungen; das Größenlimit
-gilt für dekomprimierte Inhalte. Eine abweichende Regel für eine weitere Quelle
-darf weder globale Sicherheitsgrenzen noch die Zielprüfung umgehen.
+The limits are proposed initial values with room for the expected few dozen
+pages per run. Request and runtime budgets also cover retries and redirects;
+the size limit applies to decompressed content. A different rule for another
+source cannot bypass global safety limits or destination checks.
 
-### Eine oder mehrere Ausgabedateien
+### One or more output files
 
-`output.catalog` im obigen Beispiel ist der Standard: alle konfigurierten
-Quellen werden in einem Katalog zusammengeführt. Alternativ definiert
-`output.catalogs` mehrere Kataloge. Beide Formen schließen sich gegenseitig aus.
+`output.catalog` in the example above is the default: all configured sources
+are combined in one catalog. Alternatively, `output.catalogs` defines multiple
+catalogs. The two forms are mutually exclusive.
 
-Implementierte Zuordnung: Jede Ausgabe nennt die IDs der
-Quellen, deren Requirements sie enthalten soll. Eine Quelle kann mehreren
-Ausgaben zugeordnet werden und wird dafür nur einmal gecrawlt. Jede konfigurierte
-Quelle muss mindestens einer Ausgabe zugeordnet sein. Unbekannte Quell-IDs,
-doppelte Katalog-IDs sowie kollidierende Zielpfade werden vor dem Abruf abgewiesen.
-Weitere Aufteilungskriterien innerhalb einer Quelle sind noch nicht festgelegt.
+The implemented mapping lists the source IDs to include in each output. A
+source may be assigned to multiple outputs and is crawled only once. Every
+configured source must be assigned to at least one output. Unknown source IDs,
+duplicate catalog IDs, and colliding target paths are rejected before fetching.
+Further criteria for splitting a source are not yet defined.
 
-Dieser alternative Config-Ausschnitt setzt Quellen mit den IDs `engineering`
-und `operations` voraus:
+This alternative configuration fragment assumes sources with IDs `engineering`
+and `operations`:
 
 ```yaml
 output:
@@ -348,137 +338,138 @@ output:
       source-ids: [operations]
 ```
 
-Die Zuordnung ändert keine Requirement-Identitäten. Jede Datei besitzt eigene
-Katalogmetadaten und eine eigene Dokument-UUID. Alle Kataloge werden vor der
-Veröffentlichung validiert. Das atomare Ersetzen gilt jeweils pro Datei;
-mehrere Dateien bilden keine Dateisystemtransaktion. Ein Fehler während der
-Veröffentlichung führt zu einem Fehlerstatus und einem Bericht über bereits
-ersetzte und nicht ersetzte Dateien, niemals zu einem Gesamterfolg.
+Assignment does not change requirement identities. Each file has its own
+catalog metadata and document UUID. All catalogs are validated before
+publication. Atomic replacement applies per file; multiple files do not form
+a filesystem transaction. A failure during publication produces an error
+status and a report identifying files already replaced and not replaced,
+never an overall success.
 
-## OSCAL-Abbildung
+## OSCAL mapping
 
-Vorgesehen ist zunächst das **Catalog Model**: Es beschreibt Sammlungen von
-Controls einschließlich Aussagen, Gruppen und Referenzen und unterstützt YAML.
-Siehe [NIST: Control Layer](https://pages.nist.gov/OSCAL/learn/concepts/layer/control/)
-und [Catalog Model](https://pages.nist.gov/OSCAL/learn/concepts/layer/control/catalog/).
+The initial target is the **Catalog Model**. It describes collections of
+controls, including statements, groups, and references, and supports YAML.
+See [NIST: Control Layer](https://pages.nist.gov/OSCAL/learn/concepts/layer/control/)
+and [Catalog Model](https://pages.nist.gov/OSCAL/learn/concepts/layer/control/catalog/).
 
-| Internes Merkmal | OSCAL-Abbildung |
+| Internal feature | OSCAL mapping |
 | --- | --- |
-| Sammlung und Version | `catalog.metadata` mit Titel, Version, OSCAL-Version und Änderungszeit |
-| Kategorie oder Quellgliederung | `groups` mit stabilen IDs und Titeln |
-| Eigenständige Anforderung oder Empfehlung | `controls` mit `id`, `title` und Aussage in `parts` mit `name: statement` |
-| Erläuterungen und Beispiele | Gesonderte Parts, etwa `guidance` und `example` |
-| Original-ID | Property am Control; ursprünglichen Wert erhalten |
-| Quellverweis | `links` mit `rel: reference`, möglichst mit Abschnittsanker |
-| Zusätzliche Provenienz und optionale Kategorien | Properties im Namespace `https://github.com/appsec-foundry/appsec-analyzer-tools/ns/requirement-harvester` |
-| Mehrzeiliger Kontext, Geltungsbereich und Ausnahmen | Parts `context`, `applicability` und `exceptions` im selben Namespace |
+| Collection and version | `catalog.metadata` with title, version, OSCAL version, and modification time |
+| Category or source structure | `groups` with stable IDs and titles |
+| Standalone requirement or recommendation | `controls` with `id`, `title`, and a statement in `parts` with `name: statement` |
+| Explanations and examples | Separate parts, such as `guidance` and `example` |
+| Original ID | Property on the control; preserve the original value |
+| Source reference | `links` with `rel: reference`, preferably including a section anchor |
+| Additional provenance and optional categories | Properties in the `https://github.com/appsec-foundry/appsec-analyzer-tools/ns/requirement-harvester` namespace |
+| Multiline context, applicability, and exceptions | Parts named `context`, `applicability`, and `exceptions` in the same namespace |
 
-OSCAL dient als gewünschtes Austauschformat. Die Abbildung einer Anforderung
-auf ein Control macht sie fachlich nicht automatisch zu einer Security-Vorgabe.
-Die Eignung der Feldzuordnung wird auch an Anforderungen anderer Art geprüft.
+OSCAL is the intended interchange format. Mapping a requirement to a control
+does not automatically make it a security requirement. The suitability of the
+field mapping is also assessed against other kinds of requirements.
 
-Implementiert ist OSCAL 1.2.3. Das offizielle Schema ist unverändert lokal
-versioniert; die Validierung unterstützt auch dessen Unicode-Zeichenmuster.
-Es gibt keine Schema-Downloads anhand von Quellinhalten.
-Stabile Control-IDs sind von der Dokument-UUID zu unterscheiden: Bei geändertem
-Dokumentinhalt sind nach NIST Dokument-UUID und `metadata.last-modified` zu erneuern.
-Gleicher fachlicher Inhalt muss unabhängig von Laufzeitmetadaten vergleichbar bleiben.
+OSCAL 1.2.3 is implemented. The official schema is versioned locally without
+changes; validation also supports its Unicode character patterns. Source
+content does not trigger schema downloads. Stable control IDs are distinct
+from the document UUID: NIST requires a new document UUID and
+`metadata.last-modified` when document content changes. Identical semantic
+content must remain comparable independently of runtime metadata.
 
-## Integration mit appsec-analyzer
+## Integration with appsec-analyzer
 
-Im lokalen Checkout `/home/mrohr/appsec-analyzer`, HEAD
-`486d201252409859ddcf6aac69e5d8ea299c953e`, wurden bei der Planung gelesen:
+During planning, these files were read from local checkout
+`/home/mrohr/appsec-analyzer`, HEAD `486d201252409859ddcf6aac69e5d8ea299c953e`:
 
-- `scripts/requirements/harvest_requirements.py`: vorhandener konfigurierbarer
-  HTML-Harvester für Requirements und Blueprints mit eigenem YAML-Katalogformat.
-- `schemas/requirements-catalog.schema.yaml`: dokumentierter Katalogvertrag mit
-  `categories[].requirements[]` und Feldern wie `id`, `text`, `priority` und `url`.
+- `scripts/requirements/harvest_requirements.py`: an existing configurable HTML
+  harvester for requirements and blueprints with its own YAML catalog format.
+- `schemas/requirements-catalog.schema.yaml`: documented catalog contract with
+  `categories[].requirements[]` and fields such as `id`, `text`, `priority`, and `url`.
 
-Dieser Vertrag entspricht nicht der OSCAL-Katalogstruktur. Eine direkte
-OSCAL-Unterstützung des Consumers wurde damit nicht nachgewiesen.
-Beschlossen ist ausschließlich OSCAL-YAML als fachlicher Export. Eine eventuell
-benötigte Consumer-Erweiterung im Hauptprojekt ist eine separate Integrationsaufgabe
-und keine Voraussetzung für die Fertigstellung des Harvesters. OSCAL-Schemavalidität
-allein belegt keine Kompatibilität mit dem bisherigen Analyzer-Import.
+That contract does not match the OSCAL catalog structure. Direct OSCAL support
+by the consumer was not established. Only OSCAL YAML was chosen as the semantic
+export. Any necessary consumer extension in the main project is a separate
+integration task and is not a prerequisite for completing the harvester.
+OSCAL schema validity alone does not prove compatibility with the existing
+Analyzer import.
 
-Das neue Tool wird eigenständig anhand der hier beschriebenen Anforderungen
-entwickelt. Code, Extraktionsregeln und Tests des bisherigen Harvesters werden
-nicht übernommen. Die oben genannten Dateien dokumentieren ausschließlich den
-bei der Planung vorgefundenen Integrationsstand. Änderungen oder eine Ablösung
-des bisherigen Harvesters im Hauptprojekt sind nicht Teil dieses Plans.
+The new tool is developed independently from the requirements here. Code,
+extraction rules, and tests from the previous harvester are not reused. The
+files above document only the integration state observed during planning.
+Changing or replacing the previous harvester in the main project is outside
+this plan.
 
-## Sicherheits- und Betriebsanforderungen
+## Security and operational requirements
 
-Die betroffenen Assets sind Wiki-Zugangsdaten, interne Inhalte, der lokale
-Katalog und die Erreichbarkeit der Quellen. Vertrauensgrenzen bestehen zwischen
-Betreiberkonfiguration, entfernten Seiten und Links, Parser und lokalen Dateien.
+Affected assets are wiki credentials, internal content, the local catalog, and
+source availability. Trust boundaries lie between operator configuration,
+remote pages and links, the parser, and local files.
 
-| ID | Anforderung |
+| ID | Requirement |
 | --- | --- |
-| RH-S01 | Nur HTTPS mit Zertifikats- und Hostnamenprüfung verwenden; eine konfigurierte interne CA ermöglichen. Keine Abschaltoption für TLS-Prüfung. |
-| RH-S02 | Konfigurierte Origins, Ports, Pfadbereiche und zulässige Zielnetze an der tatsächlichen Verbindung prüfen, einschließlich IPv6 und DNS-Wechseln. Loopback, Link-local und Metadatenziele sperren; interne Wiki-Netze nur ausdrücklich und eng begrenzt konfigurieren. |
-| RH-S03 | Jeden Redirect erneut auf Zielbereich und Adressen prüfen und die Hop-Zahl begrenzen. Authentifizierungsdaten und Cookies niemals an andere Origins weiterreichen. URL-Normalisierung und Pfadgrenzen dürfen sich nicht durch Traversal oder alternative Adressschreibweisen umgehen lassen. |
-| RH-S04 | Für geschützte Quellen nur lesend berechtigte Zugangsdaten aus externer Konfiguration oder Secret-Verwaltung beziehen. Config enthält Referenzen, keine Secret-Werte. Fehlende erforderliche Zugangsdaten sowie 401/403 führen zu klaren Fehlern; Loginseiten gelten nicht als erfolgreiche Inhaltsseiten. |
-| RH-S05 | URLs mit eingebetteten Zugangsdaten zurückweisen. Tokens nicht in URLs, Prozessargumenten, Katalogen oder Berichten ablegen; Logs auch von sensitiven Query-Werten bereinigen und fremde Logfelder strukturiert kodieren. |
-| RH-S06 | Seitenzahl, Linkwarteschlange, Requests, Redirects, Wiederholungen, dekomprimierte Bytes, Parser-Aufwand und Laufzeit begrenzen. Rate-Limits und Retry-After beachten; keine Endlosschleifen durch Links oder URL-Varianten. |
-| RH-S07 | Webseiten und Konfiguration ausschließlich als Daten behandeln. Keine Skripte, eingebetteten Anweisungen oder Parser-Nachladefunktionen ausführen; keine ungeplanten Subressourcen abrufen. |
-| RH-S08 | Nur benötigte Inhaltstypen parsen, Content-Type und tatsächlichen Inhalt berücksichtigen. PDF-, Office-, Archiv- und Anhangsverarbeitung ist zunächst ausgeschlossen. |
-| RH-S09 | Lokale Zieldateien stammen aus der Betreiberkonfiguration, niemals aus Seitentiteln oder entfernten Dateinamen. YAML sicher serialisieren, Ausgabe vor Ersetzen prüfen und vertrauliche Kataloge mit restriktiven Dateirechten schreiben. |
-| RH-S10 | Keine vollständigen authentifizierten Seiten standardmäßig speichern. Das Tool überträgt keine Inhalte oder Zugangsdaten an Modelldienste. Extern erstellte Configs anhand desselben strikten Schemas und erlaubter Werte wie manuelle Configs prüfen; unbekannte Felder und ausführbare Inhalte abweisen. |
-| RH-S11 | CI-Jobs erhalten minimale, standardmäßig nur lesende Berechtigungen. Code und Config aus nicht vertrauenswürdigen Merge-/Pull-Requests dürfen nicht mit Quellzugangsdaten ausgeführt werden. Abhängigkeiten werden mit Lockfile und überprüften Integritätswerten installiert; externe Actions und Container auf unveränderliche Referenzen festgelegt und Abhängigkeiten regelmäßig auf Schwachstellen geprüft. Container laufen ohne Root-Rechte. |
+| RH-S01 | Use HTTPS with certificate and hostname verification; allow a configured internal CA. Provide no option to disable TLS verification. |
+| RH-S02 | Check configured origins, ports, path scopes, and allowed destination networks at the actual connection, including IPv6 and DNS changes. Block loopback, link-local, and metadata destinations; allow internal wiki networks only through explicit, narrow configuration. |
+| RH-S03 | Recheck the destination scope and addresses on every redirect and limit the hop count. Never forward authentication data or cookies to other origins. URL normalization and path limits must resist traversal and alternative address spellings. |
+| RH-S04 | For protected sources, obtain read-only credentials from external configuration or secret management. Configurations contain references, not secret values. Missing required credentials and 401/403 responses produce clear errors; login pages do not count as successful content pages. |
+| RH-S05 | Reject URLs with embedded credentials. Do not put tokens in URLs, process arguments, catalogs, or reports; remove sensitive query values from logs and structurally encode untrusted log fields. |
+| RH-S06 | Limit page count, link queue, requests, redirects, retries, decompressed bytes, parser work, and runtime. Respect rate limits and Retry-After; prevent endless loops through links or URL variants. |
+| RH-S07 | Treat web pages and configuration only as data. Do not execute scripts, embedded instructions, or parser loading functions, and do not fetch unplanned subresources. |
+| RH-S08 | Parse only needed content types, considering Content-Type and actual content. Initially exclude PDF, Office, archive, and attachment processing. |
+| RH-S09 | Derive local target files from operator configuration, never page titles or remote filenames. Serialize YAML safely, validate output before replacement, and write confidential catalogs with restrictive file permissions. |
+| RH-S10 | Do not store complete authenticated pages by default. The tool sends neither content nor credentials to model services. Validate externally created configurations against the same strict schema and allowed values as manual ones; reject unknown fields and executable content. |
+| RH-S11 | Give CI jobs minimal, read-only-by-default permissions. Do not run code and configuration from untrusted merge/pull requests with source credentials. Install dependencies using lockfiles and verified integrity values; pin external Actions and containers to immutable references and check dependencies regularly for vulnerabilities. Run containers without root. |
 
-## Abnahmekriterien und Tests
+## Acceptance criteria and tests
 
-| ID | Nachweis |
+| ID | Evidence |
 | --- | --- |
-| RH-A01 | Eine synthetische Quelle je für Tabelle, Liste und Kapitelstruktur ergibt die erwarteten Einträge einschließlich Kontext und Quellanker. Beispiele decken unterschiedliche fachliche Anforderungen und Anforderungen ohne Kategorie ab. |
-| RH-A02 | Negationen, MUST NOT, Bedingungen, Beispiele, Umlaute, mehrzeilige Aussagen und Code bleiben fachlich korrekt erhalten; unbekannte Verbindlichkeit wird nicht geraten. |
-| RH-A03 | Gleichbleibende Quellidentitäten ergeben stabile IDs; Linkschleifen und doppelte Seiten erzeugen keine doppelten Einträge. Widersprüchliche Original-IDs führen zu einem Konflikt. |
-| RH-A04 | Ein- und Ausschlüsse, Pfadgrenzen, Tiefe und Budgets werden eingehalten; fehlende Startseiten und erreichte Limits ergeben keinen irreführenden Erfolg. |
-| RH-A05 | Unbekannte Felder, doppelte YAML-Schlüssel, ausführbare YAML-Tags, falsche Typen und fehlerhafte Regeln werden vor Netzwerkzugriff abgelehnt. |
-| RH-A06 | Ungültige Zertifikate, Redirects aus dem Bereich, private oder Metadatenziele ohne Freigabe, IPv6-Varianten und DNS-Wechsel werden an der Verbindungsgrenze abgewiesen. Erlaubte interne Wikis funktionieren innerhalb ihrer expliziten Netzfreigabe. |
-| RH-A07 | Fehlende Secrets, 401/403 und Loginseiten werden erkannt. Tests mit synthetischen Tokens belegen deren Abwesenheit in Logs und Ausgaben sowie bei Redirects zu anderen Origins. |
-| RH-A08 | Überlange und stark komprimierte Antworten, große Linkmengen, endlose Redirects, 429 und Timeouts enden innerhalb der konfigurierten Grenzen. |
-| RH-A09 | Der YAML-Export besteht die Validierung gegen das festgelegte OSCAL-Schema und zusätzliche fachliche Regeln zu IDs, Aussagen, Typen und Provenienz. Ein absichtlich ungültiger Export wird abgewiesen. |
-| RH-A10 | Bei Abruf-, Extraktions-, Erzeugungs- oder Validierungsfehlern vor der Veröffentlichung bleiben bestehende Zieldateien unverändert; Probeläufe ersetzen keinen Katalog. Fehler während der Veröffentlichung werden gemäß RH-A16 behandelt. |
-| RH-A12 | Ein vollständiger Scan mit gespeicherten Seiten-Fixtures funktioniert ohne Modellzugriff und API-Key. Wiederholungen mit identischer Config und Tool-Version liefern identische fachliche Ergebnisse einschließlich IDs und Reihenfolge. |
-| RH-A13 | Fehlerhafte extern erstellte Configs, unbekannte Felder und ausführbare Inhalte werden zurückgewiesen. Links und Anweisungen in Seiten können den in der geprüften Config vorgegebenen Quellbereich nicht erweitern. Manuelle und extern erzeugte Configs durchlaufen dieselben Prüfungen. |
-| RH-A14 | Eine Layoutänderung führt zu einer Diagnose ohne Modellaufruf oder automatische Config-Änderung. Regeltests prüfen erwartete Inhalte und bewusst auszuschließende Seitenelemente. |
-| RH-A15 | Mehrere überlappende Startseiten, kürzere alternative Linkwege und Linkschleifen ergeben die erwartete Seitenmenge ohne Mehrfachabrufe. Tiefe 0, 1 und 2, Host-Scope, Pfad-Scope und ausgeschlossene Nachbarpfade werden geprüft. Gewollte Tiefengrenzen ergeben einen vollständigen Lauf innerhalb des konfigurierten Bereichs; ein vorzeitig erschöpftes Ressourcenbudget meldet Unvollständigkeit. |
-| RH-A16 | Ohne Aufteilung entsteht ein gemeinsamer Katalog. Mit mehreren konfigurierten Ausgaben enthält jede Datei genau die Requirements ihrer Quellen und besteht die OSCAL-Validierung. Unbekannte oder nicht zugeordnete Quellen und kollidierende Ziele werden abgewiesen. Eine mehrfach zugeordnete Quelle wird nicht mehrfach gecrawlt. Veröffentlichungsfehler werden als Fehler mit dem tatsächlichen Stand je Datei berichtet. |
-| RH-A17 | Die drei implementierten Anmeldeverfahren jeweils mit gültigen, fehlenden und abgewiesenen Zugriffsdaten prüfen. SSO-Abbruch und Session-Ablauf werden als Fehler erkannt. Sessions und Credentials gelangen weder an fremde Quellen noch in Config, Kataloge oder Logs; gespeicherte Sessions besitzen restriktive Zugriffsrechte. |
-| RH-A18 | Ein erfolgreicher Folgelauf übernimmt geänderte und neue Quellanforderungen, entfernt nicht mehr vorhandene Anforderungen und übernimmt keine manuellen Ergänzungen aus der alten Ausgabe. Unveränderte Quellidentitäten behalten ihre Requirement-IDs. Ein fehlgeschlagener Abruf darf nicht als Löschung von Requirements veröffentlicht werden. |
-| RH-A19 | Beide CI-Vorlagen führen den nichtinteraktiven Pfad mit synthetischen Quellen aus und liefern erwartete Exit-Codes, Berichte und valide Artefakte. Fehlende oder abgelaufene Zugriffsdaten verursachen keinen Eingabedialog. Fehlerläufe veröffentlichen keinen Erfolgskatalog. Job-Berechtigungen, Secret-Abgrenzung gegenüber nicht vertrauenswürdigen Änderungen und Artefaktzugriff werden für beide Plattformen geprüft. |
+| RH-A01 | One synthetic source each for table, list, and section structures produces expected entries, including context and source anchors. Examples cover different kinds of requirements and requirements without a category. |
+| RH-A02 | Negations, MUST NOT, conditions, examples, non-ASCII characters, multiline statements, and code preserve their meaning; unknown obligation is not guessed. |
+| RH-A03 | Unchanged source identities yield stable IDs; link loops and duplicate pages do not create duplicate entries. Conflicting original IDs cause a conflict. |
+| RH-A04 | Inclusions/exclusions, path boundaries, depth, and budgets are respected; missing start pages and reached limits do not produce misleading success. |
+| RH-A05 | Unknown fields, duplicate YAML keys, executable YAML tags, wrong types, and invalid rules are rejected before network access. |
+| RH-A06 | Invalid certificates, out-of-scope redirects, unapproved private or metadata destinations, IPv6 variants, and DNS changes are rejected at the connection boundary. Allowed internal wikis work within their explicit network allowance. |
+| RH-A07 | Missing secrets, 401/403 responses, and login pages are detected. Tests with synthetic tokens show that they are absent from logs and outputs and from redirects to other origins. |
+| RH-A08 | Oversized and highly compressed responses, large link sets, endless redirects, 429 responses, and timeouts end within configured limits. |
+| RH-A09 | YAML export validates against the chosen OSCAL schema and additional semantic rules for IDs, statements, types, and provenance. An intentionally invalid export is rejected. |
+| RH-A10 | On fetch, extraction, generation, or validation failure before publication, existing target files remain unchanged; dry runs do not replace catalogs. Publication failures are handled as specified in RH-A16. |
+| RH-A12 | A complete scan with saved page fixtures works without model access or an API key. Repeated runs with identical configuration and tool version produce identical semantic results, including IDs and ordering. |
+| RH-A13 | Malformed externally created configurations, unknown fields, and executable content are rejected. Links and instructions in pages cannot extend the source scope defined by the validated configuration. Manual and externally generated configurations undergo the same checks. |
+| RH-A14 | A layout change produces diagnostics without a model call or automatic configuration change. Rule tests check both expected content and page elements deliberately excluded. |
+| RH-A15 | Multiple overlapping start pages, shorter alternative link paths, and link loops yield the expected page set without duplicate fetches. Depths 0, 1, and 2, host scope, path scope, and excluded neighboring paths are tested. Intended depth limits yield a complete run within configured scope; an early resource-budget exhaustion reports incompleteness. |
+| RH-A16 | Without splitting, one shared catalog is produced. With multiple configured outputs, each file contains exactly the requirements from its sources and passes OSCAL validation. Unknown or unassigned sources and colliding targets are rejected. A source assigned to multiple outputs is not crawled multiple times. Publication failures are reported as errors with the actual state of each file. |
+| RH-A17 | Test the three implemented authentication methods with valid, missing, and rejected credentials. SSO cancellation and session expiry are detected as errors. Sessions and credentials reach neither other sources nor configurations, catalogs, or logs; saved sessions have restrictive access permissions. |
+| RH-A18 | A successful subsequent run includes changed and new source requirements, removes requirements no longer present, and does not retain manual additions from old output. Unchanged source identities keep their requirement IDs. A failed fetch must not publish deletion of requirements. |
+| RH-A19 | Both CI templates run the noninteractive path with synthetic sources and produce expected exit codes, reports, and valid artifacts. Missing or expired credentials cause no input prompt. Failed runs publish no successful catalog. Job permissions, secret separation from untrusted changes, and artifact access are checked for both platforms. |
 
-Tests verwenden synthetische HTML-Fixtures und kontrollierte HTTP-/DNS-Testdoubles.
-Verbindungsschutz wird am Transport geprüft; ein Mock oberhalb der Zielprüfung
-ist dafür kein ausreichender Nachweis. Live-Tests mit echten Wiki-Zugangsdaten
-gehören nicht in die reguläre Testsuite.
+Tests use synthetic HTML fixtures and controlled HTTP/DNS test doubles.
+Connection protection is tested at the transport boundary; a mock above
+destination checking is insufficient evidence. Live tests with real wiki
+credentials do not belong in the regular test suite.
 
-## Implementierte Arbeitspakete
+## Completed work packages
 
-1. **Quellen und Exportvertrag klären:** Repräsentative Seiten unterschiedlicher
-   Struktur, Zugriff, Erkennung und genaue OSCAL-Version festlegen.
-2. **Config und internes Modell:** Schema, Fehlermeldungen, Feldzuordnung,
-   Identitäten und synthetische Beispieldaten definieren.
-3. **Abruf und Crawl:** HTTPS, Zugriff, Zielgrenzen, Linkermittlung, Limits und
-   Fehlerbehandlung implementieren und an positiven sowie negativen Fällen prüfen.
-4. **Extraktion:** Zunächst die tatsächlich benötigten Layouts unterstützen,
-   Kontext und Provenienz erhalten, Dubletten und Konflikte behandeln.
-5. **OSCAL-Export:** Versioniertes Schema, semantische Regeln, atomare Ausgabe
-   und Laufbericht umsetzen.
-6. **CLI und Dokumentation:** Konfigurationsprüfung, Probelauf, Statuscodes,
-   Installation und reproduzierbare Aufrufbeispiele dokumentieren.
-7. **Externe Config-Erstellung dokumentieren:** Schema, repräsentative Beispiele
-   und einen Ablauf für Erstellen, Prüfen und Versionieren der Config bereitstellen.
-   Derselbe Ablauf funktioniert manuell oder mit einem externen Assistenten.
-8. **CI-Anbindung:** Zuerst GitLab CI/CD, danach GitHub Actions mit nichtinteraktivem
-   Aufruf, Secret-Anbindung, Artefakten und positiven sowie negativen Prüfläufen ergänzen.
+1. **Clarify sources and export contract:** Select representative pages with
+   different structures, access methods, recognition needs, and the exact
+   OSCAL version.
+2. **Configuration and internal model:** Define the schema, errors, field
+   mapping, identities, and synthetic example data.
+3. **Fetch and crawl:** Implement HTTPS, access, destination limits, link
+   discovery, budgets, and error handling; verify positive and negative cases.
+4. **Extraction:** Support the layouts actually needed first; preserve context
+   and provenance, and handle duplicates and conflicts.
+5. **OSCAL export:** Implement a versioned schema, semantic rules, atomic
+   output, and a run report.
+6. **CLI and documentation:** Document configuration validation, dry runs,
+   status codes, installation, and reproducible invocation examples.
+7. **External configuration creation:** Document the schema, representative
+   examples, and a workflow for creating, checking, and versioning a
+   configuration. The same workflow works manually or with an external assistant.
+8. **CI integration:** Add GitLab CI/CD first and GitHub Actions second, with
+   noninteractive invocation, secrets, artifacts, and positive and negative tests.
 
-## Noch quell- beziehungsweise betriebsabhängig zu klären
+## Outstanding source-specific and operational decisions
 
-| ID | Frage | Vorschlag / Auswirkung |
+| ID | Question | Proposal / impact |
 | --- | --- | --- |
-| O01 | Welche weiteren Unternehmensseiten sollen erfasst werden? | TSS-WEB ist als Beispiel umgesetzt. Weitere Layouts benötigen passende Configs und fachliche Prüfung ihrer Probeläufe. |
-| O02 | Welchen Zugriff unterstützt die konkrete geschützte Zielanwendung? | Header-Token, HTTP Basic und Entra-Bearer-Token sind umgesetzt. Tenant, App-Registrierung, Leserechte und Akzeptanz der Tokens am Quellendpunkt sind vor Ort zu prüfen. Cookie-/Formular-Adapter sind bei entsprechendem Bedarf zusätzlich erforderlich. |
-| O10 | Welche privaten CI-Projekte, Runner und berechtigten Artefaktempfänger werden verwendet? | Die Vorlagen dokumentieren Voraussetzungen und liefern lokal geprüfte Einstiegspunkte. Gehostete Pipeline-Prüfungen erfolgen bei der Einrichtung. |
+| O01 | Which other company pages should be captured? | TSS-WEB is implemented as an example. Other layouts need suitable configurations and semantic review of their dry runs. |
+| O02 | Which access method does the particular protected target application support? | Header tokens, HTTP Basic, and Entra bearer tokens are implemented. Tenant, app registration, read permissions, and token acceptance at the source endpoint need on-site verification. Cookie/form adapters are additionally required if that is the access method. |
+| O10 | Which private CI projects, runners, and authorized artifact recipients will be used? | The templates document prerequisites and provide locally tested entry points. Hosted pipeline checks occur during setup. |

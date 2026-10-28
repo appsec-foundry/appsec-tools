@@ -1,14 +1,14 @@
-# Ein Requirement pro Überschrift h2 einschließlich des folgenden Abschnitts.
-# URLs und Selektoren an die eigene Webseite anpassen.
+# One requirement per h2 heading, including its following section.
+# Adjust URLs and selectors for your website.
 config-version: 1
 output:
   catalog: ../out/requirements.oscal.yaml
   report: ../out/report.json
-  title: Unternehmensanforderungen
+  title: Company Requirements
   version: 1.0.0
 sources:
 - id: company
-  title: Unternehmensanforderungen
+  title: Company Requirements
   start-urls:
   - https://wiki.example.org/requirements/engineering
   - https://wiki.example.org/requirements/operations

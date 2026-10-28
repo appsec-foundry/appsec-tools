@@ -1,49 +1,50 @@
-# Referenz
+# Reference
 
-Details zu Config, Extraktion, Anmeldung und Ausgabe. Für den Einstieg siehe
-[Quick Start](../README.md). Alle Befehle werden im Tool-Verzeichnis ausgeführt.
+Details on configuration, extraction, authentication, and output. For an
+introduction, see the [quick start](../README.md). Run all commands from the tool
+directory.
 
-## Config erstellen
+## Create a configuration
 
-Das vollständige [JSON-Schema](../harvester/schemas/config.schema.json) ist die
-maßgebliche Config-Schnittstelle. Ein zweites Beispiel ist [table.yaml](../examples/table.yaml).
+The complete [JSON schema](../harvester/schemas/config.schema.json) is the
+authoritative configuration interface. Another example is [table.yaml](../examples/table.yaml).
 
 ```bash
 .venv/bin/python -m harvester schema > /tmp/harvester-config.schema.json
 ```
 
-Die Config enthält `config-version: 1`, `output`, optionale `defaults` und
-`sources`. Unbekannte Felder, doppelte YAML-Schlüssel, YAML-Aliase und ausführbare
-Tags sind nicht zulässig. Pfade werden relativ zur Config-Datei aufgelöst.
+A configuration contains `config-version: 1`, `output`, optional `defaults`, and
+`sources`. Unknown fields, duplicate YAML keys, YAML aliases, and executable
+tags are rejected. Paths are resolved relative to the configuration file.
 
-Pro Quelle werden angegeben:
+For each source, specify:
 
-- `id`, `title` und eine oder mehrere `start-urls`;
-- `crawl.allowed-origins`, etwa `https://wiki.example.org` ohne abschließenden Slash;
-- optional `allowed-path-prefixes`, `exclude-path-prefixes`, `allowed-query-keys`;
-- `auth`, optional `ca-bundle`, sowie `extraction`.
+- `id`, `title`, and one or more `start-urls`;
+- `crawl.allowed-origins`, such as `https://wiki.example.org` without a trailing slash;
+- optionally `allowed-path-prefixes`, `exclude-path-prefixes`, and `allowed-query-keys`;
+- `auth`, optional `ca-bundle`, and `extraction`.
 
-Der Pfadbereich `/` erlaubt den gesamten Host; `/policies/` erlaubt diesen
-Bereich einschließlich seiner Unterpfade, aber nicht `/policies-old/`.
-Subdomains sind eigenständige Origins. Startseiten müssen im Scope liegen.
-Query-Parameter werden nur mit ausdrücklich erlaubten Schlüsseln verfolgt.
-Parameter für Zugangsdaten sind ausgeschlossen. Diagnostics enthalten keine Query-Werte.
+The `/` path scope allows the entire host; `/policies/` allows that path and its
+descendants but not `/policies-old/`. Subdomains are separate origins. Start
+pages must be within scope. Query parameters are followed only when their keys
+are explicitly allowed. Credential parameters are excluded. Diagnostics contain
+no query values.
 
-`crawl.max-depth: 0` liest ausschließlich Startseiten, `1` zusätzlich direkte
-Links usw. `null` entfernt die Tiefengrenze; andere Ressourcenlimits gelten
-weiterhin. `crawl.mode: explicit-pages` beschränkt einen Lauf auf Startseiten.
-Mehrere Startseiten werden gemeinsam in Breitensuche verarbeitet; bei mehreren
-Linkwegen gilt die kürzeste Entfernung. Unverlinkte Seiten werden nicht entdeckt.
+`crawl.max-depth: 0` reads only start pages; `1` also reads their direct links,
+and so on. `null` removes the depth limit, while other resource limits still
+apply. `crawl.mode: explicit-pages` limits a run to start pages. Multiple start
+pages are processed together in breadth-first order; the shortest distance
+applies when there are multiple link paths. Unlinked pages are not discovered.
 
-Wichtige Defaults: 200 Seiten, Linktiefe 3, 400 Requests pro Quelle,
-5 MiB pro Antwort vor und nach Dekompression, 1 Sekunde Request-Abstand,
-5 Sekunden Verbindungs- und 30 Sekunden Lese-Timeout. Der gesamte Lauf ist auf
-900 Sekunden begrenzt. `defaults` verändert diese Werte; `crawl` kann die
-quellbezogenen Werte überschreiben. Weitere Grenzen stehen im Schema.
-Budgetüberschreitungen melden einen unvollständigen Lauf; das reguläre Ende
-am konfigurierten Scope oder an der Linktiefe ist kein Fehler.
+Important defaults: 200 pages, link depth 3, 400 requests per source, 5 MiB per
+response before and after decompression, a 1-second interval between requests,
+a 5-second connection timeout, and a 30-second read timeout. The entire run is
+limited to 900 seconds. `defaults` changes these values; `crawl` can override
+source-specific values. See the schema for further limits. Exceeding a budget
+marks the run incomplete; reaching the configured scope or link depth normally
+is not an error.
 
-Interne Netze werden je Quelle explizit konfiguriert:
+Configure internal networks explicitly for each source:
 
 ```yaml
 crawl:
@@ -53,36 +54,36 @@ crawl:
 ca-bundle: ./company-ca.pem
 ```
 
-Nur RFC1918-Netze und IPv6-ULA können zusätzlich freigegeben werden.
-Loopback, Link-local, Metadatenziele und IPv6-Übergangsadressen bleiben gesperrt.
-Zieladressen werden unmittelbar vor der Verbindung aufgelöst, geprüft und als
-numerische Adressen verbunden; TLS prüft weiterhin den ursprünglichen Hostnamen.
-Weiterleitungen werden erneut geprüft. Umgebungsvariablen für HTTP-Proxies
-werden nicht verwendet; der Runner benötigt direkte Erreichbarkeit der Quellen.
+Only RFC1918 networks and IPv6 unique local addresses can additionally be
+allowed. Loopback, link-local, metadata destinations, and IPv6 transition
+addresses remain blocked. Destination addresses are resolved and checked
+immediately before connection, then connected to numerically; TLS still
+verifies the original hostname. Redirects are checked again. HTTP proxy
+environment variables are not used; the runner needs direct access to sources.
 
-## Extraktionsregeln
+## Extraction rules
 
-`content-selector` muss genau einen Hauptinhalt auswählen. Ein optionaler
-`context-selector` übernimmt gemeinsamen Kontext aus diesem Bereich;
-`exclude-selectors` entfernt beispielsweise Navigation oder bekannte Randnotizen.
+`content-selector` must select exactly one main content region. An optional
+`context-selector` takes shared context from that region; `exclude-selectors`
+removes navigation or known side notes, for example.
 
-Jede Regel hat eine eindeutige `id`, einen `item-selector`, `fields` und eine Strategie:
+Each rule has a unique `id`, an `item-selector`, `fields`, and a strategy:
 
-| Strategie | Bedeutung |
+| Strategy | Meaning |
 | --- | --- |
-| `blocks` | Ein Requirement pro ausgewähltem Inhaltsblock, etwa einem Listeneintrag. |
-| `table-rows` | Ein Requirement pro `tr`; bei Übernahme der gesamten Zeile werden Tabellenüberschriften als Feldbezeichnungen erhalten. |
-| `sections` | Eine Überschrift plus folgende Geschwisterelemente bis zur nächsten gleich- oder höherstufigen Überschrift. |
+| `blocks` | One requirement per selected content block, such as a list item. |
+| `table-rows` | One requirement per `tr`; when the entire row is used, table headers are retained as field labels. |
+| `sections` | A heading and following sibling elements up to the next heading of equal or higher level. |
 
-`page-selector` aktiviert eine Regel nur für passende Seiten. Eine aktive Regel
-muss Treffer liefern, außer `required: false` ist gesetzt. Ohne Requirements
-scheitert eine Seite standardmäßig; für bekannte reine Indexseiten kann
-`extraction.allow-empty-pages: true` gesetzt werden. Hauptinhalt und Regeln
-werden trotzdem geprüft. Eine vollständig leere Quelle bleibt ein Fehler.
+`page-selector` activates a rule only on matching pages. An active rule must
+find matches unless `required: false` is set. By default, a page without
+requirements fails; set `extraction.allow-empty-pages: true` for known index-only
+pages. Main content and rules are still checked. A completely empty source
+remains an error.
 
-Felder: `original-id`, `title`, `statement`, `obligation`, `context`,
+Fields: `original-id`, `title`, `statement`, `obligation`, `context`,
 `applicability`, `exceptions`, `category`, `revision`, `guidance`, `example`.
-Nur `statement` ist Pflicht; es muss nach der Extraktion nichtleer sein.
+Only `statement` is required; it must be nonempty after extraction.
 
 ```yaml
 fields:
@@ -95,31 +96,32 @@ fields:
     many: true
 ```
 
-Ein Feldselektor ist relativ zum Eintrag, mit `scope: page` relativ zur gesamten
-Seite. Ohne Selektor wird der ganze Eintrag übernommen. `attribute` liest eines
-der im Schema erlaubten Attribute, `many: true` verbindet mehrere Treffer;
-sonst sind mehrere Treffer ein Fehler. Alternativ setzt `value` einen expliziten
-konstanten Wert. Fehlende optionale Felder bleiben leer. Das Tool leitet keine
-Verbindlichkeit aus Schlüsselwörtern ab und ergänzt weder MUST noch SHOULD.
+A field selector is relative to the item, or to the entire page with
+`scope: page`. Without a selector, the entire item is used. `attribute` reads
+an attribute allowed by the schema; `many: true` joins multiple matches.
+Otherwise, multiple matches are an error. Alternatively, `value` sets an
+explicit constant. Missing optional fields remain empty. The tool does not
+infer obligation from keywords or add MUST or SHOULD.
 
-Absätze, verschachtelte Listen, Tabellen und Code werden als Markdown erhalten.
-Bedingungen und Ausnahmen gehören in die Aussage oder in die entsprechenden
-Kontextfelder. Regeln können ihre fachliche Vollständigkeit nicht selbst beweisen:
-Probeläufe sind gegen repräsentative Seiten und erwartete Ergebnisse zu prüfen.
+Paragraphs, nested lists, tables, and code are retained as Markdown. Conditions
+and exceptions belong in the statement or corresponding context fields. Rules
+cannot prove their own semantic completeness: check trial runs against
+representative pages and expected results.
 
-Identität: Original-ID innerhalb der Quelle, sonst Seiten-URL plus Anker direkt
-am Eintrag, sonst Seiten-URL plus Inhalt. IDs sind SHA-256-basiert und nach Quelle
-getrennt. Ohne Original-ID oder stabilen Anker führt eine Inhaltsänderung zu einer
-neuen ID. Einfügen weiterer Einträge verschiebt die bestehenden IDs nicht.
-Widersprüchliche Aussagen mit derselben Quellidentität brechen den Lauf ab.
+Identity uses the original ID within the source, otherwise the page URL plus
+an anchor directly on the item, otherwise the page URL plus content. IDs are
+based on SHA-256 and separated by source. Without an original ID or stable
+anchor, changing content produces a new ID. Inserting other items does not
+shift existing IDs. Conflicting statements with the same source identity
+abort the run.
 
-## Authentifizierung
+## Authentication
 
-Credentials werden ausschließlich über externe Referenzen geladen. Keine echten
-Zugangsdaten in Configs, Prozessargumenten oder Git ablegen. Authentifizierte Quellen
-haben genau eine Origin; Zugangsdaten werden nicht an andere Origins weitergegeben.
+Credentials are loaded only through external references. Do not put real
+credentials in configurations, process arguments, or Git. Authenticated sources
+have exactly one origin; credentials are not forwarded to other origins.
 
-API-Token:
+API token:
 
 ```yaml
 auth:
@@ -129,9 +131,9 @@ auth:
   prefix: Bearer
 ```
 
-Für beispielsweise `X-Api-Key` ist `prefix: ""` möglich.
+For `X-Api-Key`, for example, `prefix: ""` is possible.
 
-Benutzername/Passwort über HTTP Basic mit geprüftem HTTPS:
+Username and password via HTTP Basic over verified HTTPS:
 
 ```yaml
 auth:
@@ -140,10 +142,10 @@ auth:
   password-env: HARVEST_PASSWORD
 ```
 
-Formularlogins sind kein generisches HTTP-Basic-Verfahren und benötigen bei
-Bedarf einen Adapter für die konkrete Zielanwendung.
+Form logins are not a generic HTTP Basic method and require an adapter for the
+specific target application if needed.
 
-Entra ID für unbeaufsichtigte Läufe:
+Entra ID for unattended runs:
 
 ```yaml
 auth:
@@ -155,11 +157,11 @@ auth:
   scopes: [api://YOUR-RESOURCE/.default]
 ```
 
-Tenant, Client und Scope sind durch die realen, administrativ eingerichteten
-Werte zu ersetzen. Die Zielanwendung muss dieses Token für ihren Inhalt akzeptieren
-und entsprechende Leserechte für die Anwendung bereitstellen.
+Replace the tenant, client, and scope with real, administratively configured
+values. The target application must accept this token for its content and
+grant the application appropriate read permissions.
 
-Für interaktive Anmeldung mit Microsoft Entra ID:
+For interactive sign-in with Microsoft Entra ID:
 
 ```yaml
 auth:
@@ -176,26 +178,26 @@ auth:
 .venv/bin/python -m harvester run --config company.yaml
 ```
 
-Die interaktive Anmeldung verwendet MSALs Authorization-Code-Flow mit PKCE und
-lokalem Callback. Die App-Registrierung benötigt den dazugehörigen Desktop-/Public-Client-
-Zugriffsweg mit `http://localhost` als Redirect-URI. Siehe
-[Microsofts MSAL-Dokumentation](https://learn.microsoft.com/en-us/entra/msal/python/getting-started/acquiring-tokens).
+Interactive sign-in uses MSAL's authorization-code flow with PKCE and a local
+callback. The app registration needs the corresponding desktop/public-client
+access path with `http://localhost` as redirect URI. See
+[Microsoft's MSAL documentation](https://learn.microsoft.com/en-us/entra/msal/python/getting-started/acquiring-tokens).
 
-Nur das Access-Token wird mit Ablaufzeit und Bindung an Quelle, Tenant, Client,
-Origin und Scopes in einer Datei mit Modus 0600 gespeichert; kein Refresh-Token.
-Bei Ablauf ist eine neue Anmeldung erforderlich. `run` öffnet niemals einen
-Browser und wartet auch ohne `--non-interactive` nie auf Eingaben.
+Only the access token is stored, with its expiry and binding to source, tenant,
+client, origin, and scopes, in a file with mode 0600; no refresh token is stored.
+After expiry, sign in again. `run` never opens a browser and never waits for
+input, even without `--non-interactive`.
 
-Entra-Unterstützung bedeutet hier Bearer-Token-Zugriff auf die Zielanwendung.
-Eine Webseite, die ausschließlich ihre eigenen Browser-Session-Cookies akzeptiert,
-ist damit nicht automatisch erschlossen. Dafür muss der konkrete Zugriffsweg
-zunächst geklärt werden. Ein echter Unternehmensmandant war für den lokalen
-Implementierungstest nicht verfügbar; SDK-Anbindung, Fehlerfälle und Speicherung
-sind mit synthetischen Antworten getestet.
+Entra support here means bearer-token access to the target application. A
+website that accepts only its own browser session cookies is not automatically
+supported. Its specific access method must first be established. A real company
+tenant was unavailable for local implementation tests; SDK integration, error
+cases, and storage were tested with synthetic responses.
 
-## Ausgaben und OSCAL
+## Output and OSCAL
 
-Standard: `output.catalog`, `title`, `version`, `report`. Mehrere Dateien:
+The default uses `output.catalog`, `title`, `version`, and `report`. For multiple
+files:
 
 ```yaml
 output:
@@ -203,7 +205,7 @@ output:
   catalogs:
     - id: all
       path: ../out/all.oscal.yaml
-      title: Alle Anforderungen
+      title: All Requirements
       version: "1.0.0"
       source-ids: [engineering, operations]
     - id: operations
@@ -213,36 +215,36 @@ output:
       source-ids: [operations]
 ```
 
-Eine Quelle wird nur einmal gecrawlt, auch wenn sie mehreren Ausgaben zugeordnet
-ist. Jede Quelle muss mindestens einer Ausgabe angehören. Das Beispiel benötigt
-entsprechende Quell-IDs in `sources`.
+A source is crawled only once, even if assigned to multiple outputs. Every
+source must belong to at least one output. The example needs matching source
+IDs in `sources`.
 
-Jede Quelle wird eine OSCAL-Gruppe, jedes Requirement ein Control mit
-`statement`. Original-ID, Provenienz und optionale Metadaten werden über Properties
-im projektspezifischen Namespace gespeichert. Mehrzeiliger Kontext, Geltungsbereich
-und Ausnahmen sind eigene Parts; `guidance` und `example` verwenden OSCAL-Part-Namen.
-Quell-URLs und Referenzen bleiben als Links erhalten. Verlinkte Ressourcen werden
-nur über die normalen Crawl-Regeln abgerufen, nicht zur Exportvalidierung.
+Each source becomes an OSCAL group; each requirement becomes a control with a
+`statement`. Original IDs, provenance, and optional metadata are stored as
+properties in the project namespace. Multiline context, applicability, and
+exceptions are separate parts; `guidance` and `example` use OSCAL part names.
+Source URLs and references are retained as links. Linked resources are fetched
+only under normal crawl rules, not for export validation.
 
-Das [offizielle NIST-Schema](../harvester/schemas/README.md) ist lokal eingebunden.
-Jeder neue Export erhält eine neue Dokument-UUID und Änderungszeit; Control-IDs und
-fachlicher Inhalt bleiben bei gleichen Eingaben stabil. Ein Vergleich der gesamten
-Datei einschließlich Laufzeitmetadaten ist daher nicht bytegleich.
+The [official NIST schema](../harvester/schemas/README.md) is bundled locally.
+Each new export gets a new document UUID and modification time; control IDs and
+semantic content remain stable for identical inputs. Therefore, comparing the
+entire file including runtime metadata does not yield byte-identical results.
 
-| Exit-Code | Bedeutung |
+| Exit code | Meaning |
 | --- | --- |
-| 0 | Erfolgreich; bei Probelauf validiert, aber kein Katalog geschrieben. |
-| 2 | Config oder Aufruf ungültig. |
-| 3 | Authentifizierung fehlgeschlagen, fehlt oder ist abgelaufen. |
-| 4 | Abruf, Scope, Budget oder Extraktion fehlgeschlagen. |
-| 5 | Exportvalidierung, Veröffentlichung oder CI-Artefaktbereitstellung fehlgeschlagen. |
-| 130 | Durch Benutzer abgebrochen. |
+| 0 | Success; a dry run validates but writes no catalog. |
+| 2 | Invalid configuration or invocation. |
+| 3 | Authentication failed, missing, or expired. |
+| 4 | Fetch, scope, budget, or extraction failed. |
+| 5 | Export validation, publication, or CI artifact preparation failed. |
+| 130 | Cancelled by the user. |
 
-## CI und Entwicklung
+## CI and development
 
-Vorlagen für [GitLab CI/CD](../ci/gitlab-ci.yml) und [GitHub Actions](../ci/github-actions.yml)
-mit Einrichtungshinweisen stehen in [ci/README.md](../ci/README.md). Sie werden nicht
-automatisch aktiviert. Es gibt keinen Schreibzugriff auf Repositories.
+Templates for [GitLab CI/CD](../ci/gitlab-ci.yml) and [GitHub Actions](../ci/github-actions.yml),
+with setup guidance, are in [ci/README.md](../ci/README.md). They are not
+enabled automatically. The tool has no write access to repositories.
 
 ```bash
 .venv/bin/python -m pip install --require-hashes -r requirements-dev.lock
@@ -250,12 +252,12 @@ automatisch aktiviert. Es gibt keinen Schreibzugriff auf Repositories.
 python3 scripts/check_dependencies.py
 ```
 
-Die Tests verwenden synthetische Quellen, kontrollierte Transportschnittstellen
-und Netzwerkfehler. Der Dependency-Check fragt veröffentlichte PyPI-Advisories ab;
-Netzwerkfehler lassen ihn fehlschlagen. Die bei der Erstellung geprüften
-Paketversionen und Ursprünge stehen in `dependency-provenance.json`.
+Tests use synthetic sources, controlled transport interfaces, and network
+failures. The dependency check queries published PyPI advisories; network
+errors make it fail. Package versions and origins checked during development
+are recorded in `dependency-provenance.json`.
 
-HTML wird statisch gelesen. JavaScript-Rendering, Anhänge, PDFs, beliebige
-Loginformulare und automatische Änderungen der Regeln sind nicht implementiert.
-Die [requirements.md](../requirements.md) dokumentiert Anforderungen, Entscheidungen
-und den Stand ihrer Umsetzung.
+HTML is read statically. JavaScript rendering, attachments, PDFs, arbitrary
+login forms, and automatic rule changes are not implemented. The
+[requirements document](../requirements.md) records requirements, decisions,
+and implementation status.

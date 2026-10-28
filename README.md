@@ -1,8 +1,8 @@
 # appsec-analyzer-tools
 
-Eigenständige Zusatztools für [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer):
+Standalone supplementary tools for [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer):
 
-- [Requirement Harvester](requirement-harvester/README.md) liest Anforderungen aus konfigurierten HTTPS-Seiten und exportiert OSCAL-YAML.
-- [Security Score](security-score/README.md) bewertet Repositories und die Sicherheitsrelevanz von Änderungen.
+- [Requirement Harvester](requirement-harvester/README.md) reads requirements from configured HTTPS pages and exports OSCAL YAML.
+- [Security Score](security-score/README.md) assesses repositories and the security relevance of changes.
 
-Jedes Tool liegt in einem eigenen Verzeichnis mit Anleitung, Abhängigkeiten und Tests. Die Kernanwendung wird im [appsec-analyzer-Repository](https://github.com/appsec-foundry/appsec-analyzer) entwickelt.
+Each tool has its own directory with instructions, dependencies, and tests. The core application is developed in the [appsec-analyzer repository](https://github.com/appsec-foundry/appsec-analyzer).

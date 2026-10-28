@@ -1,14 +1,14 @@
-# Geschützte Quelle mit Bearer-Token aus der Umgebungsvariable HARVEST_TOKEN.
-# URLs und Selektoren an die eigene Webseite anpassen.
+# Protected source with a bearer token from the HARVEST_TOKEN environment variable.
+# Adjust URLs and selectors for your website.
 config-version: 1
 output:
   catalog: ../out/requirements.oscal.yaml
   report: ../out/report.json
-  title: Unternehmensanforderungen
+  title: Company Requirements
   version: 1.0.0
 sources:
 - id: company
-  title: Unternehmensanforderungen
+  title: Company Requirements
   start-urls:
   - https://wiki.example.org/requirements/engineering
   - https://wiki.example.org/requirements/operations

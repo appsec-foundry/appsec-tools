@@ -1,6 +1,6 @@
-# Diese Datei als .gitlab-ci.yml im Repository-Root verwenden.
-# Benötigt einen non-root Shell-Runner mit Python >=3.10 und Tag python-nonroot.
-# Für den Crawl: privates Projekt, geschützter Default-Branch und Web-/Schedule-Pipeline.
+# Use this file as .gitlab-ci.yml at the repository root.
+# Requires a non-root shell runner with Python >=3.10 and tag python-nonroot.
+# For crawling: a private project, protected default branch, and web/scheduled pipeline.
 include:
   - local: /requirement-harvester/ci/gitlab-ci.yml
 

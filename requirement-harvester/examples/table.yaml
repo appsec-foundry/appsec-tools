@@ -2,13 +2,13 @@ config-version: 1
 output:
   catalog: ../out/requirements.oscal.yaml
   report: ../out/report.json
-  title: Unternehmensanforderungen
+  title: Company Requirements
   version: "1.0.0"
 defaults:
   max-depth: 2
 sources:
   - id: company
-    title: Unternehmensanforderungen
+    title: Company Requirements
     start-urls: [https://wiki.example.org/requirements/]
     crawl:
       allowed-origins: [https://wiki.example.org]

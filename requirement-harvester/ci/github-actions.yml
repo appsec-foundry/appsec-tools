@@ -1,4 +1,4 @@
-# Nach .github/workflows/requirement-harvester.yml kopieren.
+# Copy to .github/workflows/requirement-harvester.yml.
 name: Requirement Harvester
 on:
   workflow_dispatch:

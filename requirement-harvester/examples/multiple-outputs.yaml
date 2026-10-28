@@ -1,12 +1,12 @@
-# Zwei Quellen: gemeinsamer Katalog und zusätzlicher Operations-Katalog.
-# URLs und Selektoren an die eigene Webseite anpassen.
+# Two sources: one shared catalog and an additional operations catalog.
+# Adjust URLs and selectors for your website.
 config-version: 1
 output:
   report: ../out/report.json
   catalogs:
   - id: all
     path: ../out/all.oscal.yaml
-    title: Alle Anforderungen
+    title: All Requirements
     version: 1.0.0
     source-ids:
     - engineering

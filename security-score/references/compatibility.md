@@ -1,17 +1,31 @@
-# Variants and compatibility
+# Engines and compatibility
 
-Internal scoring version 2 is the default, even when Analyzer is installed. It uses whole-point deductions per finding instead of version 1's logarithmic repetition formula; repeated findings can therefore produce different scores. Compare results only within a matching scoring version. Its standard-library runtime, catalog and examples ship with this skill. It does not import another checkout or install dependencies. Linux/macOS descriptor-relative no-follow reads are required; Windows filesystem qualification is not claimed.
+Security Score has two engines. The internal engine runs by default. The Analyzer engine is optional and runs only when you pass `--engine analyzer`.
 
-`--engine analyzer` selects the installed Analyzer. `--analyzer /absolute/executable` binds an operator-selected executable; otherwise the wrapper looks for `appsec-analyzer` on the operator's PATH. An executable inside the examined checkout is rejected. Target files cannot select an executable or change the variant. A trusted host integration may supply its pinned engine invocation for the explicitly selected Analyzer variant only.
+| Engine | What it returns | What it needs |
+| --- | --- | --- |
+| Internal | Repository score, or security relevance for changes | Python 3.10+; Git for local comparisons; no extra Python packages |
+| Analyzer | Repository score only | A separately installed, compatible AppSec Analyzer |
 
-The optional [dependency declaration](../dependencies.json) requires public interface 1 and score capabilities `available: true`, `model_calls: false`, `scoring_version: 2`. Version and capabilities are checked before scoring. Missing/incompatible Analyzer stops that variant without installation or silent fallback. Internal scoring never consults Analyzer.
+The engines use different scoring policies. Do not compare their numbers as if they measured the same thing. Internal scoring version 2 counts each finding at its full weight; version 1 used a logarithmic formula for repeated findings. Compare internal scores only when their scoring versions and coverage match.
 
-The wrapper accepts a local repository or supported HTTPS repository URL. Change selectors are rejected before engine execution. URL requests also read host settings, separately from the preserved engine result; they do not rewrite Analyzer's number. `--token-env` is for those API reads. Analyzer source credentials remain configured through its trusted distribution.
+## Using the Analyzer engine
 
-JSON/YAML retain the engine document under `analyzer_result`, including warnings, scanner statuses, unscored findings and comparison data. The wrapper checks verdict, numeric range, exit status and scoring identity, then adds the fixed-band grade. Compact text shows only number/grade; details retain the engine document. The selected execution and output budgets apply to both variants.
+Select an installed executable on your `PATH`, or specify its absolute path:
 
-Do not compare internal and Analyzer scores numerically. Within a variant, compare compatible scopes and subject kinds with matching scoring/catalog/implementation identity, source policy and coverage. Changes use a separate relevance result and never receive scores or grades. Their relevance is not a repository posture assessment. Empty or unknown results provide no approval.
+```sh
+security-score /path/to/repository --engine analyzer
+security-score /path/to/repository --engine analyzer --analyzer /absolute/path/to/appsec-analyzer
+```
 
-Direct repository URLs support canonical GitHub.com and GitLab.com HTTPS. Public APIs/archives are used unless an existing credential is selected with `--token-env NAME`. Arbitrary credential variables are not auto-read. Other hosts, SSH URLs and unsupported patch formats need an authorized local checkout/comparison. Remote transport/API tests are offline; they do not establish live GitHub/GitLab qualification.
+The executable cannot come from the repository being assessed. Security Score checks its `version` and `capabilities` commands before scoring. The required public interface is version 1, with `score.available: true`, `score.model_calls: false`, and `score.scoring_version: 2` as recorded in [dependencies.json](../dependencies.json). If the executable is missing or incompatible, the command fails. It does not install Analyzer or switch to the internal engine.
 
-Change-result consumers must dispatch on `analysis: change-relevance` and read `relevance`, `relevance_version`, signals and finding changes. The earlier development-only change-score fields `score`, `grade`, `areas` and `scoring_version` are absent. Completed change checks exit 0 even for unclear relevance; incomplete processing exits 1. Repository grade bands remain unchanged; scoring version 2 changes repetition arithmetic and adds an `areas[].breakdown` with counts, points, deductions and caps. Rule version 3 / relevance version 2 add access-decision and interface-exposure signals with bounded enclosing-function context. Signals can have the relation `in changed function`; `coverage.context_limited_files` lists files whose function or file size prevents full context expansion. Patches remain limited to their separate supplied hunks. Source policy `skill-bounded-static-v2` captures executable flags and patch locations. Do not convert an old change score into a relevance level. Internal and Analyzer scoring versions belong to their respective engines; a shared version number does not imply equivalent policies.
+The Analyzer engine accepts a local repository or a supported HTTPS repository URL. It does not accept change selectors such as `--staged`, `--base`, or `--patch`. Analyzer manages any source credentials through its own trusted installation. For a repository URL, `--token-env NAME` selects a token only for the separate GitHub/GitLab host-setting API checks; those checks do not alter Analyzer's score.
+
+Structured output keeps Analyzer's original result in `analyzer_result`, including its warnings, scanner statuses, and unscored findings. The wrapper checks the result status, score range, exit status, and scoring identity, then adds the A–F grade. `--details` shows the underlying result; compact text shows the score and grade.
+
+## Comparing results
+
+Compare repository scores only for the same engine, compatible scoring and rule versions, comparable sources, and similar coverage. A high grade reflects the checks that ran; it is not a verified security assessment. Change analysis is a separate result with `analysis: change-relevance`, `relevance`, `relevance_version`, `signals`, and `finding_changes`. It has no score or grade. An `unclear` relevance result does not approve a change.
+
+The internal engine reads local files without following symlinks on Linux and macOS. Windows filesystem behavior has not been qualified. Direct URLs are limited to canonical HTTPS repositories on GitHub.com and GitLab.com; SSH and self-hosted URLs need a local checkout. Remote transport and API tests are offline, so live GitHub/GitLab behavior still needs verification in the deployment environment.

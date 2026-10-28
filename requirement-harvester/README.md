@@ -1,10 +1,10 @@
 # Requirement Harvester
 
-Liest Anforderungen aus konfigurierten Webseiten und Wikis und schreibt einen OSCAL-YAML-Katalog. Python 3.10+ auf Linux oder macOS ist erforderlich.
+Reads requirements from configured websites and wikis and writes an OSCAL YAML catalog. Requires Python 3.10+ on Linux or macOS.
 
-## Quick Start
+## Quick start
 
-Mit installiertem `pipx` vom Repository-Root aus:
+With `pipx` installed, run from the repository root:
 
 ```sh
 pipx install ./requirement-harvester
@@ -12,26 +12,26 @@ requirement-harvester validate --config requirement-harvester/examples/tss-web.y
 requirement-harvester run --config requirement-harvester/examples/tss-web.yaml
 ```
 
-Der Lauf liest öffentliche TSS-WEB-Seiten. Katalog und Bericht werden in `requirement-harvester/out/` geschrieben; die Anzahl der Anforderungen hängt vom aktuellen Seiteninhalt ab.
+This run reads public TSS-WEB pages. The catalog and report are written to `requirement-harvester/out/`; the number of requirements depends on the current page content.
 
-## Eigene Quelle
+## Your own source
 
-Eine [Beispielconfig](examples/lists.yaml) kopieren und URLs sowie Selektoren anpassen. Pfade in der Config gelten relativ zur Config-Datei.
+Copy an [example configuration](examples/lists.yaml) and adjust its URLs and selectors. Paths in the configuration are relative to the configuration file.
 
 ```sh
-requirement-harvester validate --config meine-config.yaml
-requirement-harvester run --config meine-config.yaml --dry-run
-requirement-harvester run --config meine-config.yaml
+requirement-harvester validate --config my-config.yaml
+requirement-harvester run --config my-config.yaml --dry-run
+requirement-harvester run --config my-config.yaml
 ```
 
-`validate` ruft keine Seiten ab. `--dry-run` schreibt einen Bericht mit Vorschau, aber keinen Katalog. Ein erfolgreicher Lauf ersetzt die Ausgabedateien.
+`validate` does not fetch pages. `--dry-run` writes a preview report but no catalog. A successful run replaces the output files.
 
-## CI und Referenz
+## CI and reference
 
-Die [GitLab- und GitHub-Vorlagen](ci/README.md) verwenden eine lokale virtuelle Umgebung und die gesperrten Abhängigkeiten. Zugangsdaten gehören in geschützte CI-Variablen.
+The [GitLab and GitHub templates](ci/README.md) use a local virtual environment and locked dependencies. Put credentials in protected CI variables.
 
-- [Konfiguration, Authentifizierung und Exit-Codes](docs/reference.md)
-- [Config-Schema](harvester/schemas/config.schema.json)
-- [Anforderungen](requirements.md)
+- [Configuration, authentication, and exit codes](docs/reference.md)
+- [Configuration schema](harvester/schemas/config.schema.json)
+- [Requirements](requirements.md)
 
-Unterstützt statisches HTML, API-Token, HTTP Basic und Entra-Bearer-Token. JavaScript-Rendering, PDFs und Formular-Logins werden nicht unterstützt.
+Supports static HTML, API tokens, HTTP Basic, and Entra bearer tokens. JavaScript rendering, PDFs, and form logins are not supported.

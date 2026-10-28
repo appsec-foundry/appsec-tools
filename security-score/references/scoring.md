@@ -1,174 +1,130 @@
-# Scoring and rule maintenance
+# How Security Score works
 
-The internal score describes patterns covered by the bundled catalog. It does not estimate attack probability, business loss or verified runtime exploitability. It is separate from Analyzer's numeric policy.
+Security Score answers two different questions:
 
-## Calculation
+- **Repository scan:** What did the bundled checks find in the selected repository? This produces a score from 0 to 100 and a grade from A to F when enough checks complete.
+- **Change analysis:** Could the selected change affect security-related behavior? This produces `high`, `medium`, `low`, or `unclear` relevance. It does not produce a score.
 
-A rule/file outcome is `violated` when a violation is recognized, otherwise `unclear` when evidence is ambiguous, otherwise `satisfied` when a specific control is recognized, otherwise `not_applicable`. Unknown aliases, indirect flows, external configuration and technology names do not establish a control. Syntax or lexical failures prevent a complete headline.
+The checks are deterministic and limited to the patterns in [rules.json](../rules.json). A score is not an estimate of attack probability or proof that the application is safe. The optional Analyzer engine has its own scoring policy; see [compatibility.md](compatibility.md).
 
-The [catalog](../rules.json) starts with all editable scoring values under `scoring`. Internal scoring version 2 uses these whole-point weights and caps:
+## Repository scores
 
-| Severity | Weight | Maximum affected area score |
+### How points are deducted
+
+Findings are grouped into areas, such as execution or injection. Every finding deducts points from its area. Its severity also sets the highest score that area can receive.
+
+| Severity | Points deducted per finding | Highest area score |
 | --- | ---: | ---: |
 | Critical | 50 | 39 |
 | High | 25 | 59 |
 | Medium | 10 | 79 |
 | Low | 3 | 89 |
 
-Calculate each assessed area in three steps:
-
-1. Count the findings for each rule across all examined files in that area. Each finding deducts its severity's weight: `count × weight`.
-2. Add those deductions and subtract the total from 100.
-3. Apply the lowest severity cap present in the area, and a floor of 0.
+For each area, add all deductions, subtract them from 100, apply the strictest cap present, and stop at 0. The repository score is the **lowest assessed area score**. Findings in different areas are not added together.
 
 ```text
-rule deduction = finding count × severity weight
-area deduction = sum of rule deductions in that area
-area cap       = lowest cap of its findings, or 100 without findings
-area score     = max(0, min(100 − area deduction, area cap))
-overall score  = lowest assessed area score
+area score = max(0, min(100 - total deductions in area, strictest cap))
+repository score = lowest assessed area score
 ```
 
-All arithmetic uses whole points; there is no logarithm, rounding or positive credit. Only areas with recognized control or violation evidence are scored. Unknown-only areas stay unscored; findings need no positive-control baseline to deduct points. Passing checks never cancel deductions.
-
-The headline is the lowest assessed area score. One high observation limits it to 59 (E), even if other areas score 100. Further observations can lower it to 0. `--details` and structured output show each rule's count, points per instance, deduction and cap, followed by area and overall calculations. These initial values are a documented heuristic, not a calibrated risk model.
-
-### Worked examples
-
-Each row assumes complete coverage with recognized checks; findings are in one area unless stated otherwise.
-
-| Evidence | Deduction | Cap | Area / overall result |
-| --- | ---: | ---: | --- |
-| Recognized control, no findings | 0 | 100 | 100 (A) |
-| One high finding | 1 × 25 = 25 | 59 | min(75, 59) = 59 (E) |
-| Two high findings, same or different rules | 2 × 25 = 50 | 59 | min(50, 59) = 50 (E) |
-| Three high findings | 3 × 25 = 75 | 59 | min(25, 59) = 25 (F) |
-| Five high findings | 5 × 25 = 125 | 59 | max(0, min(−25, 59)) = 0 (F) |
-| Three medium findings | 3 × 10 = 30 | 79 | min(70, 79) = 70 (C) |
-| One high and three medium findings | 25 + 3 × 10 = 55 | 59 | min(45, 59) = 45 (F) |
-| One high finding in each of two areas | 25 per area | 59 per area | min(59, 59) = 59 (E) |
-| Areas scoring 50 and 100 | Separate area deductions | Separate caps | min(50, 100) = 50 (E) |
-| Unknown evidence only | No scored area | — | Undetermined; no score or grade |
-
-Caps express the maximum grade for an observed severity, while weights make additional findings accumulate. For example, a first high finding deducts 25 points but its cap lowers the result further to 59. A second high finding brings the deduction to 50, so the cap no longer changes the result. Findings in different areas are not added together.
-
-A headline requires at least one recognized source/dependency check, complete required processing and unchanged selected local sources. Host settings alone cannot award an application score. Insufficient evidence yields `undetermined`; failed or limited required processing yields `incomplete`. Both withhold score and grade while retaining available observations. One recognized check is still narrow coverage, explicitly shown in details and structured output.
-
-## Change relevance
-
-Changes, diffs, commits and PRs/MRs receive an indication of security relevance and separate findings, with no numeric score, grade or scored area (REQ-02–04). The question is whether the change may affect access decisions, security functions, interface exposure or another security-related behavior. The catalog's `change_relevance` policy is separate from severity weights and has its own version. A high relevance signal can describe a correctly implemented security feature or a fix, not just a detected weakness.
-
-| Relevance | Meaning |
-| --- | --- |
-| High | Indications of changed identity/access decisions, security functions, interface exposure, data boundaries, cryptography, dependency/build authority, agent instructions or executable permissions. |
-| Medium | Recognized frontend/input/output changes or security-relevant documentation/policy changes. |
-| Low | The complete examined change is positively identified as ordinary documentation or supported non-functional changes, without a recognized security signal. |
-| Unclear | Changed behavior or context cannot be classified by the available deterministic rules. An empty finding list alone never establishes low relevance. |
-
-Relevance version 2 collects indications through these editable rule families:
-
-| Family | Examples of evidence | Typical level |
-| --- | --- | --- |
-| Access decisions | `can_read` / `canRead`, permission calls, ownership/tenant comparisons, admin guards, authorization annotations, access-policy paths | High |
-| Security functions | Token/password verification helpers, cryptographic operations, session/CSRF/CORS/CSP/TLS settings | High |
-| Interface exposure | Route declarations/annotations, listener and binding settings, proxy/routing files, public service types and exposed ports | High |
-| Data boundaries | Query operations, external requests, frontend input/output processing | High for persistence/network; medium for frontend |
-| Execution/configuration authority | Dependency/build/deployment files, agent instructions, executable flags | High |
-| Security documentation | Changed policy, threat-model or security-related guidance | Medium |
-
-The strongest matching signal sets `high` or `medium`; signals are not added or averaged. Each signal records its rule, reason, aspect, location, side and relation to the change. Both added and removed code are inspected, so adding protection and removing it can receive the same relevance. No rule establishes that a control is effective or that an interface is actually reachable.
-
-For full local comparisons, inspect changed lines plus up to two nearby lines, confined to the enclosing function when its boundary is recognized. Expand the innermost changed function to at most 200 lines, including its declaration and decorators/attributes. Python uses AST function boundaries; JavaScript/TypeScript, Java, Kotlin, C#, Go, Rust and PHP use masked comments/literals with declaration and balanced-brace heuristics. These heuristics do not resolve types, call graphs or application-wide control flow. A security-related declaration or operation anywhere in that selected function can supply an indication, with relation `in changed function`. An unchanged sibling function is not included merely because it is nearby. Existing scanner observations can also contribute, including satisfied controls.
-
-Functions longer than 200 lines contribute only their declaration (up to 20 lines) and changed/nearby lines. Files over 10,000 lines skip function expansion. `coverage.context_limited_files` identifies both cases. Unclassified behavior stays unclear; a context limit cannot make it low. Patch inputs use only the available changed and nearby lines in each supplied hunk independently; they do not infer a containing function or combine separate hunks into one. To provide complete function context for a PR/MR, use its captured local base/head comparison.
-
-For example, changing the final return in a long-enough-to-exceed-nearby-context `can_read(actor, owner)` from `actor == owner` to `True` indicates an access-decision change through its enclosing declaration. A generic `compute(value)` return change with no recognized security evidence remains unclear. Switching `server.address` from `127.0.0.1` to `0.0.0.0` indicates possible exposure; it does not establish external reachability. Editing only a comment in a Python access helper remains low when AST equivalence proves unchanged code.
-
-Comment/format-only equivalence is established only where parsing supports it (Python AST and JSON structure); no generic claim is made for opaque languages. Executable flags are captured from local/Git source metadata. Unsupported or excluded files prevent a low classification. Positive signals can remain visible during incomplete processing, but the result remains marked incomplete.
-
-For local comparisons, line matching is bounded to 10,000 lines per file. Larger files use conservative affected-file context and remain listed as unclassified. Patch inputs use the explicit added/removed line positions and process hunks separately. Metadata-only entries, permission changes, symlinks and rename/copy metadata require a local Git comparison; the parser rejects these instead of silently omitting them. At most 1,000 relevance signals are retained, with truncation reported and evidence for the headline level preserved. Signals contain rule references, aspects, source locations and explanations, not source snippets.
-
-Findings are compared by rule, file and normalized observation signatures, with named Python context where available. New observations are `introduced`, additional instances are `worsened`, matches are `pre_existing`, and removed observations are `resolved`. Incomplete comparisons remain `unresolved`. Pre-existing observations are shown only in the affected context, including selected enclosing functions. Signatures cannot establish whole-flow identity; a relevance check is not a full semantic review. A deeper model-backed review is a separate explicit choice.
-
-A complete relevance check exits 0, including an unclear result. Missing knowledge is not an execution failure and does not approve the change. Incomplete processing exits 1. Repository-only score coverage can still return exit 2. Structured consumers use `analysis: change-relevance`, `relevance`, `relevance_version`, `signals` and `finding_changes`; no score/grade fields are assigned.
-
-## Grades
+For example, one high finding deducts 25 points, but the high-severity cap lowers its area's result from 75 to **59 (E)**. Two high findings in the same area deduct 50 points, giving **50 (E)**. A high finding in each of two areas gives 59 in each, so the repository score is still **59 (E)**. A recognized check with no findings can score 100; it does not cancel findings in another area. These weights and caps are a documented heuristic, not a calibrated risk model.
 
 | Score | Grade |
 | --- | --- |
 | 90–100 | A |
-| 80 to below 90 | B |
-| 70 to below 80 | C |
-| 60 to below 70 | D |
-| 50 to below 60 | E |
-| 0 to below 50 | F |
+| 80–<90 | B |
+| 70–<80 | C |
+| 60–<70 | D |
+| 50–<60 | E |
+| 0–<50 | F |
 
-100 means no deductions from applicable checks; 0 is the lowest attainable result. Grades describe only the reported scope and coverage. Undetermined, incomplete, failed and cancelled work receives no grade. The labels also describe Analyzer's own numbers without making its scoring equivalent.
+### When there is no score
 
-## Architecture and supply chain
+A check can be `violated`, `satisfied`, `unclear`, or `not_applicable`. The scanner records a violation when it recognizes one; otherwise it records unclear evidence before a recognized control. Merely finding a technology name does not prove a control works. Indirect flows, aliases, and external configuration may remain unclear.
 
-React, Angular, Vue, persistence libraries and Python DB imports are source-linked architecture observations, with no score credit for presence. Separate rules recognize direct SQL construction/parameterization, intrinsic JSX or Angular text binding, HTML/trust bypasses, literal CSP headers, debug/TLS settings and container hardening.
+At least one source or dependency check must provide recognized evidence, and required processing must finish. Host settings alone cannot establish an application score. When evidence is insufficient, the verdict is `undetermined`. When required processing fails or hits a limit, it is `incomplete`. Both retain available findings but withhold score and grade. Even one recognized check can yield a score with narrow coverage; inspect `--details` before using the result.
 
-CSP checks recognize literal header declarations and nginx `add_header`. A positive declaration restricts scripts and includes `object-src 'none'`, `base-uri 'none'` and `frame-ancestors`. Delivery, proxy overrides, nonce generation and complete route coverage remain unverified. Missing declarations with frontend evidence stay unclear. Meta policies, dynamic Helmet/Django configuration and wider control flows are not fully assessed.
+Detailed and JSON/YAML output show each area's deductions and cap. `areas[].breakdown` lists the rule, severity, number of findings, points per finding, deduction, and cap.
 
-Supply-chain checks cover insecure/mutable dependency sources, download-and-execute lifecycle scripts, matching npm v2/v3 root lock declarations, Python requirement pins/hashes, immutable Action/container references, and explicit workflow permissions. Lock consistency does not establish all package integrity or vulnerability status. Other managers, included requirement files and scoped/inherited permissions can remain unclear. No package install, build, project script, hook or vulnerability-feed query runs.
+## Change relevance
 
-## Repository hosts
+Change relevance asks what the change touches, including fixes and correctly implemented security features. It is independent of finding severity. The strongest recognized indication sets the level; indications are not added or averaged.
 
-Explicit Git URLs resolve through host metadata to an identified commit and bounded archive. Default-branch protection, applicable review requirements and exposed security settings are read separately. Explicitly disabled settings can become host findings; missing fields, denied requests and unavailable endpoints remain unknown. A feature-availability flag does not prove scanner execution.
-
-GitHub security/analysis and branch details can require additional permissions. GitLab approval rules require authentication; positive rules explicitly covering the default branch are recognized, while other/inherited/further pages remain unresolved. Credential values are sent only to the selected API host, never exposed in output or forwarded to an archive host. Connected IPs are checked as public, TLS hostname verification stays enabled, and archives are parsed in memory without filesystem extraction.
-
-API references: [GitHub repositories](https://docs.github.com/en/rest/repos/repos), [GitHub branch protection](https://docs.github.com/en/rest/branches/branch-protection), [GitLab projects](https://docs.gitlab.com/api/projects/), [GitLab approval rules](https://docs.gitlab.com/api/merge_request_approvals/).
-
-## Maintain rules by hand
-
-`rules.json` is the authoritative editable catalog. Each entry has a stable `id`, detector `kind`, area, severity, title, criteria, next action and executable examples. Its `scoring` object owns repository weights, caps and fixed grade bands. `change_relevance` owns path/content signals, area-to-relevance mappings, documentation criteria, executable-mode handling and before/after examples. The runtime validates it and fingerprints catalog and implementation. The examined project cannot override it.
-
-### Adjust the calculation
-
-Change the trusted installed skill's `rules.json`, not a catalog in the examined repository:
-
-| Desired change | Edit | Effect |
-| --- | --- | --- |
-| Deduct more or fewer points per finding | `scoring.weights.<severity>` | Changes the linear deduction for every finding of that severity; whole points from 1 to 100. |
-| Change the maximum score allowed by a finding | `scoring.severity_caps.<severity>` | Limits each affected area; whole points from 0 to 100. |
-| Reclassify one rule | That rule's `severity` | Selects a different weight and cap without changing its detector. |
-| Change what a rule recognizes | Its named Python detector | Changes finding recognition, separately from score arithmetic. |
-| Change the formula itself | `scripts/score_calculation.py` | Changes aggregation; update this guide and scoring tests as well. |
-
-For example, changing only `scoring.weights.high` from 25 to 15 makes three high findings deduct `3 × 15 = 45`. The result becomes `min(55, 59) = 55 (E)`. The cap stays 59, so a single high finding still scores 59. To change that maximum too, edit `severity_caps.high`. This illustrates configuration, not a recommended severity calibration.
-
-Grade bands are fixed by REQ-03. `aggregation` and `repetitions` identify supported formulas; changing their text alone is rejected rather than silently ignored. The formula is implemented in `calculate_area` and `calculate`, independently of detector code. `areas[].breakdown` is produced by that same calculation and includes `rule`, `severity`, `instances`, `points_per_instance`, `deduction` and `severity_cap`.
-
-After an adjustment, bump `scoring_version` for changed score meaning; bump `rule_version` for detection/rule changes. Recalculate affected catalog examples' `expected_score` and `expected_grade`, then run `--verify-rules` and the scoring tests below. Compare a representative repository using `--details` before and after the edit. Version 1 used logarithmic repetition deductions; version 2 counts every finding at its full weight, so old and new repeated-finding scores are not comparable.
-
-### Maintain recognition
-
-Edit catalog wording/severity directly. Recognition changes also edit the named detector: criteria are documentation, so changing their text alone does not change detection. The detectors are ordinary readable Python:
-
-| Rule families | Detector location |
+| Level | Meaning |
 | --- | --- |
-| `py-*` calls and AST | `scripts/score_core.py`, `python_observations` |
-| Basic `js-*`, Action and Docker rules | `scripts/score_core.py`, `other_observations` |
-| SQL, frontend, CSP, dependency declarations | `scripts/score_architecture.py`, `observations` and named helpers |
-| Host API fields and outcomes | `scripts/score_remote.py`, `host_settings` and `settings_checks` |
-| Change relevance | `scripts/score_relevance.py`, `analyze`; signal definitions and examples in `rules.json` |
-| Score arithmetic, breakdown and grades | `scripts/score_calculation.py`, `calculate_area`, `calculate` and `grade`; values at the top of `rules.json` |
+| `high` | The change touches access decisions, security functions, interface exposure, persistence or network boundaries, cryptography, dependencies, build or deployment authority, agent instructions, or executable permissions. |
+| `medium` | Recognized frontend input/output behavior or security-related policy and guidance changes. |
+| `low` | The complete change is identified as ordinary documentation or a supported nonfunctional edit, with no security indication. |
+| `unclear` | The available rules cannot classify the changed behavior or context. No findings does not imply low relevance. |
 
-Keep IDs stable when refining rules. Register new detector kinds in policy validation and source applicability. Add positive, negative and relevant unclear examples, plus representative boundary tests. Source examples contain a filename, text, expected outcome and optional companion files. Host examples use explicit API states. Relevance examples contain before/after text, an expected level and optional executable flags; `--verify-rules` runs these as well. Signal patterns are compiled from the installed catalog only, never from target content. Use artificial examples with no real credentials or personal data.
+Examples:
+
+- Changing `can_read(actor, owner)` from an ownership check to `True` indicates an access-decision change: **high**. The level alone does not prove the new behavior is exploitable.
+- Changing a listener address from `127.0.0.1` to `0.0.0.0` indicates possible interface exposure: **high**. It does not prove the service is reachable from outside.
+- Editing only a Python comment can be **low** when AST comparison confirms the code is unchanged. A generic code change with no recognized evidence is **unclear**.
+
+Each reported `signal` identifies the matching rule, reason, aspect, file location, side of the comparison, and relationship to the changed lines. Both added and removed code are examined. Findings are reported separately as `introduced`, `worsened`, `pre_existing`, `resolved`, or `unresolved`; an unchanged finding appears only in affected context. These labels compare recognized observations, not whole application flows.
+
+### Context used for changes
+
+For a full local Git comparison, the tool examines changed lines, up to two nearby lines, and the enclosing function when it can identify one. Function context is limited to 200 lines. Python uses AST boundaries; JavaScript/TypeScript, Java, Kotlin, C#, Go, Rust, and PHP use syntax heuristics. Functions longer than 200 lines contribute their declaration and changed/nearby lines. Files over 10,000 lines skip function expansion. `coverage.context_limited_files` lists affected files. These methods do not resolve call graphs or full application behavior.
+
+A supplied patch is narrower: each hunk is examined on its own, without inferring the full function. For PR/MR context, use a captured local base/head comparison when possible. Metadata-only changes, permission changes, symlinks, and rename/copy metadata require local Git comparison; a patch containing them is rejected. Unsupported or excluded files prevent a `low` result. Python AST and JSON structure can establish some comment/format-only changes; no such claim is made for opaque languages.
+
+A complete change analysis exits 0 even when relevance is `unclear`; incomplete processing exits 1. Structured output uses `analysis: change-relevance`, `relevance`, `relevance_version`, `signals`, and `finding_changes`, without score or grade fields. An unclear or incomplete result is not an approval.
+
+## What the scanner checks
+
+The catalog recognizes selected source patterns for Python, JavaScript/TypeScript, frontend frameworks, SQL access, Content Security Policy, debug and TLS settings, dependencies, CI workflows, and containers. It records architecture hints such as React, Angular, Vue, and database libraries without awarding points for their mere presence.
+
+CSP checks recognize literal headers and nginx `add_header`. A positive declaration restricts scripts and includes `object-src 'none'`, `base-uri 'none'`, and `frame-ancestors`. The scanner does not verify delivery through every route, proxy overrides, or dynamic policies. Dependency checks cover selected package declarations and lockfiles, lifecycle scripts, immutable Action/container references, and explicit workflow permissions. They do not establish vulnerability status or complete package integrity. No target project code, tests, hooks, package installation, build, or vulnerability-feed query runs.
+
+For a GitHub.com or GitLab.com repository URL, the tool resolves an identified revision and reads available host settings separately. Explicitly disabled settings can produce findings; denied or missing API data remains unknown. Some GitHub security settings need additional permissions, and GitLab approval rules need authentication. A feature being available does not prove it ran. See the [GitHub repository API](https://docs.github.com/en/rest/repos/repos), [GitHub branch protection API](https://docs.github.com/en/rest/branches/branch-protection), [GitLab projects API](https://docs.gitlab.com/api/projects/), and [GitLab approval rules API](https://docs.gitlab.com/api/merge_request_approvals/).
+
+## Maintaining the rules
+
+[rules.json](../rules.json) is the editable catalog shipped with Security Score. The repository being scanned cannot replace it. Each rule has an ID, severity, area, criteria, next action, and examples. The `scoring` section holds point weights and caps; `change_relevance` holds change classification rules. Detector code determines what is actually recognized: changing only a rule's descriptive text does not change detection.
+
+| To change | Edit |
+| --- | --- |
+| Points deducted per finding | `scoring.weights.<severity>` in `rules.json` |
+| Highest score allowed for a severity | `scoring.severity_caps.<severity>` in `rules.json` |
+| Severity of one rule | That rule's `severity` in `rules.json` |
+| Recognition of a source pattern | The named detector in `scripts/score_core.py` or `scripts/score_architecture.py` |
+| Host-setting recognition | `scripts/score_remote.py` |
+| Change classification | `change_relevance` in `rules.json` and `scripts/score_relevance.py` |
+| Score formula or grade calculation | `scripts/score_calculation.py` and this guide |
+
+Weights must be whole points from 1 to 100; caps must be whole numbers from 0 to 100. Grade bands are fixed by REQ-03 in [requirements.md](../requirements.md). The formula identifiers `aggregation` and `repetitions` are validated; editing their names alone does not change the calculation.
+
+For example, lowering `scoring.weights.high` from 25 to 15 makes three high findings in one area deduct 45 points. The cap remains 59, so the area's result is `min(55, 59) = 55 (E)`. A single high finding still scores 59 unless its cap also changes.
+
+When you change rules:
+
+1. Keep existing rule IDs stable. Register new detector kinds in policy validation and source applicability.
+2. Add positive, negative, and unclear examples, plus boundary tests. Use synthetic data without real credentials or personal information.
+3. Update expected scores and grades in affected examples. Increase `scoring_version` when score meaning changes, `rule_version` when detection or catalog rules change, and `change_relevance.version` when relevance classification changes.
+4. Run the bundled examples and tests, then compare a representative repository before and after with `--details`:
 
 ```sh
-python3 /installed/appsec-analyzer-tools/security-score/scripts/score.py --list-rules --json
-python3 /installed/appsec-analyzer-tools/security-score/scripts/score.py --verify-rules
+python3 scripts/score.py --verify-rules
+python3 -B -m unittest test_security_score -v
 ```
 
-From the `security-score` directory, run `python3 -B -m unittest test_security_score -v`. These tests connect behavior to REQ-01–07 through real local scans/comparisons, worked calculations, editable catalog values and representative failures. Examples do not prove completeness or absence of false positives; check representative project sources when widening recognition. Bump `rule_version` when recognition or the rule catalog changes, `scoring_version` when repository score meaning changes, and `change_relevance.version` when relevance classification changes. Catalog/implementation fingerprints also prevent accidental comparison across changed policies.
+Run the test command from the `security-score` directory. Catalog and implementation fingerprints help identify results produced under different policies. Version 1 and version 2 scores with repeated findings are not directly comparable.
 
 ## Limits
 
-The default execution budget is 15 seconds, selectable with `--timeout` from 0.1 to 120 seconds. It includes source work, tools and network reads, checked between bounded operations. It is not a completion promise for arbitrary repositories.
+The default total time budget is 15 seconds; `--timeout` accepts 0.1–120 seconds. The scanner checks the budget between bounded operations, so a large repository may finish incomplete.
 
-Limits are 3,000 inventory/archive entries, 512 KiB per selected source file, 20 MiB selected source per side, a 4 MiB supplied patch, and 24 MiB tool/download output. Archive expansion is capped at the source limit plus 8 MiB metadata. Scanning stops at 5,000 observations per side; available observations remain incomplete without a grade. Private filenames, unsupported sources and common dependency/build directories are excluded with recorded reasons. Unreadable or linked paths, source changes and malformed patches cannot produce a successful score.
+| Limit | Value |
+| --- | ---: |
+| Inventory or archive entries | 3,000 |
+| Selected source file | 512 KiB |
+| Selected source per comparison side | 20 MiB |
+| Supplied patch | 4 MiB |
+| Tool or download output | 24 MiB |
+| Observations per side | 5,000 |
+| Retained relevance signals | 1,000 |
 
-No project code, tests or hooks run. Local source is rechecked before publication; Git filters, external diffs and text conversion are disabled for comparisons. Results contain locations/explanations, not raw source snippets or credential literals. JSON/YAML retain the complete bounded result; compact text deliberately omits details unless requested.
+Archive expansion is limited to 20 MiB of selected source plus 8 MiB of metadata. Excluded or unreadable files, malformed patches, and sources that change during a run can prevent a complete result. JSON/YAML keep the bounded result; compact text shows the headline unless `--details` is requested. Output reports locations and explanations, without raw source snippets or credential literals.

@@ -1,14 +1,14 @@
-# Entra-ID-Zugriff ohne Benutzerdialog; Tenant, Client und Scope sind Platzhalter.
-# URLs und Selektoren an die eigene Webseite anpassen.
+# Entra ID access without user interaction; tenant, client, and scope are placeholders.
+# Adjust URLs and selectors for your website.
 config-version: 1
 output:
   catalog: ../out/requirements.oscal.yaml
   report: ../out/report.json
-  title: Unternehmensanforderungen
+  title: Company Requirements
   version: 1.0.0
 sources:
 - id: company
-  title: Unternehmensanforderungen
+  title: Company Requirements
   start-urls:
   - https://wiki.example.org/requirements/engineering
   - https://wiki.example.org/requirements/operations

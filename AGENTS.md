@@ -1,46 +1,46 @@
-# Arbeitsregeln für Coding-Agenten
+# Working rules for coding agents
 
-## Repository-Zweck
+## Repository purpose
 
-Dieses Repository ist die zentrale Sammlung ergänzender Tools für
+This repository is the central collection of supplementary tools for
 [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer).
-Entwickle hier Hilfsprogramme und Integrationen; Änderungen an der Kernanwendung
-gehören in das Hauptrepository.
+Develop utilities and integrations here; changes to the core application
+belong in the main repository.
 
-## Ausgangslage
+## Current state
 
-Das erste Tool ist der eigenständige Python-Requirement-Harvester unter
-`requirement-harvester/`. Er verwendet Python >=3.10, lokale Lockfiles und
-pytest. Tests werden im Tool-Verzeichnis mit `.venv/bin/python -m pytest`
-ausgeführt. Die README beschreibt Installation, CLI und CI-Vorlagen.
-Leite Funktionen oder Schnittstellen des Hauptprojekts nicht aus dem
-Repository-Namen ab; prüfe sie vor einer davon abhängigen Implementierung.
+The first tool is the standalone Python Requirement Harvester in
+`requirement-harvester/`. It uses Python >=3.10, local lockfiles, and
+pytest. Run tests in the tool directory with `.venv/bin/python -m pytest`.
+The README describes installation, the CLI, and CI templates.
+Do not infer features or interfaces of the main project from the repository
+name; verify them before implementing anything that depends on them.
 
-## Struktur und Umsetzung
+## Structure and implementation
 
-- Lege jedes neue Tool in einem eigenen Verzeichnis im Repository-Root ab.
-- Halte Tools eigenständig nutzbar und ihre Abhängigkeiten lokal beim Tool.
-- Wähle Sprache und Laufzeit passend zur Aufgabe und zu bestehenden Mustern.
-- Führe gemeinsame Bibliotheken oder Frameworks erst bei konkretem Bedarf ein.
-- Beschränke Änderungen auf die angeforderte Aufgabe.
+- Put each new tool in its own directory at the repository root.
+- Keep tools independently usable and their dependencies local to each tool.
+- Choose a language and runtime appropriate to the task and existing patterns.
+- Introduce shared libraries or frameworks only when there is a concrete need.
+- Limit changes to the requested task.
 
-## Dokumentation
+## Documentation
 
-- Pflege die Repository-Dokumentation auf Deutsch, sofern nichts anderes verlangt wird.
-- Dokumentiere jedes Tool mit einer eigenen `README.md`: Zweck, Voraussetzungen,
-  Installation, Konfiguration, Aufrufbeispiel und Ein-/Ausgaben.
-- Benenne relevante Kompatibilitätsanforderungen an appsec-analyzer ausdrücklich.
-- Ergänze in der zentralen README einen verlinkten Eintrag, sobald ein Tool existiert.
-- Kennzeichne geplante Funktionen als geplant; dokumentiere keine ungeprüften
-  Befehle oder Schnittstellen als funktionsfähig.
+- Maintain repository documentation in English unless requested otherwise.
+- Give each tool its own `README.md` covering purpose, prerequisites,
+  installation, configuration, a usage example, and inputs/outputs.
+- State relevant compatibility requirements for appsec-analyzer explicitly.
+- Add a linked entry to the central README when a tool exists.
+- Mark planned features as planned; do not document unverified commands or
+  interfaces as working.
 
-## Prüfung und Übergabe
+## Verification and handoff
 
-- Ergänze bei funktionalen Änderungen geeignete Tests und nutze vorhandene
-  Prüfwerkzeuge des betroffenen Tools.
-- Verwende für Beispiele und Tests synthetische oder bereinigte Daten; lege keine
-  Zugangsdaten oder vertraulichen Analyseergebnisse im Repository ab.
-- Prüfe vor der Übergabe den Diff und halte die Dokumentation zur tatsächlichen
-  Implementierung konsistent.
-- Nenne bei der Übergabe die Änderungen, ausgeführte Prüfungen und verbleibende
-  Einschränkungen. Behaupte keine erfolgreiche Prüfung, die nicht ausgeführt wurde.
+- Add suitable tests for functional changes and use the affected tool's existing
+  verification tools.
+- Use synthetic or sanitized data for examples and tests; do not put
+  credentials or confidential analysis results in the repository.
+- Review the diff before handing off and keep documentation consistent with
+  the actual implementation.
+- At handoff, state the changes, checks performed, and remaining limitations.
+  Do not claim a check succeeded if it was not run.

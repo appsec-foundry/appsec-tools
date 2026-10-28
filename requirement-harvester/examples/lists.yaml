@@ -1,14 +1,14 @@
-# Requirements aus Listeneinträgen; zwei Startseiten mit gemeinsamem Scope.
-# URLs und Selektoren an die eigene Webseite anpassen.
+# Requirements from list items; two start pages with a shared scope.
+# Adjust URLs and selectors for your website.
 config-version: 1
 output:
   catalog: ../out/requirements.oscal.yaml
   report: ../out/report.json
-  title: Unternehmensanforderungen
+  title: Company Requirements
   version: 1.0.0
 sources:
 - id: company
-  title: Unternehmensanforderungen
+  title: Company Requirements
   start-urls:
   - https://wiki.example.org/requirements/engineering
   - https://wiki.example.org/requirements/operations
