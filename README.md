@@ -19,6 +19,9 @@ Verfügbares Tool:
 - [Requirement Harvester](tools/requirement-harvester/README.md): Requirements
   beliebiger Art aus konfigurierten HTTPS-Webquellen crawlen und als
   OSCAL-YAML exportieren. Siehe [Anforderungen](tools/requirement-harvester/requirements.md).
+- [Security Score](tools/security-score/README.md): Repositories deterministisch
+  bewerten und die Sicherheitsrelevanz von Änderungen prüfen; als Python-CLI
+  unabhängig von AppSec Analyzer und Assistenten-Skills nutzbar.
 
 ## Aufbau
 
