@@ -2,29 +2,33 @@
 
 Reads requirements from configured websites and wikis and writes an OSCAL YAML catalog. Requires Python 3.10+ on Linux or macOS.
 
-## Quick start
+## Installation
 
-With `pipx` installed, run from the repository root:
+With `pipx`, Git, and SSH access to the GitHub repository:
 
 ```sh
-pipx install ./requirement-harvester
-requirement-harvester validate --config requirement-harvester/examples/tss-web.yaml
-requirement-harvester run --config requirement-harvester/examples/tss-web.yaml
+pipx install "git+ssh://git@github.com/appsec-foundry/appsec-analyzer-tools.git#subdirectory=requirement-harvester"
 ```
 
-This run reads public TSS-WEB pages. The catalog and report are written to `requirement-harvester/out/`; the number of requirements depends on the current page content.
+No local clone is needed. From an existing clone, you can instead run
+`pipx install ./requirement-harvester` at the repository root.
 
-## Your own source
+## Run
 
-Copy an [example configuration](examples/lists.yaml) and adjust its URLs and selectors. Paths in the configuration are relative to the configuration file.
+Save an [example configuration](examples/lists.yaml) as `my-config.yaml` and
+adjust its URLs and selectors. For a public source example, use
+[TSS-WEB](examples/tss-web.yaml). Configuration examples are separate files;
+`pipx` does not install them in your working directory.
 
 ```sh
 requirement-harvester validate --config my-config.yaml
-requirement-harvester run --config my-config.yaml --dry-run
 requirement-harvester run --config my-config.yaml
 ```
 
-`validate` does not fetch pages. `--dry-run` writes a preview report but no catalog. A successful run replaces the output files.
+`validate` checks the configuration without fetching pages. To preview a run,
+add `--dry-run`; this writes a preview report but no catalog. Output paths are
+set in the configuration and resolved relative to that file. A successful run
+replaces the output files.
 
 ## CI and reference
 

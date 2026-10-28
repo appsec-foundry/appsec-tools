@@ -4,13 +4,69 @@ Assesses a repository with a deterministic score from 0 to 100 (A to F), or clas
 
 ## Installation
 
-With `pipx` installed, run from the repository root:
+With `pipx`, Git, and SSH access to the GitHub repository:
 
 ```sh
-pipx install ./security-score
+pipx install "git+ssh://git@github.com/appsec-foundry/appsec-analyzer-tools.git#subdirectory=security-score"
 ```
 
+No local clone is needed. From an existing clone, you can instead run
+`pipx install ./security-score` at the repository root.
+
 The command is then available as `security-score`. The internal engine is the default. A separately installed AppSec Analyzer is needed only when you select `--engine analyzer`.
+
+## Understand your score
+
+The default engine reports results such as `59/100 (E)`. Higher is better:
+A = 90–100, B = 80–89, C = 70–79, D = 60–69, E = 50–59, F = 0–49.
+This is a rule-based indication, not a percentage of security requirements met
+or a measure of attack probability.
+
+The calculation has three steps:
+
+1. Each assessed area (for example, execution or transport) starts at 100.
+   Every detected finding subtracts points from its area, including repeated
+   findings across files.
+2. The most severe finding also limits that area's highest possible score.
+   Use the lower of the remaining points and this limit, with a minimum of 0.
+3. The **lowest assessed area score** becomes the repository score. Good results
+   elsewhere do not compensate for a weak area; deductions in different areas
+   are not added together.
+
+| Finding severity | Points deducted per finding | Highest area score |
+| --- | ---: | ---: |
+| Critical | 50 | 39 |
+| High | 25 | 59 |
+| Medium | 10 | 79 |
+| Low | 3 | 89 |
+
+For example, one high finding leaves 75 points, but its limit reduces the area
+score to **59 (E)**. Two high findings in that same area leave **50 (E)**.
+One high finding in each of two different areas gives **59 (E)** overall.
+Additional findings may leave the headline unchanged when an area's limit or
+a lower-scoring area already determines the result. Fixes may likewise leave
+it unchanged until the limiting findings are addressed.
+
+**100 (A) means no deductions from recognized checks, not that the application
+is secure.** Even one recognized check can produce a score. Unknown checks do
+not deduct points and areas with only unknown checks do not enter the minimum.
+Inspect coverage as well as findings, especially when comparing repositories
+of different sizes or results from different versions or scan scopes.
+
+Use `security-score /path/to/repository --details` to see findings with file
+locations, next actions, check outcomes, and the calculation for each area.
+If there is no recognized source or dependency evidence, the result is
+`undetermined`. If required processing fails or reaches a limit, it is
+`incomplete`. Both withhold the score and grade; available findings remain in
+detailed output. Host settings alone cannot establish a score.
+
+Change analysis reports `high`, `medium`, `low`, or `unclear` relevance instead
+of points. A security fix can have high relevance: the level describes what the
+change touches, not whether it introduces a weakness. The optional Analyzer
+engine uses a separate scoring policy.
+
+See [the scoring guide](references/scoring.md) for the formula, check coverage,
+limits, and editable scoring values.
 
 ## Run on a local repository
 
