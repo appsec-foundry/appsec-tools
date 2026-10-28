@@ -1,0 +1,5 @@
+beautifulsoup4==4.15.0
+PyYAML==6.0.3
+jsonschema==4.26.0
+msal==1.39.0
+regex==2026.9.29

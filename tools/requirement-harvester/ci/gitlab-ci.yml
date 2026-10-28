@@ -1,0 +1,36 @@
+# Als .gitlab-ci.yml übernehmen oder per include:local einbinden.
+# Voraussetzung: separater Shell-Runner mit Python >=3.10, non-root,
+# Tag python-nonroot; interne Quellen benötigen passende Netzfreigaben.
+stages: [verify, harvest]
+
+default:
+  tags: [python-nonroot]
+  before_script:
+    - test "$(id -u)" -ne 0
+    - cd tools/requirement-harvester
+    - python3 -m venv .venv
+    - .venv/bin/python -m pip install --require-hashes -r requirements-dev.lock
+
+verify-harvester:
+  stage: verify
+  script:
+    - .venv/bin/python -m pytest
+    - .venv/bin/python scripts/check_dependencies.py
+
+harvest-requirements:
+  stage: harvest
+  environment:
+    name: requirement-harvest
+  rules:
+    - if: '$CI_PROJECT_VISIBILITY == "private" && $CI_COMMIT_REF_PROTECTED == "true" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PROJECT_VISIBILITY == "private" && $CI_COMMIT_REF_PROTECTED == "true" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "web"'
+    - when: never
+  script:
+    - .venv/bin/python scripts/ci_run.py examples/tss-web.yaml
+  artifacts:
+    when: always
+    access: maintainer
+    expire_in: 7 days
+    paths:
+      - tools/requirement-harvester/ci-artifacts/report.json
+      - tools/requirement-harvester/ci-artifacts/catalogs/*.oscal.yaml

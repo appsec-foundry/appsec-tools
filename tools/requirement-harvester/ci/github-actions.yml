@@ -1,0 +1,60 @@
+# Nach .github/workflows/requirement-harvester.yml kopieren.
+name: Requirement Harvester
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * 1'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify
+        working-directory: tools/requirement-harvester
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --require-hashes -r requirements-dev.lock
+          .venv/bin/python -m pytest
+          .venv/bin/python scripts/check_dependencies.py
+  harvest:
+    needs: verify
+    if: github.event.repository.private && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    environment: requirement-harvest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install
+        working-directory: tools/requirement-harvester
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install --require-hashes -r requirements.lock
+      - name: Harvest
+        working-directory: tools/requirement-harvester
+        env:
+          HARVEST_TOKEN: ${{ secrets.HARVEST_TOKEN }}
+          HARVEST_USERNAME: ${{ secrets.HARVEST_USERNAME }}
+          HARVEST_PASSWORD: ${{ secrets.HARVEST_PASSWORD }}
+          ENTRA_CLIENT_SECRET: ${{ secrets.ENTRA_CLIENT_SECRET }}
+        run: .venv/bin/python scripts/ci_run.py examples/tss-web.yaml
+      - name: Diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: harvest-report
+          path: tools/requirement-harvester/ci-artifacts/report.json
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Catalogs
+        if: success()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oscal-catalogs
+          path: tools/requirement-harvester/ci-artifacts/catalogs/*.oscal.yaml
+          retention-days: 7
+          if-no-files-found: error

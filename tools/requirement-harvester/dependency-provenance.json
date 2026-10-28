@@ -1,0 +1,353 @@
+[
+  {
+    "name": "attrs",
+    "version": "26.1.0",
+    "upstream": {
+      "Changelog": "https://www.attrs.org/en/stable/changelog.html",
+      "Documentation": "https://www.attrs.org/",
+      "Funding": "https://github.com/sponsors/hynek",
+      "GitHub": "https://github.com/python-attrs/attrs",
+      "Tidelift": "https://tidelift.com/subscription/pkg/pypi-attrs?utm_source=pypi-attrs&utm_medium=pypi"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "attrs-26.1.0-py3-none-any.whl",
+    "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309"
+  },
+  {
+    "name": "beautifulsoup4",
+    "version": "4.15.0",
+    "upstream": {
+      "Download": "https://www.crummy.com/software/BeautifulSoup/bs4/download/",
+      "Homepage": "https://www.crummy.com/software/BeautifulSoup/bs4/"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "beautifulsoup4-4.15.0-py3-none-any.whl",
+    "sha256": "d6f88de62e1d4e38ecb1077eb9724cd0eff29d2a08ca16a401e9b9e93f117cf9"
+  },
+  {
+    "name": "certifi",
+    "version": "2026.10.23",
+    "upstream": {
+      "Homepage": "https://github.com/certifi/python-certifi",
+      "Source": "https://github.com/certifi/python-certifi"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "certifi-2026.10.23-py3-none-any.whl",
+    "sha256": "e9b54de76e530bb6cf0ccd036787103acb58fd42ba930ea8bf948ddbaa2f61d1"
+  },
+  {
+    "name": "cffi",
+    "version": "2.1.1",
+    "upstream": {
+      "Changelog": "https://cffi.readthedocs.io/en/latest/whatsnew.html",
+      "Contact": "https://groups.google.com/forum/#!forum/python-cffi",
+      "Documentation": "https://cffi.readthedocs.io/",
+      "Download": "https://github.com/python-cffi/cffi/releases",
+      "Issue Tracker": "https://github.com/python-cffi/cffi/issues",
+      "Source Code": "https://github.com/python-cffi/cffi"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "cffi-2.1.1-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+    "sha256": "194cffa889098ced9976c3fc6340305e43f6303657d298da55366907c05c22d6"
+  },
+  {
+    "name": "charset-normalizer",
+    "version": "3.5.2",
+    "upstream": {
+      "Changelog": "https://github.com/jawah/charset_normalizer/blob/master/CHANGELOG.md",
+      "Code": "https://github.com/jawah/charset_normalizer",
+      "Documentation": "https://charset-normalizer.readthedocs.io/",
+      "Issue tracker": "https://github.com/jawah/charset_normalizer/issues"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "charset_normalizer-3.5.2-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+    "sha256": "8a893cc101149f80a653f82062ebc95b34525a2614382e1da5458fe7c6997249"
+  },
+  {
+    "name": "cryptography",
+    "version": "50.0.2",
+    "upstream": {
+      "changelog": "https://cryptography.io/en/latest/changelog/",
+      "documentation": "https://cryptography.io/",
+      "homepage": "https://github.com/pyca/cryptography",
+      "issues": "https://github.com/pyca/cryptography/issues",
+      "source": "https://github.com/pyca/cryptography/"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "cryptography-50.0.2-cp39-abi3-manylinux_2_34_x86_64.whl",
+    "sha256": "1981f1db4630889b9ef7803fadef12b056f428cb6b85c27ba57b774793b6093c"
+  },
+  {
+    "name": "exceptiongroup",
+    "version": "1.3.1",
+    "upstream": {
+      "Changelog": "https://github.com/agronholm/exceptiongroup/blob/main/CHANGES.rst",
+      "Issue Tracker": "https://github.com/agronholm/exceptiongroup/issues",
+      "Source code": "https://github.com/agronholm/exceptiongroup"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "exceptiongroup-1.3.1-py3-none-any.whl",
+    "sha256": "a7a39a3bd276781e98394987d3a5701d0c4edffb633bb7a5144577f82c773598"
+  },
+  {
+    "name": "idna",
+    "version": "3.20",
+    "upstream": {
+      "Changelog": "https://github.com/kjd/idna/blob/master/HISTORY.md",
+      "Issue tracker": "https://github.com/kjd/idna/issues",
+      "Source": "https://github.com/kjd/idna"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "idna-3.20-py3-none-any.whl",
+    "sha256": "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c"
+  },
+  {
+    "name": "iniconfig",
+    "version": "2.3.1",
+    "upstream": {
+      "Homepage": "https://github.com/pytest-dev/iniconfig"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "iniconfig-2.3.1-py3-none-any.whl",
+    "sha256": "9121e2c1fdb355232495be3194c8dfe87ccc2d5dee45947b78e68f499790d7a7"
+  },
+  {
+    "name": "jsonschema",
+    "version": "4.26.0",
+    "upstream": {
+      "Changelog": "https://github.com/python-jsonschema/jsonschema/blob/main/CHANGELOG.rst",
+      "Documentation": "https://python-jsonschema.readthedocs.io/",
+      "Funding": "https://github.com/sponsors/Julian",
+      "Homepage": "https://github.com/python-jsonschema/jsonschema",
+      "Issues": "https://github.com/python-jsonschema/jsonschema/issues/",
+      "Source": "https://github.com/python-jsonschema/jsonschema",
+      "Tidelift": "https://tidelift.com/subscription/pkg/pypi-jsonschema?utm_source=pypi-jsonschema&utm_medium=referral&utm_campaign=pypi-link"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "jsonschema-4.26.0-py3-none-any.whl",
+    "sha256": "d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce"
+  },
+  {
+    "name": "jsonschema-specifications",
+    "version": "2025.9.1",
+    "upstream": {
+      "Documentation": "https://jsonschema-specifications.readthedocs.io/",
+      "Funding": "https://github.com/sponsors/Julian",
+      "Homepage": "https://github.com/python-jsonschema/jsonschema-specifications",
+      "Issues": "https://github.com/python-jsonschema/jsonschema-specifications/issues/",
+      "Source": "https://github.com/python-jsonschema/jsonschema-specifications",
+      "Tidelift": "https://tidelift.com/subscription/pkg/pypi-jsonschema-specifications?utm_source=pypi-jsonschema-specifications&utm_medium=referral&utm_campaign=pypi-link"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "jsonschema_specifications-2025.9.1-py3-none-any.whl",
+    "sha256": "98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe"
+  },
+  {
+    "name": "msal",
+    "version": "1.39.0",
+    "upstream": {
+      "Changelog": "https://github.com/AzureAD/microsoft-authentication-library-for-python/releases",
+      "Documentation": "https://msal-python.readthedocs.io/",
+      "Feature/Bug Tracker": "https://github.com/AzureAD/microsoft-authentication-library-for-python/issues",
+      "Homepage": "https://github.com/AzureAD/microsoft-authentication-library-for-python",
+      "Questions": "https://stackoverflow.com/questions/tagged/azure-ad-msal+python"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "msal-1.39.0-py3-none-any.whl",
+    "sha256": "2d2577886906cd7293850dffa2da29119966c213bfc6ec0cecf8bf7621e1ca77"
+  },
+  {
+    "name": "packaging",
+    "version": "26.3",
+    "upstream": {
+      "Documentation": "https://packaging.pypa.io/",
+      "Source": "https://github.com/pypa/packaging"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "packaging-26.3-py3-none-any.whl",
+    "sha256": "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c"
+  },
+  {
+    "name": "pluggy",
+    "version": "1.7.0",
+    "upstream": {
+      "Changelog": "https://pluggy.readthedocs.io/en/latest/changelog.html",
+      "Documentation": "https://pluggy.readthedocs.io/",
+      "Funding": "https://tidelift.com/subscription/pkg/pypi-pluggy",
+      "Homepage": "https://github.com/pytest-dev/pluggy",
+      "Issues": "https://github.com/pytest-dev/pluggy/issues",
+      "Repository": "https://github.com/pytest-dev/pluggy"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "pluggy-1.7.0-py3-none-any.whl",
+    "sha256": "7dd7b0d8832ba3cb632c306926ded123429211b83641b35dc5c41ad2d34f9bec"
+  },
+  {
+    "name": "pycparser",
+    "version": "3.11",
+    "upstream": {
+      "Homepage": "https://github.com/eliben/pycparser"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "pycparser-3.11-py3-none-any.whl",
+    "sha256": "51d5a8ba2be0bbe440b99d2112604c95bbbc3c2748a64260186c541e1729cd80"
+  },
+  {
+    "name": "Pygments",
+    "version": "2.21.0",
+    "upstream": {
+      "Bug Tracker": "https://github.com/pygments/pygments/issues",
+      "Changelog": "https://github.com/pygments/pygments/blob/master/CHANGES",
+      "Documentation": "https://pygments.org/docs",
+      "Homepage": "https://pygments.org",
+      "Source": "https://github.com/pygments/pygments"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "pygments-2.21.0-py3-none-any.whl",
+    "sha256": "2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9"
+  },
+  {
+    "name": "PyJWT",
+    "version": "2.15.1",
+    "upstream": {
+      "Homepage": "https://github.com/jpadilla/pyjwt"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "pyjwt-2.15.1-py3-none-any.whl",
+    "sha256": "42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193"
+  },
+  {
+    "name": "pytest",
+    "version": "9.2.0",
+    "upstream": {
+      "Changelog": "https://docs.pytest.org/en/stable/changelog.html",
+      "Contact": "https://docs.pytest.org/en/stable/contact.html",
+      "Funding": "https://docs.pytest.org/en/stable/sponsor.html",
+      "Homepage": "https://docs.pytest.org/en/latest/",
+      "Source": "https://github.com/pytest-dev/pytest",
+      "Tracker": "https://github.com/pytest-dev/pytest/issues"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "pytest-9.2.0-py3-none-any.whl",
+    "sha256": "07acdcf88ec174f907dc01af70bf52d49b014bbab03faeeade31c96b18c2e588"
+  },
+  {
+    "name": "PyYAML",
+    "version": "6.0.3",
+    "upstream": {
+      "Bug Tracker": "https://github.com/yaml/pyyaml/issues",
+      "CI": "https://github.com/yaml/pyyaml/actions",
+      "Documentation": "https://pyyaml.org/wiki/PyYAMLDocumentation",
+      "Download": "https://pypi.org/project/PyYAML/",
+      "Homepage": "https://pyyaml.org/",
+      "Mailing lists": "http://lists.sourceforge.net/lists/listinfo/yaml-core",
+      "Source Code": "https://github.com/yaml/pyyaml"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "pyyaml-6.0.3-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+    "sha256": "9c7708761fccb9397fe64bbc0395abcae8c4bf7b0eac081e12b809bf47700d0b"
+  },
+  {
+    "name": "referencing",
+    "version": "0.37.0",
+    "upstream": {
+      "Changelog": "https://referencing.readthedocs.io/en/stable/changes/",
+      "Documentation": "https://referencing.readthedocs.io/",
+      "Funding": "https://github.com/sponsors/Julian",
+      "Homepage": "https://github.com/python-jsonschema/referencing",
+      "Issues": "https://github.com/python-jsonschema/referencing/issues/",
+      "Source": "https://github.com/python-jsonschema/referencing",
+      "Tidelift": "https://tidelift.com/subscription/pkg/pypi-referencing?utm_source=pypi-referencing&utm_medium=referral&utm_campaign=pypi-link"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "referencing-0.37.0-py3-none-any.whl",
+    "sha256": "381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231"
+  },
+  {
+    "name": "regex",
+    "version": "2026.9.29",
+    "upstream": {
+      "Homepage": "https://github.com/mrabarnett/mrab-regex"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "regex-2026.9.29-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+    "sha256": "4fb41211d2333eb930a51e0546a65999761cf1f572a4da56ef9b8a62966c06f2"
+  },
+  {
+    "name": "requests",
+    "version": "2.34.2",
+    "upstream": {
+      "Documentation": "https://requests.readthedocs.io",
+      "Source": "https://github.com/psf/requests"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "requests-2.34.2-py3-none-any.whl",
+    "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0"
+  },
+  {
+    "name": "rpds-py",
+    "version": "0.30.0",
+    "upstream": {
+      "Documentation": "https://rpds.readthedocs.io/",
+      "Funding": "https://github.com/sponsors/Julian",
+      "Homepage": "https://github.com/crate-py/rpds",
+      "Issues": "https://github.com/crate-py/rpds/issues/",
+      "Source": "https://github.com/crate-py/rpds",
+      "Tidelift": "https://tidelift.com/subscription/pkg/pypi-rpds-py?utm_source=pypi-rpds-py&utm_medium=referral&utm_campaign=pypi-link",
+      "Upstream": "https://github.com/orium/rpds"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "rpds_py-0.30.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+    "sha256": "0c0e95f6819a19965ff420f65578bacb0b00f251fefe2c8b23347c37174271f3"
+  },
+  {
+    "name": "soupsieve",
+    "version": "2.10",
+    "upstream": {
+      "Homepage": "https://github.com/facelessuser/soupsieve"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "soupsieve-2.10-py3-none-any.whl",
+    "sha256": "8596eb8967d744174820280fa62b4542a2e955bfaccca73ed8a13c6eb8e9b502"
+  },
+  {
+    "name": "tomli",
+    "version": "2.5.0",
+    "upstream": {
+      "Changelog": "https://github.com/hukkin/tomli/blob/master/CHANGELOG.md",
+      "Homepage": "https://github.com/hukkin/tomli"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "tomli-2.5.0-py3-none-any.whl",
+    "sha256": "32a7b79ac57a2e83670ce329ccf675798bc5a2094783a63676866b70503f2e2b"
+  },
+  {
+    "name": "typing_extensions",
+    "version": "4.16.0",
+    "upstream": {
+      "Bug Tracker": "https://github.com/python/typing_extensions/issues",
+      "Changes": "https://github.com/python/typing_extensions/blob/main/CHANGELOG.md",
+      "Documentation": "https://typing-extensions.readthedocs.io/",
+      "Home": "https://github.com/python/typing_extensions",
+      "Q & A": "https://github.com/python/typing/discussions",
+      "Repository": "https://github.com/python/typing_extensions"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "typing_extensions-4.16.0-py3-none-any.whl",
+    "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
+  },
+  {
+    "name": "urllib3",
+    "version": "2.8.0",
+    "upstream": {
+      "Changelog": "https://github.com/urllib3/urllib3/blob/main/CHANGES.rst",
+      "Code": "https://github.com/urllib3/urllib3",
+      "Documentation": "https://urllib3.readthedocs.io",
+      "Issue tracker": "https://github.com/urllib3/urllib3/issues",
+      "Security policy": "https://urllib3.readthedocs.io/en/latest/security.html"
+    },
+    "known-vulnerabilities": [],
+    "verified-wheel": "urllib3-2.8.0-py3-none-any.whl",
+    "sha256": "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3"
+  }
+]

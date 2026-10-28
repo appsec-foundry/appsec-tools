@@ -1,0 +1,1387 @@
+{
+  "type": "object",
+  "properties": {
+    "config-version": {
+      "const": 1
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "catalog": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "catalogs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,63}$"
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8192
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "version": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "source-ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                },
+                "minItems": 1,
+                "maxItems": 100,
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "id",
+              "path",
+              "title",
+              "version",
+              "source-ids"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "report": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192
+        },
+        "oscal-version": {
+          "const": "1.2.3"
+        }
+      },
+      "required": [
+        "report"
+      ],
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "catalog",
+            "title",
+            "version"
+          ],
+          "not": {
+            "required": [
+              "catalogs"
+            ]
+          }
+        },
+        {
+          "required": [
+            "catalogs"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "catalog"
+                ]
+              },
+              {
+                "required": [
+                  "title"
+                ]
+              },
+              {
+                "required": [
+                  "version"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "defaults": {
+      "type": "object",
+      "properties": {
+        "max-pages": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "max-depth": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 100
+        },
+        "max-response-bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 20971520
+        },
+        "connect-timeout-seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120
+        },
+        "read-timeout-seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120
+        },
+        "max-run-seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "max-requests": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50000
+        },
+        "request-interval-seconds": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 60
+        },
+        "max-redirects": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "max-retries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "max-queue": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "max-nodes": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 200000
+        },
+        "max-items": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20000
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,63}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "adapter": {
+            "const": "html"
+          },
+          "start-urls": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 8192
+            },
+            "minItems": 1,
+            "maxItems": 100,
+            "uniqueItems": true
+          },
+          "crawl": {
+            "type": "object",
+            "properties": {
+              "max-pages": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10000
+              },
+              "max-depth": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 100
+              },
+              "max-response-bytes": {
+                "type": "integer",
+                "minimum": 1024,
+                "maximum": 20971520
+              },
+              "connect-timeout-seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 120
+              },
+              "read-timeout-seconds": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 120
+              },
+              "max-requests": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50000
+              },
+              "request-interval-seconds": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 60
+              },
+              "max-redirects": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10
+              },
+              "max-retries": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3
+              },
+              "max-queue": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10000
+              },
+              "max-nodes": {
+                "type": "integer",
+                "minimum": 100,
+                "maximum": 200000
+              },
+              "max-items": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20000
+              },
+              "mode": {
+                "enum": [
+                  "linked-pages",
+                  "explicit-pages"
+                ]
+              },
+              "allowed-origins": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                },
+                "minItems": 1,
+                "maxItems": 20,
+                "uniqueItems": true
+              },
+              "allowed-path-prefixes": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                },
+                "minItems": 1,
+                "maxItems": 100,
+                "uniqueItems": true
+              },
+              "exclude-path-prefixes": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 8192
+                },
+                "minItems": 0,
+                "maxItems": 100,
+                "uniqueItems": true
+              },
+              "allowed-query-keys": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+                },
+                "minItems": 0,
+                "maxItems": 30,
+                "uniqueItems": true
+              },
+              "allowed-private-networks": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "minItems": 0,
+                "maxItems": 20,
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "allowed-origins"
+            ],
+            "additionalProperties": false
+          },
+          "auth": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "const": "none"
+                  }
+                },
+                "required": [
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "const": "token"
+                  },
+                  "token-env": {
+                    "type": "string",
+                    "pattern": "^[A-Z_][A-Z0-9_]{0,127}$"
+                  },
+                  "header": {
+                    "type": "string",
+                    "pattern": "^(Authorization|X-[A-Za-z0-9-]+)$"
+                  },
+                  "prefix": {
+                    "enum": [
+                      "Bearer",
+                      "Token",
+                      ""
+                    ]
+                  }
+                },
+                "required": [
+                  "mode",
+                  "token-env"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "const": "basic"
+                  },
+                  "username-env": {
+                    "type": "string",
+                    "pattern": "^[A-Z_][A-Z0-9_]{0,127}$"
+                  },
+                  "password-env": {
+                    "type": "string",
+                    "pattern": "^[A-Z_][A-Z0-9_]{0,127}$"
+                  }
+                },
+                "required": [
+                  "mode",
+                  "username-env",
+                  "password-env"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "const": "entra"
+                  },
+                  "tenant-id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"
+                  },
+                  "client-id": {
+                    "type": "string",
+                    "pattern": "^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"
+                  },
+                  "scopes": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1000
+                    },
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "uniqueItems": true
+                  },
+                  "flow": {
+                    "enum": [
+                      "interactive",
+                      "client-credentials"
+                    ]
+                  },
+                  "token-file": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8192
+                  },
+                  "client-secret-env": {
+                    "type": "string",
+                    "pattern": "^[A-Z_][A-Z0-9_]{0,127}$"
+                  },
+                  "credential-origin": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8192
+                  }
+                },
+                "required": [
+                  "mode",
+                  "tenant-id",
+                  "client-id",
+                  "scopes",
+                  "flow"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "ca-bundle": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8192
+          },
+          "extraction": {
+            "type": "object",
+            "properties": {
+              "content-selector": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "context-selector": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 500
+              },
+              "exclude-selectors": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "minItems": 0,
+                "maxItems": 30,
+                "uniqueItems": true
+              },
+              "allow-empty-pages": {
+                "type": "boolean"
+              },
+              "rules": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9-]{0,63}$"
+                    },
+                    "strategy": {
+                      "enum": [
+                        "blocks",
+                        "table-rows",
+                        "sections"
+                      ]
+                    },
+                    "item-selector": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    },
+                    "page-selector": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    },
+                    "required": {
+                      "type": "boolean"
+                    },
+                    "fields": {
+                      "type": "object",
+                      "properties": {
+                        "original-id": {
+                          "type": "object",
+                          "properties": {
+                            "selector": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 500
+                            },
+                            "attribute": {
+                              "enum": [
+                                "id",
+                                "href",
+                                "content",
+                                "data-id"
+                              ]
+                            },
+                            "value": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 50000
+                            },
+                            "scope": {
+                              "enum": [
+                                "item",
+                                "page"
+                              ]
+                            },
+                            "many": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [],
+                          "additionalProperties": false,
+                          "oneOf": [
+                            {
+                              "required": [
+                                "value"
+                              ],
+                              "not": {
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "selector"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "attribute"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "scope"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "many"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "not": {
+                                "required": [
+                                  "value"
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        "title": {
+                          "type": "object",
+                          "properties": {
+                            "selector": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 500
+                            },
+                            "attribute": {
+                              "enum": [
+                                "id",
+                                "href",
+                                "content",
+                                "data-id"
+                              ]
+                            },
+                            "value": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 50000
+                            },
+                            "scope": {
+                              "enum": [
+                                "item",
+                                "page"
+                              ]
+                            },
+                            "many": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [],
+                          "additionalProperties": false,
+                          "oneOf": [
+                            {
+                              "required": [
+                                "value"
+                              ],
+                              "not": {
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "selector"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "attribute"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "scope"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "many"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "not": {
+                                "required": [
+                                  "value"
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        "statement": {
+                          "type": "object",
+                          "properties": {
+                            "selector": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 500
+                            },
+                            "attribute": {
+                              "enum": [
+                                "id",
+                                "href",
+                                "content",
+                                "data-id"
+                              ]
+                            },
+                            "value": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 50000
+                            },
+                            "scope": {
+                              "enum": [
+                                "item",
+                                "page"
+                              ]
+                            },
+                            "many": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [],
+                          "additionalProperties": false,
+                          "oneOf": [
+                            {
+                              "required": [
+                                "value"
+                              ],
+                              "not": {
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "selector"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "attribute"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "scope"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "many"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "not": {
+                                "required": [
+                                  "value"
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        "obligation": {
+                          "type": "object",
+                          "properties": {
+                            "selector": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 500
+                            },
+                            "attribute": {
+                              "enum": [
+                                "id",
+                                "href",
+                                "content",
+                                "data-id"
+                              ]
+                            },
+                            "value": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 50000
+                            },
+                            "scope": {
+                              "enum": [
+                                "item",
+                                "page"
+                              ]
+                            },
+                            "many": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [],
+                          "additionalProperties": false,
+                          "oneOf": [
+                            {
+                              "required": [
+                                "value"
+                              ],
+                              "not": {
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "selector"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "attribute"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "scope"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "many"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "not": {
+                                "required": [
+                                  "value"
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        "context": {
+                          "type": "object",
+                          "properties": {
+                            "selector": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 500
+                            },
+                            "attribute": {
+                              "enum": [
+                                "id",
+                                "href",
+                                "content",
+                                "data-id"
+                              ]
+                            },
+                            "value": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 50000
+                            },
+                            "scope": {
+                              "enum": [
+                                "item",
+                                "page"
+                              ]
+                            },
+                            "many": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [],
+                          "additionalProperties": false,
+                          "oneOf": [
+                            {
+                              "required": [
+                                "value"
+                              ],
+                              "not": {
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "selector"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "attribute"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "scope"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "many"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "not": {
+                                "required": [
+                                  "value"
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        "applicability": {
+                          "type": "object",
+                          "properties": {
+                            "selector": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 500
+                            },
+                            "attribute": {
+                              "enum": [
+                                "id",
+                                "href",
+                                "content",
+                                "data-id"
+                              ]
+                            },
+                            "value": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 50000
+                            },
+                            "scope": {
+                              "enum": [
+                                "item",
+                                "page"
+                              ]
+                            },
+                            "many": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [],
+                          "additionalProperties": false,
+                          "oneOf": [
+                            {
+                              "required": [
+                                "value"
+                              ],
+                              "not": {
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "selector"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "attribute"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "scope"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "many"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "not": {
+                                "required": [
+                                  "value"
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        "exceptions": {
+                          "type": "object",
+                          "properties": {
+                            "selector": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 500
+                            },
+                            "attribute": {
+                              "enum": [
+                                "id",
+                                "href",
+                                "content",
+                                "data-id"
+                              ]
+                            },
+                            "value": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 50000
+                            },
+                            "scope": {
+                              "enum": [
+                                "item",
+                                "page"
+                              ]
+                            },
+                            "many": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [],
+                          "additionalProperties": false,
+                          "oneOf": [
+                            {
+                              "required": [
+                                "value"
+                              ],
+                              "not": {
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "selector"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "attribute"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "scope"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "many"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "not": {
+                                "required": [
+                                  "value"
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        "category": {
+                          "type": "object",
+                          "properties": {
+                            "selector": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 500
+                            },
+                            "attribute": {
+                              "enum": [
+                                "id",
+                                "href",
+                                "content",
+                                "data-id"
+                              ]
+                            },
+                            "value": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 50000
+                            },
+                            "scope": {
+                              "enum": [
+                                "item",
+                                "page"
+                              ]
+                            },
+                            "many": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [],
+                          "additionalProperties": false,
+                          "oneOf": [
+                            {
+                              "required": [
+                                "value"
+                              ],
+                              "not": {
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "selector"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "attribute"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "scope"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "many"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "not": {
+                                "required": [
+                                  "value"
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        "revision": {
+                          "type": "object",
+                          "properties": {
+                            "selector": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 500
+                            },
+                            "attribute": {
+                              "enum": [
+                                "id",
+                                "href",
+                                "content",
+                                "data-id"
+                              ]
+                            },
+                            "value": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 50000
+                            },
+                            "scope": {
+                              "enum": [
+                                "item",
+                                "page"
+                              ]
+                            },
+                            "many": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [],
+                          "additionalProperties": false,
+                          "oneOf": [
+                            {
+                              "required": [
+                                "value"
+                              ],
+                              "not": {
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "selector"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "attribute"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "scope"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "many"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "not": {
+                                "required": [
+                                  "value"
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        "guidance": {
+                          "type": "object",
+                          "properties": {
+                            "selector": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 500
+                            },
+                            "attribute": {
+                              "enum": [
+                                "id",
+                                "href",
+                                "content",
+                                "data-id"
+                              ]
+                            },
+                            "value": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 50000
+                            },
+                            "scope": {
+                              "enum": [
+                                "item",
+                                "page"
+                              ]
+                            },
+                            "many": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [],
+                          "additionalProperties": false,
+                          "oneOf": [
+                            {
+                              "required": [
+                                "value"
+                              ],
+                              "not": {
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "selector"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "attribute"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "scope"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "many"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "not": {
+                                "required": [
+                                  "value"
+                                ]
+                              }
+                            }
+                          ]
+                        },
+                        "example": {
+                          "type": "object",
+                          "properties": {
+                            "selector": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 500
+                            },
+                            "attribute": {
+                              "enum": [
+                                "id",
+                                "href",
+                                "content",
+                                "data-id"
+                              ]
+                            },
+                            "value": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 50000
+                            },
+                            "scope": {
+                              "enum": [
+                                "item",
+                                "page"
+                              ]
+                            },
+                            "many": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [],
+                          "additionalProperties": false,
+                          "oneOf": [
+                            {
+                              "required": [
+                                "value"
+                              ],
+                              "not": {
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "selector"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "attribute"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "scope"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "many"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            {
+                              "not": {
+                                "required": [
+                                  "value"
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "statement"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "strategy",
+                    "item-selector",
+                    "fields"
+                  ],
+                  "additionalProperties": false
+                },
+                "minItems": 1,
+                "maxItems": 100,
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "content-selector",
+              "rules"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "start-urls",
+          "crawl",
+          "extraction"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 100,
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "config-version",
+    "output",
+    "sources"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/appsec-foundry/appsec-analyzer-tools/requirement-harvester/config-v1",
+  "title": "Requirement Harvester configuration v1"
+}

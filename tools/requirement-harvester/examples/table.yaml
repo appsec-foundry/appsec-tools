@@ -1,0 +1,27 @@
+config-version: 1
+output:
+  catalog: ../out/requirements.oscal.yaml
+  report: ../out/report.json
+  title: Unternehmensanforderungen
+  version: "1.0.0"
+defaults:
+  max-depth: 2
+sources:
+  - id: company
+    title: Unternehmensanforderungen
+    start-urls: [https://wiki.example.org/requirements/]
+    crawl:
+      allowed-origins: [https://wiki.example.org]
+      allowed-path-prefixes: [/requirements/]
+    auth: {mode: none}
+    extraction:
+      content-selector: main
+      rules:
+        - id: table
+          strategy: table-rows
+          item-selector: table.requirements tbody tr
+          fields:
+            original-id: {selector: "td:nth-child(1)"}
+            title: {selector: "td:nth-child(2)"}
+            statement: {selector: "td:nth-child(3)"}
+            obligation: {selector: "td:nth-child(4)"}

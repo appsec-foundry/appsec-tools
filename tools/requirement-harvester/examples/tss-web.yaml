@@ -1,0 +1,72 @@
+config-version: 1
+output:
+  catalog: ../out/tss-web.oscal.yaml
+  report: ../out/tss-web-report.json
+  title: TSS-WEB Requirements
+  version: "1.0.0"
+  oscal-version: "1.2.3"
+defaults:
+  max-pages: 100
+  max-depth: 1
+  max-run-seconds: 300
+  request-interval-seconds: 0.5
+sources:
+  - id: tss-web
+    title: TSS-WEB
+    adapter: html
+    start-urls:
+      - https://tss-web.secodis.com/Controls/SecImpl_Secrets
+      - https://tss-web.secodis.com/Controls/SecImpl_Data-Security
+    crawl:
+      allowed-origins: [https://tss-web.secodis.com]
+      allowed-path-prefixes: [/Controls/]
+    auth:
+      mode: none
+    extraction:
+      content-selector: section.page__content
+      context-selector: ":scope > p:first-child"
+      rules:
+        - id: sections
+          strategy: sections
+          item-selector: ":scope > h2"
+          required: false
+          fields:
+            original-id: {attribute: id}
+            title: {selector: h2}
+            statement: {}
+        - id: list-items
+          strategy: blocks
+          page-selector: "section.page__content:not(:has(h2))"
+          item-selector: ":scope > ol > li, :scope > ul > li"
+          required: false
+          fields:
+            statement: {}
+        - id: central-headers
+          strategy: table-rows
+          page-selector: 'head link[rel="canonical"][href$="/Controls/SecImpl_HTTP-Header-Security.html"]'
+          item-selector: ":scope > table:nth-of-type(1) tbody tr"
+          fields:
+            title: {selector: "td:first-child"}
+            statement: {}
+            context:
+              scope: page
+              selector: ".page__content > p:nth-of-type(2), .page__content > p:nth-of-type(4), .page__content > .footnotes"
+              many: true
+        - id: application-headers
+          strategy: table-rows
+          page-selector: 'head link[rel="canonical"][href$="/Controls/SecImpl_HTTP-Header-Security.html"]'
+          item-selector: ":scope > table:nth-of-type(2) tbody tr"
+          fields:
+            title: {selector: "td:first-child"}
+            statement: {}
+            context:
+              scope: page
+              selector: ".page__content > p:nth-of-type(3), .page__content > p:nth-of-type(4), .page__content > .footnotes"
+              many: true
+        - id: design-principles
+          strategy: table-rows
+          page-selector: 'head link[rel="canonical"][href$="/Controls/SecImpl_Secure-Design-Principles.html"]'
+          item-selector: ":scope > table tbody tr"
+          fields:
+            title: {selector: "td:nth-child(2)"}
+            statement: {}
