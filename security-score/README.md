@@ -47,11 +47,11 @@ security-score /path/to/repository
 security-score /path/to/repository --details
 ```
 
-Without a path, `security-score` scans the current directory. The default output shows the score and grade; `--details` adds findings, file locations, and explanations.
+Without a path, `security-score` scans the current directory. Default text output is one line: `59/100 (E)` for a scored result or `59/100 (partial)` for an observed index with incomplete or uncertain coverage. No progress messages appear without `--details`. If no index is available, the line contains only `incomplete` or `undetermined`. Errors that prevent a result, such as an invalid URL or connection failure, still report a diagnostic.
 
 With uncertain coverage, the tool reports `partial` and an observed pattern index without a repository score or grade. `--details` groups static candidates by path hints (`source`, `tests`, `examples`, `assets`, `build`, and `repository-host`) and summarizes repeated locations and parser issues. These hints do not prove production use or third-party ownership and do not remove candidates from the assessment. JSON/YAML retain every candidate and location.
 
-An `incomplete` result also shows its observed pattern index in compact output when recognized evidence is available, alongside the processing limit or failure. With no recognized evidence it explicitly reports that no index is available. An observed index never substitutes for the withheld repository score or grade.
+Processing limits, coverage explanations, source locations, and progress belong to `--details`; JSON/YAML retain structured diagnostics and the actual verdict. A `(partial)` index never substitutes for the withheld repository score or grade. Exit status remains 1 for incomplete processing and 2 for partial/undetermined assessments, even when compact text contains a numeric index.
 
 ### Repository URL
 

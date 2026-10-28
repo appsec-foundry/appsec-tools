@@ -27,6 +27,21 @@ import score_version  # noqa: E402
 
 
 class ScoreTests(unittest.TestCase):
+    def test_compact_cli_has_no_progress_or_explanatory_output(self):
+        self.write("app.py", "eval(payload)\n" * 4)
+        self.write("large.js", "x" * (sources.MAX_FILE + 1))
+        output, errors = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.object(cli.threading, "Timer") as timer,
+            contextlib.redirect_stdout(output),
+            contextlib.redirect_stderr(errors),
+        ):
+            status = cli.main([str(self.repo)])
+        self.assertEqual(status, 1)
+        self.assertEqual(output.getvalue(), "0/100 (partial)\n")
+        self.assertEqual(errors.getvalue(), "")
+        timer.assert_not_called()
+
     def test_partial_evidence_has_an_index_without_a_repository_grade(self):
         self.write("app.py", "eval(payload)\nsubprocess.run(command, shell=setting)\n")
         status, result, _ = self.invoke()
@@ -35,7 +50,7 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(result["observed_score"], 59)
         self.assertIsNone(result["score"])
         self.assertIsNone(result["grade"])
-        self.assertIn("no repository grade", cli.render(result))
+        self.assertEqual(cli.render(result), "59/100 (partial)")
 
     def test_uncertain_operation_is_not_hidden_by_violation_of_same_rule(self):
         self.write(
@@ -593,12 +608,11 @@ class ScoreTests(unittest.TestCase):
         status, result, _ = self.invoke()
         self.assertEqual(status, 1)
         self.assertIsNone(result["score"])
-        self.assertIn(
-            "1 selected file(s) exceed the 512 KiB file limit", cli.render(result)
-        )
+        self.assertEqual(cli.render(result), "59/100 (partial)")
         self.assertIn("large.js", cli.render(result, details=True))
-        self.assertIn("observed pattern index 59/100 (partial)", cli.render(result))
-        self.assertIn("no repository score or grade", cli.render(result))
+        self.assertIn(
+            "exceeds the 512 KiB file limit", cli.render(result, details=True)
+        )
         self.assertIsNone(result["grade"])
 
     def test_incomplete_without_evidence_does_not_invent_a_pattern_index(self):
@@ -606,14 +620,14 @@ class ScoreTests(unittest.TestCase):
         status, result, _ = self.invoke()
         self.assertEqual(status, 1)
         self.assertIsNone(result["observed_score"])
-        self.assertIn("no observed pattern index available", cli.render(result))
+        self.assertEqual(cli.render(result), "incomplete")
         self.assertNotIn("/100", cli.render(result))
 
     def test_incomplete_zero_pattern_index_is_displayed(self):
         self.write("app.py", "eval(payload)\n" * 4)
         self.write("large.js", "x" * (sources.MAX_FILE + 1))
         _, result, _ = self.invoke()
-        self.assertIn("observed pattern index 0/100 (partial)", cli.render(result))
+        self.assertEqual(cli.render(result), "0/100 (partial)")
         self.assertIsNone(result["score"])
         self.assertIsNone(result["grade"])
 

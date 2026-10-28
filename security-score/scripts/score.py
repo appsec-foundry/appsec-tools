@@ -59,9 +59,15 @@ from score_remote import (
 
 
 class Progress:
-    """Keep quick runs quiet; show a single progress line for longer work."""
+    """Show progress only when detailed output was requested."""
+
+    def __init__(self, enabled=True):
+        self.enabled = enabled
+        self.timer = None
 
     def __enter__(self):
+        if not self.enabled:
+            return self
         self.timer = threading.Timer(
             1.0,
             lambda: print(
@@ -73,8 +79,9 @@ class Progress:
         return self
 
     def __exit__(self, *args):
-        self.timer.cancel()
-        self.timer.join()
+        if self.timer is not None:
+            self.timer.cancel()
+            self.timer.join()
 
 
 def parser():
@@ -214,24 +221,8 @@ def render(result, details=False):
     if result.get("analysis") == "change-relevance":
         return render_change(result, details)
     if not details:
-        if result["verdict"] == "incomplete" and result.get("engine") == "internal":
-            oversized = sum(
-                row["reason"] == "oversized" for row in result.get("exclusions", [])
-            )
-            reason = (
-                f"{oversized} selected file(s) exceed the 512 KiB file limit"
-                if oversized
-                else "required source checks could not finish"
-            )
-            observed = result.get("observed_score")
-            index = (
-                f"observed pattern index {observed}/100 (partial)"
-                if observed is not None
-                else "no observed pattern index available"
-            )
-            return f"incomplete: {index}; {reason}; no repository score or grade. Use --details for affected files and limits."
-        if result["verdict"] == "partial":
-            return f"partial: observed pattern index {result['observed_score']}/100; coverage remains uncertain; no repository grade. Use --details."
+        if result["score"] is None and result.get("observed_score") is not None:
+            return f"{result['observed_score']}/100 (partial)"
         return (
             f"{result['score']}/100 ({result['grade']})"
             if result["score"] is not None
@@ -789,7 +780,7 @@ def main(argv=None):
     if options.head and not options.base:
         arguments.error("--head requires --base.")
     try:
-        with Progress():
+        with Progress(enabled=options.details):
             result, status = run(options)
         if options.json:
             output = json.dumps(result, indent=2, ensure_ascii=True, allow_nan=False)
