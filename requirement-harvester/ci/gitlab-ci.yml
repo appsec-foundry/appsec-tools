@@ -7,7 +7,7 @@ default:
   tags: [python-nonroot]
   before_script:
     - test "$(id -u)" -ne 0
-    - cd tools/requirement-harvester
+    - cd requirement-harvester
     - python3 -m venv .venv
     - .venv/bin/python -m pip install --require-hashes -r requirements-dev.lock
 
@@ -32,5 +32,5 @@ harvest-requirements:
     access: maintainer
     expire_in: 7 days
     paths:
-      - tools/requirement-harvester/ci-artifacts/report.json
-      - tools/requirement-harvester/ci-artifacts/catalogs/*.oscal.yaml
+      - requirement-harvester/ci-artifacts/report.json
+      - requirement-harvester/ci-artifacts/catalogs/*.oscal.yaml

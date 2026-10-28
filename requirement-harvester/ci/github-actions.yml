@@ -14,7 +14,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Verify
-        working-directory: tools/requirement-harvester
+        working-directory: requirement-harvester
         run: |
           python3 -m venv .venv
           .venv/bin/python -m pip install --require-hashes -r requirements-dev.lock
@@ -30,12 +30,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Install
-        working-directory: tools/requirement-harvester
+        working-directory: requirement-harvester
         run: |
           python3 -m venv .venv
           .venv/bin/python -m pip install --require-hashes -r requirements.lock
       - name: Harvest
-        working-directory: tools/requirement-harvester
+        working-directory: requirement-harvester
         env:
           HARVEST_TOKEN: ${{ secrets.HARVEST_TOKEN }}
           HARVEST_USERNAME: ${{ secrets.HARVEST_USERNAME }}
@@ -47,7 +47,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: harvest-report
-          path: tools/requirement-harvester/ci-artifacts/report.json
+          path: requirement-harvester/ci-artifacts/report.json
           retention-days: 7
           if-no-files-found: ignore
       - name: Catalogs
@@ -55,6 +55,6 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: oscal-catalogs
-          path: tools/requirement-harvester/ci-artifacts/catalogs/*.oscal.yaml
+          path: requirement-harvester/ci-artifacts/catalogs/*.oscal.yaml
           retention-days: 7
           if-no-files-found: error

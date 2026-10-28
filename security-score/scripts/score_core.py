@@ -20,7 +20,7 @@ from score_calculation import (
 )
 
 
-ROOT = Path(__file__).resolve().parent.parent
+MODULES = Path(__file__).resolve().parent
 RULE_VERSION = POLICY["rule_version"]
 RULES = POLICY["rules"]
 
@@ -121,7 +121,7 @@ validate_policy()
 CATALOG_HASH = hashlib.sha256(CATALOG_BYTES).hexdigest()
 IMPLEMENTATION_HASH = hashlib.sha256(
     b"".join(
-        (ROOT / "scripts" / name).read_bytes()
+        (MODULES / name).read_bytes()
         for name in (
             "score_core.py",
             "score_calculation.py",

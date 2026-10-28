@@ -8,10 +8,14 @@ Control recognition and source scanning belong to score_core, not this module.
 from collections import Counter
 import json
 import math
+import sys
 from pathlib import Path
 
 
-CATALOG_BYTES = (Path(__file__).resolve().parent.parent / "rules.json").read_bytes()
+CATALOG_PATH = Path(__file__).resolve().parent.parent / "rules.json"
+if not CATALOG_PATH.is_file():
+    CATALOG_PATH = Path(sys.prefix) / "share" / "security-score" / "rules.json"
+CATALOG_BYTES = CATALOG_PATH.read_bytes()
 POLICY = json.loads(CATALOG_BYTES)
 VERSION = POLICY["scoring_version"]
 WEIGHTS = POLICY["scoring"]["weights"]

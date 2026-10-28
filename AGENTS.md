@@ -10,7 +10,7 @@ gehören in das Hauptrepository.
 ## Ausgangslage
 
 Das erste Tool ist der eigenständige Python-Requirement-Harvester unter
-`tools/requirement-harvester/`. Er verwendet Python >=3.10, lokale Lockfiles und
+`requirement-harvester/`. Er verwendet Python >=3.10, lokale Lockfiles und
 pytest. Tests werden im Tool-Verzeichnis mit `.venv/bin/python -m pytest`
 ausgeführt. Die README beschreibt Installation, CLI und CI-Vorlagen.
 Leite Funktionen oder Schnittstellen des Hauptprojekts nicht aus dem
@@ -18,7 +18,7 @@ Repository-Namen ab; prüfe sie vor einer davon abhängigen Implementierung.
 
 ## Struktur und Umsetzung
 
-- Lege jedes neue Tool unter `tools/<tool-name>/` ab.
+- Lege jedes neue Tool in einem eigenen Verzeichnis im Repository-Root ab.
 - Halte Tools eigenständig nutzbar und ihre Abhängigkeiten lokal beim Tool.
 - Wähle Sprache und Laufzeit passend zur Aufgabe und zu bestehenden Mustern.
 - Führe gemeinsame Bibliotheken oder Frameworks erst bei konkretem Bedarf ein.

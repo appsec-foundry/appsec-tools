@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "appsec-requirement-harvester"
+version = "0.1.0"
+description = "Export requirements from configured HTTPS sources as OSCAL YAML"
+requires-python = ">=3.10"
+dependencies = [
+  "beautifulsoup4==4.15.0",
+  "PyYAML==6.0.3",
+  "jsonschema==4.26.0",
+  "msal==1.39.0",
+  "regex==2026.9.29",
+]
+
+[project.scripts]
+requirement-harvester = "harvester.cli:main"
+
+[tool.setuptools]
+packages = ["harvester", "harvester.schemas"]
+
+[tool.setuptools.package-data]
+"harvester.schemas" = ["*.json"]

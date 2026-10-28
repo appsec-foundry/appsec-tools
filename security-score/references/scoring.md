@@ -159,11 +159,11 @@ Edit catalog wording/severity directly. Recognition changes also edit the named 
 Keep IDs stable when refining rules. Register new detector kinds in policy validation and source applicability. Add positive, negative and relevant unclear examples, plus representative boundary tests. Source examples contain a filename, text, expected outcome and optional companion files. Host examples use explicit API states. Relevance examples contain before/after text, an expected level and optional executable flags; `--verify-rules` runs these as well. Signal patterns are compiled from the installed catalog only, never from target content. Use artificial examples with no real credentials or personal data.
 
 ```sh
-python3 /installed/appsec-analyzer-tools/tools/security-score/scripts/score.py --list-rules --json
-python3 /installed/appsec-analyzer-tools/tools/security-score/scripts/score.py --verify-rules
+python3 /installed/appsec-analyzer-tools/security-score/scripts/score.py --list-rules --json
+python3 /installed/appsec-analyzer-tools/security-score/scripts/score.py --verify-rules
 ```
 
-From the `tools/security-score` directory, run `python3 -B -m unittest test_security_score -v`. These tests connect behavior to REQ-01–07 through real local scans/comparisons, worked calculations, editable catalog values and representative failures. Examples do not prove completeness or absence of false positives; check representative project sources when widening recognition. Bump `rule_version` when recognition or the rule catalog changes, `scoring_version` when repository score meaning changes, and `change_relevance.version` when relevance classification changes. Catalog/implementation fingerprints also prevent accidental comparison across changed policies.
+From the `security-score` directory, run `python3 -B -m unittest test_security_score -v`. These tests connect behavior to REQ-01–07 through real local scans/comparisons, worked calculations, editable catalog values and representative failures. Examples do not prove completeness or absence of false positives; check representative project sources when widening recognition. Bump `rule_version` when recognition or the rule catalog changes, `scoring_version` when repository score meaning changes, and `change_relevance.version` when relevance classification changes. Catalog/implementation fingerprints also prevent accidental comparison across changed policies.
 
 ## Limits
 

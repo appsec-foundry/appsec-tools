@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "appsec-security-score"
+version = "0.1.0"
+description = "Deterministic repository security score and change relevance"
+requires-python = ">=3.10"
+
+[project.scripts]
+security-score = "score:main"
+
+[tool.setuptools]
+py-modules = ["score", "score_core", "score_sources", "score_remote", "score_architecture", "score_relevance", "score_calculation"]
+package-dir = {"" = "scripts"}
+
+[tool.setuptools.data-files]
+"share/security-score" = ["rules.json"]
