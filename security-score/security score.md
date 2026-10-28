@@ -39,11 +39,11 @@ These examples assume no other area scores lower. Fixing a finding may leave the
 | 50–59 | E |
 | 0–49 | F |
 
-**100 (A) means the recognized checks made no deductions.** Even one recognized check can yield a score, so always consider coverage. Unknown checks do not deduct points, and areas with only unknown checks are excluded from the overall score.
+**100 (A) means the recognized checks made no deductions.** Always consider coverage. Since scoring version 3, an unclear application check or recognized unsupported application source prevents a repository score. Unknown host settings alone do not block a score. Unknowns are not treated as point deductions.
 
 | Result | Meaning |
 | --- | --- |
-| `undetermined` | No recognized source or dependency evidence is available. Host settings alone are insufficient. |
+| `undetermined` | No recognized source or dependency evidence is available, or application coverage remains unclear. Host settings alone are insufficient. |
 | `incomplete` | Required processing failed or reached a limit, such as the time budget. |
 
 Neither result includes a score or grade. Available findings remain visible with `--details`. Compare scores only for the same engine, compatible scoring and rule versions, and similar scan coverage.

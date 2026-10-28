@@ -43,7 +43,7 @@ except (
         file=sys.stderr,
     )
     raise SystemExit(1) from None
-from score_sources import Budget, SourceError, command, fingerprint, select
+from score_sources import Budget, SourceError, command, excluded, fingerprint, select
 from score_architecture import describe
 from score_relevance import VERSION as RELEVANCE_VERSION, analyze as analyze_relevance
 from score_remote import (
@@ -205,6 +205,16 @@ def render(result, details=False):
     if result.get("analysis") == "change-relevance":
         return render_change(result, details)
     if not details:
+        if result["verdict"] == "incomplete" and result.get("engine") == "internal":
+            oversized = sum(
+                row["reason"] == "oversized" for row in result.get("exclusions", [])
+            )
+            reason = (
+                f"{oversized} selected file(s) exceed the 512 KiB file limit"
+                if oversized
+                else "required source checks could not finish"
+            )
+            return f"incomplete: {reason}; no score or grade. Use --details for affected files and limits."
         return (
             f"{result['score']}/100 ({result['grade']})"
             if result["score"] is not None
@@ -276,6 +286,19 @@ def render(result, details=False):
         lines.append(f"Host {entry['setting']}: {entry['status']} · {entry['reason']}")
     for warning in result["warnings"]:
         lines.append("Limit: " + warning)
+    for check in result["checks"]:
+        if check["status"] == "unclear" and check["area"] != "repository-host":
+            lines.append(
+                f"Unclear application check: {check['rule']} · {check['file']}"
+            )
+    for entry in result["exclusions"]:
+        if entry["reason"] in {"oversized", "link or submodule", "binary or non-UTF-8"}:
+            reason = (
+                "exceeds the 512 KiB file limit"
+                if entry["reason"] == "oversized"
+                else entry["reason"]
+            )
+            lines.append(f"Unexamined source: {entry['file']} · {reason}")
     lines.append(
         f"Excluded or unsupported entries: {len(result['exclusions'])}; see JSON/YAML for paths and reasons."
     )
@@ -495,7 +518,7 @@ def run(options):
     if options.details:
         print("Reading selected sources...", file=sys.stderr, flush=True)
     settings = []
-    if options.repo.startswith("https://"):
+    if "://" in options.repo:
         before, after, exclusions, scope, verify, settings = select_remote(
             options, budget
         )
@@ -606,6 +629,44 @@ def run(options):
                 },
             }
     else:
+        unsupported_code = {
+            ".c",
+            ".cpp",
+            ".cc",
+            ".h",
+            ".hpp",
+            ".swift",
+            ".dart",
+            ".lua",
+            ".java",
+            ".kt",
+            ".scala",
+            ".go",
+            ".rs",
+            ".cs",
+            ".php",
+            ".rb",
+            ".vue",
+            ".svelte",
+            ".sh",
+            ".bash",
+            ".ps1",
+            ".tf",
+        }
+        for exclusion in exclusions:
+            if (
+                exclusion["reason"] == "excluded or unsupported"
+                and not excluded(exclusion["file"])
+                and Path(exclusion["file"]).suffix.lower() in unsupported_code
+            ):
+                checks.append(
+                    {
+                        "rule": "SOURCE-COVERAGE",
+                        "area": "coverage",
+                        "file": exclusion["file"],
+                        "status": "unclear",
+                    }
+                )
         result = calculate(findings, checks, complete=complete, require_source=True)
         result["analysis"] = "repository-score"
     if remote:

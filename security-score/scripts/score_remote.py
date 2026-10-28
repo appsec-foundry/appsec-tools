@@ -2,34 +2,34 @@
 
 from __future__ import annotations
 
-import gzip
 import fnmatch
+from functools import lru_cache
 import http.client
-import io
 import ipaddress
 import json
 import os
 import re
 import socket
 import ssl
-import tarfile
 import threading
 from urllib.parse import quote, urlsplit
 
-from score_core import RULES, supported
-from score_sources import (
-    MAX_BYTES,
-    MAX_FILE,
-    MAX_FILES,
-    SourceError,
-    decode,
-    excluded,
-    relative,
-)
+from score_core import RULES
+from score_sources import SourceError
+from score_remote_sources import select_files
 
 
-HOSTS = {"github.com", "api.github.com", "codeload.github.com", "gitlab.com"}
+HOSTS = {
+    "api.github.com",
+    "raw.githubusercontent.com",
+    "gitlab.com",
+}
 MAX_DOWNLOAD = 24 * 1024 * 1024
+
+
+@lru_cache(maxsize=1)
+def tls_context():
+    return ssl.create_default_context()
 
 
 def repository_url(value):
@@ -85,7 +85,16 @@ def public_addresses(host, budget):
     return result
 
 
-def get(url, budget, *, token=None, token_host=None, redirects=0, archive=False):
+def get(
+    url,
+    budget,
+    *,
+    token=None,
+    token_host=None,
+    limit=MAX_DOWNLOAD,
+    accept="application/json",
+    connections=None,
+):
     """Pin the checked IP at connect time, keep TLS host verification, and bound reads."""
     parsed = urlsplit(url)
     host = parsed.hostname
@@ -94,24 +103,27 @@ def get(url, budget, *, token=None, token_host=None, redirects=0, archive=False)
         or host not in HOSTS
         or parsed.netloc != host
         or parsed.fragment
-        or redirects > 2
     ):
-        raise SourceError("Rejected Git API or archive destination.")
-    addresses = public_addresses(host, budget)
-    address = addresses[0]
-    connection = http.client.HTTPSConnection(
-        host, timeout=min(5, budget.remaining()), context=ssl.create_default_context()
-    )
-    raw_socket = socket.socket(address[0], socket.SOCK_STREAM)
+        raise SourceError("Rejected repository metadata or source destination.")
+    connection = connections.get(host) if connections is not None else None
+    raw_socket, reusable = None, False
     try:
-        raw_socket.settimeout(min(5, budget.remaining()))
-        raw_socket.connect(address[4])
-        connection.sock = connection._context.wrap_socket(
-            raw_socket, server_hostname=host
-        )
+        if connection is None or connection.sock is None:
+            addresses = public_addresses(host, budget)
+            address = addresses[0]
+            connection = http.client.HTTPSConnection(
+                host, timeout=min(5, budget.remaining()), context=tls_context()
+            )
+            raw_socket = socket.socket(address[0], socket.SOCK_STREAM)
+            raw_socket.settimeout(min(5, budget.remaining()))
+            raw_socket.connect(address[4])
+            connection.sock = connection._context.wrap_socket(
+                raw_socket, server_hostname=host
+            )
+        connection.sock.settimeout(min(5, budget.remaining()))
         headers = {
             "User-Agent": "appsec-skills-security-score/1",
-            "Accept": "application/json",
+            "Accept": accept,
             "Accept-Encoding": "identity",
         }
         if token and host == token_host:
@@ -123,32 +135,16 @@ def get(url, budget, *, token=None, token_host=None, redirects=0, archive=False)
         connection.request("GET", path, headers=headers)
         response = connection.getresponse()
         if response.status in {301, 302, 303, 307, 308}:
-            location = response.getheader("Location", "")
-            destination = urlsplit(location)
-            allowed = (
-                {"codeload.github.com"}
-                if host in {"api.github.com", "codeload.github.com"}
-                else {"gitlab.com"}
-            )
-            if not archive or destination.hostname not in allowed:
-                raise SourceError(
-                    "Rejected remote redirect outside the selected archive hosts."
-                )
-            # Revalidate every hop; credentials are bound to the original API host.
-            connection.close()
-            return get(
-                location,
-                budget,
-                token=token,
-                token_host=token_host,
-                redirects=redirects + 1,
-                archive=True,
+            raise SourceError(
+                "Repository metadata or source redirected; redirects are not followed and no score is available."
             )
         if response.status != 200:
             return None, response.status
         length = response.getheader("Content-Length")
-        if length and (not length.isdigit() or int(length) > MAX_DOWNLOAD):
-            raise SourceError("Remote response exceeds the download limit.")
+        if length and (not length.isdigit() or int(length) > limit):
+            raise SourceError(
+                f"Remote response exceeds the {limit:,}-byte download limit; no score is available."
+            )
         data = bytearray()
         while True:
             budget.check()
@@ -157,20 +153,80 @@ def get(url, budget, *, token=None, token_host=None, redirects=0, archive=False)
             chunk = response.read(16384)
             if not chunk:
                 break
-            if len(data) + len(chunk) > MAX_DOWNLOAD:
-                raise SourceError("Remote response exceeds the download limit.")
+            if len(data) + len(chunk) > limit:
+                raise SourceError(
+                    f"Remote response exceeds the {limit:,}-byte download limit; no score is available."
+                )
             data.extend(chunk)
+        reusable = connections is not None and connection.sock is not None
+        if reusable:
+            connections[host] = connection
         return bytes(data), 200
     except (OSError, http.client.HTTPException, ssl.SSLError):
+        budget.check()
         return None, 0
     finally:
-        connection.close()
-        raw_socket.close()
+        if not reusable:
+            if connection is not None:
+                connection.close()
+            if connections is not None:
+                connections.pop(host, None)
+        if raw_socket is not None:
+            raw_socket.close()
 
 
-def json_get(url, budget, token, token_host, expected=dict):
+class SourceReader:
+    """Reuse each worker's checked TLS connections for one bounded selection."""
+
+    def __init__(self, budget, token, token_host):
+        self.budget, self.token, self.token_host = budget, token, token_host
+        self.local = threading.local()
+        self.caches = []
+        self.lock = threading.Lock()
+
+    def __call__(self, url, *, limit, accept="application/json"):
+        if not hasattr(self.local, "connections"):
+            self.local.connections = {}
+            with self.lock:
+                self.caches.append(self.local.connections)
+        data, status = get(
+            url,
+            self.budget,
+            token=self.token,
+            token_host=self.token_host,
+            limit=limit,
+            accept=accept,
+            connections=self.local.connections,
+        )
+        if data is None:
+            raise source_error(status, "Repository file listing or selected source")
+        return data
+
+    def close(self):
+        for cache in self.caches:
+            for connection in cache.values():
+                connection.close()
+
+
+def source_error(status, subject):
+    if status == 404:
+        reason = "not found or not accessible (HTTP 404); check the repository URL and access token"
+    elif status == 401:
+        reason = "authentication failed (HTTP 401); check the selected token"
+    elif status in {403, 429}:
+        reason = f"access denied or API rate limit reached (HTTP {status}); check token permissions or retry later"
+    elif not status:
+        reason = "connection failed; check network access and retry"
+    else:
+        reason = f"host returned HTTP {status}; retry later or check host availability"
+    return SourceError(f"{subject}: {reason}. No score is available.")
+
+
+def json_get(url, budget, token, token_host, expected=dict, *, required=False):
     data, status = get(url, budget, token=token, token_host=token_host)
     if data is None:
+        if required:
+            raise source_error(status, "Repository source")
         return (
             {},
             f"not readable (HTTP {status})" if status else "connection unavailable",
@@ -178,9 +234,17 @@ def json_get(url, budget, token, token_host, expected=dict):
     try:
         document = json.loads(data)
         if not isinstance(document, expected):
+            if required:
+                raise SourceError(
+                    "Repository source metadata has an invalid API response; no score is available."
+                )
             return {}, "invalid API response"
         return document, None
     except (ValueError, UnicodeError):
+        if required:
+            raise SourceError(
+                "Repository source metadata has an invalid API response; no score is available."
+            ) from None
         return {}, "invalid API response"
 
 
@@ -235,11 +299,13 @@ def gitlab_reviews(api, branch, protected, budget, token):
     )
 
 
-def host_settings(host, project, budget, token=None):
+def host_settings(host, project, budget, token=None, *, require_source=False):
     """Read only named fields; missing fields and 401/403/404 remain unknown."""
     if host == "github.com":
         api = "https://api.github.com/repos/" + project
-        document, error = json_get(api, budget, token, "api.github.com")
+        document, error = json_get(
+            api, budget, token, "api.github.com", required=require_source
+        )
         branch = document.get("default_branch")
         branch_doc, branch_error = (
             json_get(
@@ -247,6 +313,7 @@ def host_settings(host, project, budget, token=None):
                 budget,
                 token,
                 "api.github.com",
+                required=require_source,
             )
             if isinstance(branch, str) and branch
             else ({}, error)
@@ -298,14 +365,12 @@ def host_settings(host, project, budget, token=None):
             if isinstance(branch_doc.get("commit"), dict)
             else None
         )
-        archive = (
-            api + "/tarball/" + revision
-            if isinstance(revision, str) and re.fullmatch(r"[0-9a-f]{40,64}", revision)
-            else None
-        )
+
     else:
         api = "https://gitlab.com/api/v4/projects/" + quote(project, safe="")
-        document, error = json_get(api, budget, token, "gitlab.com")
+        document, error = json_get(
+            api, budget, token, "gitlab.com", required=require_source
+        )
         branch = document.get("default_branch")
         branch_doc, branch_error = (
             json_get(
@@ -313,6 +378,7 @@ def host_settings(host, project, budget, token=None):
                 budget,
                 token,
                 "gitlab.com",
+                required=require_source,
             )
             if isinstance(branch, str) and branch
             else ({}, error)
@@ -345,75 +411,8 @@ def host_settings(host, project, budget, token=None):
             if isinstance(branch_doc.get("commit"), dict)
             else None
         )
-        archive = (
-            api + "/repository/archive.tar.gz?sha=" + revision
-            if isinstance(revision, str) and re.fullmatch(r"[0-9a-f]{40,64}", revision)
-            else None
-        )
-    return settings, revision, archive
 
-
-def archive_files(data, budget):
-    # Bound expansion before parsing archive headers, including PAX metadata.
-    maximum = MAX_BYTES + 8 * 1024 * 1024
-    try:
-        with gzip.GzipFile(fileobj=io.BytesIO(data)) as compressed:
-            expanded = compressed.read(maximum + 1)
-        if len(expanded) > maximum:
-            raise SourceError("Remote archive exceeds the expansion limit.")
-        files, exclusions = {}, []
-        total = 0
-        prefix = None
-        with tarfile.open(fileobj=io.BytesIO(expanded), mode="r:") as archive:
-            for count, member in enumerate(archive, 1):
-                budget.check()
-                if count > MAX_FILES:
-                    raise SourceError("Remote archive exceeds the entry limit.")
-                parts = member.name.rstrip("/").split("/")
-                if member.name.startswith("/") or any(
-                    part in {"..", ""} for part in parts
-                ):
-                    raise SourceError("Remote archive contains an unsafe path.")
-                prefix = prefix or parts[0]
-                if parts[0] != prefix:
-                    raise SourceError("Remote archive has ambiguous source roots.")
-                if len(parts) == 1 and not member.isdir():
-                    raise SourceError("Remote archive has no source directory root.")
-                if len(parts) == 1:
-                    continue
-                path = relative("/".join(parts[1:]))
-                if member.isdir():
-                    continue
-                if not member.isfile():
-                    exclusions.append({"file": path, "reason": "link or submodule"})
-                    continue
-                if excluded(path) or not supported(path):
-                    exclusions.append(
-                        {"file": path, "reason": "excluded or unsupported"}
-                    )
-                    continue
-                if member.size < 0:
-                    raise SourceError("Remote archive has an invalid entry size.")
-                if member.size > MAX_FILE:
-                    exclusions.append({"file": path, "reason": "oversized"})
-                    continue
-                total += member.size
-                if total > MAX_BYTES:
-                    raise SourceError("Remote source exceeds the aggregate byte limit.")
-                if path in files:
-                    raise SourceError("Remote archive contains duplicate source paths.")
-                handle = archive.extractfile(member)
-                text = decode(handle.read(MAX_FILE + 1))
-                if text is None:
-                    exclusions.append({"file": path, "reason": "binary or non-UTF-8"})
-                else:
-                    files[path] = {
-                        "text": text,
-                        "executable": bool(member.mode & 0o111),
-                    }
-        return files, exclusions
-    except (tarfile.TarError, EOFError, OSError):
-        raise SourceError("Remote archive is malformed or unsupported.") from None
+    return settings, revision
 
 
 def read_token(name):
@@ -448,23 +447,22 @@ def select_remote(options, budget):
             "Use a local checkout for Git comparisons, or supply the selected PR/MR patch separately."
         )
     token = read_token(options.token_env)
-    settings, revision, archive = host_settings(host, project, budget, token)
-    if archive is None:
-        raise SourceError(
-            "Cannot resolve the remote source revision; check access or use an authorized local checkout."
-        )
-    data, status = get(
-        archive,
-        budget,
-        token=token,
-        token_host="api.github.com" if host == "github.com" else "gitlab.com",
-        archive=True,
+    settings, revision = host_settings(
+        host, project, budget, token, require_source=True
     )
-    if data is None:
+    if revision is None:
         raise SourceError(
-            "Cannot retrieve the selected remote source; check host access or use a local checkout."
+            "Repository has no readable default-branch commit (empty repository or inaccessible branch); no score is available."
         )
-    files, exclusions = archive_files(data, budget)
+    token_host = "api.github.com" if host == "github.com" else "gitlab.com"
+
+    read = SourceReader(budget, token, token_host)
+    try:
+        files, exclusions = select_files(
+            host, project, revision, budget, read, authenticated=token is not None
+        )
+    finally:
+        read.close()
     scope = {
         "kind": "repository",
         "selection": "git-url",

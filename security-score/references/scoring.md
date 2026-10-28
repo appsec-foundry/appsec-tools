@@ -42,7 +42,7 @@ For example, one high finding deducts 25 points, but the high-severity cap lower
 
 A check can be `violated`, `satisfied`, `unclear`, or `not_applicable`. The scanner records a violation when it recognizes one; otherwise it records unclear evidence before a recognized control. Merely finding a technology name does not prove a control works. Indirect flows, aliases, and external configuration may remain unclear.
 
-At least one source or dependency check must provide recognized evidence, and required processing must finish. Host settings alone cannot establish an application score. When evidence is insufficient, the verdict is `undetermined`. When required processing fails or hits a limit, it is `incomplete`. Both retain available findings but withhold score and grade. Even one recognized check can yield a score with narrow coverage; inspect `--details` before using the result.
+At least one source or dependency check must provide recognized evidence, and required processing must finish. Host settings alone cannot establish an application score. When evidence is insufficient, the verdict is `undetermined`. When required processing fails or hits a limit, it is `incomplete`. Both retain available findings but withhold score and grade. Scoring version 3 withholds the overall score whenever an application check is unclear or recognized application source files use an unsupported language. Unknown repository-host settings do not block otherwise assessable application evidence. A score still covers only the bundled checks; inspect `--details` before using it.
 
 Detailed and JSON/YAML output show each area's deductions and cap. `areas[].breakdown` lists the rule, severity, number of findings, points per finding, deduction, and cap.
 
@@ -95,7 +95,7 @@ For a GitHub.com or GitLab.com repository URL, the tool resolves an identified r
 | Change classification | `change_relevance` in `rules.json` and `scripts/score_relevance.py` |
 | Score formula or grade calculation | `scripts/score_calculation.py` and this guide |
 
-Weights must be whole points from 1 to 100; caps must be whole numbers from 0 to 100. Grade bands are fixed by REQ-03 in [requirements.md](../requirements.md). The formula identifiers `aggregation` and `repetitions` are validated; editing their names alone does not change the calculation.
+Weights must be whole points from 1 to 100; caps must be whole numbers from 0 to 100. Higher severities must have weights at least as large and caps no higher than lower severities. Grade bands are fixed by REQ-03 in [requirements.md](../requirements.md). The formula identifiers `aggregation` and `repetitions` are validated; editing their names alone does not change the calculation.
 
 For example, lowering `scoring.weights.high` from 25 to 15 makes three high findings in one area deduct 45 points. The cap remains 59, so the area's result is `min(55, 59) = 55 (E)`. A single high finding still scores 59 unless its cap also changes.
 
@@ -119,7 +119,9 @@ The default total time budget is 15 seconds; `--timeout` accepts 0.1–120 secon
 
 | Limit | Value |
 | --- | ---: |
-| Inventory or archive entries | 3,000 |
+| Inventory or remote tree entries | 3,000 |
+| Remote file-listing metadata, including all pages | 8 MiB |
+| Parallel selected-source requests | 8 |
 | Selected source file | 512 KiB |
 | Selected source per comparison side | 20 MiB |
 | Supplied patch | 4 MiB |
@@ -127,4 +129,8 @@ The default total time budget is 15 seconds; `--timeout` accepts 0.1–120 secon
 | Observations per side | 5,000 |
 | Retained relevance signals | 1,000 |
 
-Archive expansion is limited to 20 MiB of selected source plus 8 MiB of metadata. Excluded or unreadable files, malformed patches, and sources that change during a run can prevent a complete result. JSON/YAML keep the bounded result; compact text shows the headline unless `--details` is requested. Output reports locations and explanations, without raw source snippets or credential literals.
+Remote scans list files at the resolved commit and fetch only supported, non-excluded sources; no repository archive is downloaded or expanded. Requests reuse checked HTTPS connections within each worker. Public GitHub sources use `raw.githubusercontent.com` without API credentials; authenticated GitHub and GitLab sources use their respective APIs. GitHub tree truncation and incomplete GitLab pagination fail without a score. File-count, source-byte, per-file, metadata, and total-time limits still apply. Authenticated API requests may also hit host rate limits.
+
+Excluded or unreadable files, malformed patches, and sources that change during a run can prevent a complete result. JSON/YAML keep the bounded result; compact text explains an incomplete scan and `--details` adds affected paths. Missing repositories and inaccessible private repositories may both return HTTP 404; errors do not claim to distinguish those cases. Output reports locations and explanations, without raw source snippets or credential literals.
+
+Relevance version 3 also reflects the updated JavaScript evidence. Scoring version 3 adds the application-coverage gate; rule version 4 counts JavaScript execution calls independently of line breaks and retains template interpolation as code. Nested expressions, strings and comments are handled; ambiguous slash syntax in interpolation and unfinished templates withhold a score rather than hiding executable content. Versions with different coverage gates or detectors are not directly comparable.

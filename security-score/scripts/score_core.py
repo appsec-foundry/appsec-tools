@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from bisect import bisect_right
 from collections import Counter, defaultdict
 import hashlib
 from pathlib import Path
@@ -127,6 +128,7 @@ IMPLEMENTATION_HASH = hashlib.sha256(
             "score_calculation.py",
             "score_sources.py",
             "score_remote.py",
+            "score_remote_sources.py",
             "score_architecture.py",
             "score_relevance.py",
             "score.py",
@@ -321,12 +323,13 @@ def javascript_code(text):
     """Mask comments and literal contents, preserving offsets and line numbers.
 
     This is a lexer for narrow patterns, not a JavaScript parser. Template
-    interpolation and regular-expression literals are not analyzed.
+    interpolation is retained as code; regular-expression literals are not parsed.
     """
     out = list(text)
     state = None
     quote = None
     escaped = False
+    interpolations = []
     index = 0
     while index < len(text):
         char = text[index]
@@ -344,6 +347,12 @@ def javascript_code(text):
             elif char != "\n":
                 out[index] = " "
         elif state == "string":
+            if quote == "`" and not escaped and pair == "${":
+                out[index : index + 2] = "  "
+                index += 2
+                interpolations.append(0)
+                state = None
+                continue
             if char != "\n":
                 out[index] = " "
             if escaped:
@@ -352,15 +361,26 @@ def javascript_code(text):
                 escaped = True
             elif char == quote:
                 state = None
+        elif interpolations and char == "}":
+            if interpolations[-1] == 0:
+                interpolations.pop()
+                state, quote = "string", "`"
+                out[index] = " "
+            else:
+                interpolations[-1] -= 1
+        elif interpolations and char == "{":
+            interpolations[-1] += 1
         elif pair in {"//", "/*"}:
             state = "line" if pair == "//" else "block"
             out[index : index + 2] = "  "
             index += 1
+        elif interpolations and char == "/":
+            raise SyntaxError("Ambiguous slash in template interpolation")
         elif char in {"'", '"', "`"}:
             state, quote = "string", char
             out[index] = " "
         index += 1
-    if state in {"string", "block"}:
+    if state in {"string", "block"} or interpolations:
         raise SyntaxError("Incomplete JavaScript lexical context")
     return "".join(out)
 
@@ -375,14 +395,18 @@ def other_observations(rule, text, code=None):
         else text
     )
     observations = []
+    if kind == "js-eval":
+        line_breaks = [match.start() for match in re.finditer("\n", code)]
+        return [
+            (
+                bisect_right(line_breaks, match.start()) + 1,
+                "satisfied" if match.group().startswith("JSON") else "violated",
+            )
+            for match in re.finditer(r"\b(?:eval|Function|JSON\.parse)\s*\(", code)
+        ], False
     for number, line in enumerate(code.splitlines(), 1):
         status = None
-        if kind == "js-eval":
-            if re.search(r"\b(?:eval|Function)\s*\(", line):
-                status = "violated"
-            elif re.search(r"\bJSON\.parse\s*\(", line):
-                status = "satisfied"
-        elif kind == "js-shell":
+        if kind == "js-shell":
             if re.search(r"\b(?:child_process\.)?exec(?:Sync)?\s*\(", line):
                 status = "violated"
             elif re.search(r"\b(?:child_process\.)?execFile(?:Sync)?\s*\(", line):

@@ -595,7 +595,12 @@ def parse_patch(text, budget):
 
 
 def select(options, budget):
-    root = Path(options.repo).expanduser().resolve(strict=True)
+    try:
+        root = Path(options.repo).expanduser().resolve(strict=True)
+    except OSError:
+        raise SourceError(
+            "Local source directory does not exist or is not accessible; select an existing directory or an HTTPS repository URL."
+        ) from None
     if not root.is_dir():
         raise SourceError("Select an existing repository directory.")
     if options.patch:

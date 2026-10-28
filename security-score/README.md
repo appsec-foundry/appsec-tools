@@ -40,6 +40,10 @@ security-score https://github.com/example/private-project --token-env GITHUB_REA
 
 Set `GITHUB_READ_TOKEN` in your environment before running this command.
 
+Remote scans first read the file listing at an identified commit, then download only supported files outside the excluded paths. They do not clone the repository or download a repository archive. Up to eight source requests run in parallel and reuse HTTPS connections. Private GitHub sources use the authenticated API; public GitHub sources use the public raw-content host without forwarding API credentials.
+
+Missing or inaccessible repositories, authentication failures, API rate limits, and invalid file listings produce distinct errors and no score. A host may return the same 404 for a missing repository and an inaccessible private repository, so those cases cannot always be distinguished. Large repositories can still exceed the time, file-count, or selected-source limits; an incomplete scan does not produce a grade. Use `--details` to inspect excluded files and limits, or `--timeout 60` when more execution time is needed.
+
 ### Changes in a local Git repository
 
 ```sh

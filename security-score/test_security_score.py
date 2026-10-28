@@ -2,7 +2,6 @@
 
 import contextlib
 from collections import Counter
-import gzip
 import io
 import json
 import os
@@ -10,7 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import tarfile
+import threading
 import unittest
 from unittest import mock
 
@@ -22,10 +21,93 @@ import score as cli  # noqa: E402
 import score_core as core  # noqa: E402
 import score_sources as sources  # noqa: E402
 import score_remote as remote  # noqa: E402
+import score_remote_sources as remote_sources  # noqa: E402
 import score_relevance as relevance  # noqa: E402
 
 
 class ScoreTests(unittest.TestCase):
+    def test_unknown_application_checks_withhold_score_despite_safe_evidence(self):
+        self.write(
+            "app.py",
+            "requests.get(url, verify=True)\nsubprocess.run(command, shell=setting)\neval(payload)\n",
+        )
+        status, result, _ = self.invoke()
+        self.assertEqual(status, 2)
+        self.assertEqual(result["verdict"], "undetermined")
+        self.assertIsNone(result["score"])
+        self.assertTrue(result["findings"])
+
+    def test_unsupported_application_code_prevents_a_repository_score(self):
+        self.write("app.py", "requests.get(url, verify=True)\n")
+        self.write("Main.java", "class Main {}")
+        status, result, _ = self.invoke()
+        self.assertEqual(status, 2)
+        self.assertIsNone(result["score"])
+        self.assertTrue(
+            any(row["rule"] == "SOURCE-COVERAGE" for row in result["checks"])
+        )
+
+    def test_unknown_host_settings_do_not_erase_application_score(self):
+        result = core.calculate(
+            [],
+            [
+                {"area": "transport", "status": "satisfied"},
+                {"area": "repository-host", "status": "unclear"},
+            ],
+            require_source=True,
+        )
+        self.assertEqual(result["score"], 100)
+
+    def test_javascript_execution_count_is_formatting_independent(self):
+        for source in (
+            "eval(a); eval(b);",
+            "eval(a);\neval(b);",
+            "eval\n(a);\neval\n(b);",
+        ):
+            with self.subTest(source=source):
+                self.write("app.js", source)
+                _, result, _ = self.invoke()
+                self.assertEqual(result["score"], 50)
+                self.assertEqual(len(result["findings"]), 2)
+
+    def test_template_expressions_are_code_and_literal_text_is_not(self):
+        for source, expected in (
+            ("const x = `${eval(payload)}`;", 1),
+            ("const x = `${({x: eval(payload)}).x}`;", 1),
+            ("const x = `${`${eval(payload)}`}`;", 1),
+            ("const x = `eval(payload)`;", 0),
+            ("const x = `\\${eval(payload)}`;", 0),
+            ('const x = `${"eval(payload)"}`;', 0),
+            ("const x = `${/* eval(payload) */ 1}`;", 0),
+        ):
+            with self.subTest(source=source):
+                findings, _ = core.scan({"app.js": {"text": source}}, sources.Budget())
+                self.assertEqual(len(findings), expected)
+
+    def test_ambiguous_template_regex_and_incomplete_templates_fail_closed(self):
+        for source in (
+            "const x = `${ /}/.test(x) ? eval(x) : 1 }`;",
+            "const x = `${eval(x)",
+        ):
+            self.write("app.js", "JSON.parse(data);\n" + source)
+            status, result, _ = self.invoke()
+            self.assertEqual(status, 1)
+            self.assertIsNone(result["score"])
+
+    def test_severity_policy_rejects_inverted_weights_and_caps(self):
+        import score_calculation as calculation
+
+        for field, values in (
+            ("WEIGHTS", {"critical": 1}),
+            ("CAPS", {"critical": 100}),
+        ):
+            with (
+                self.subTest(field=field),
+                mock.patch.dict(getattr(calculation, field), values),
+            ):
+                with self.assertRaisesRegex(ValueError, "Higher severity"):
+                    calculation.validate_scoring()
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="security-score-test-")
         self.addCleanup(self.temporary.cleanup)
@@ -140,7 +222,7 @@ class ScoreTests(unittest.TestCase):
                 self.write("remaining.py", "eval(payload)\n" * (count - 1))
                 status, result, _ = self.invoke()
                 self.assertEqual(status, 0)
-                self.assertEqual(result["scoring_version"], 2)
+                self.assertEqual(result["scoring_version"], 3)
                 self.assertEqual(result["score"], expected)
                 area = next(
                     row for row in result["areas"] if row["area"] == "execution"
@@ -235,12 +317,12 @@ class ScoreTests(unittest.TestCase):
 
         original = run_installed()
         policy["scoring"]["weights"]["high"] = 15
-        policy["scoring_version"] = 3
+        policy["scoring_version"] = 4
         catalog.write_text(json.dumps(policy))
         adjusted = run_installed()
         self.assertEqual(original["score"], 25)
         self.assertEqual((adjusted["score"], adjusted["grade"]), (55, "E"))
-        self.assertEqual(adjusted["scoring_version"], 3)
+        self.assertEqual(adjusted["scoring_version"], 4)
         self.assertNotEqual(
             original["comparability"]["catalog_fingerprint"],
             adjusted["comparability"]["catalog_fingerprint"],
@@ -303,6 +385,78 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(status, 2)
         self.assertEqual(result["verdict"], "undetermined")
         self.assertIsNone(result["grade"])
+
+    def test_missing_local_source_has_an_actionable_error(self):
+        output, errors = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            status = cli.main([str(self.repo / "missing"), "--json"])
+        self.assertEqual(status, 1)
+        self.assertEqual(output.getvalue(), "")
+        self.assertIn(
+            "Local source directory does not exist or is not accessible",
+            errors.getvalue(),
+        )
+        self.assertNotIn("Traceback", errors.getvalue())
+
+    def test_invalid_repository_urls_do_not_become_local_directory_errors(self):
+        for url in (
+            "http://github.com/example/project",
+            "https://github.com/example/project/issues",
+        ):
+            output, errors = io.StringIO(), io.StringIO()
+            with (
+                self.subTest(url=url),
+                mock.patch.object(
+                    remote,
+                    "get",
+                    side_effect=AssertionError("invalid URL triggered network access"),
+                ),
+                contextlib.redirect_stdout(output),
+                contextlib.redirect_stderr(errors),
+            ):
+                status = cli.main([url, "--json"])
+            self.assertEqual(status, 1)
+            self.assertEqual(output.getvalue(), "")
+            self.assertNotIn("Local source directory", errors.getvalue())
+
+    def test_remote_source_failure_never_publishes_a_partial_score(self):
+        output, errors = io.StringIO(), io.StringIO()
+        listing = json.dumps(
+            {
+                "truncated": False,
+                "tree": [
+                    {
+                        "path": "app.py",
+                        "mode": "100644",
+                        "type": "blob",
+                        "sha": "b" * 40,
+                        "size": 1,
+                    }
+                ],
+            }
+        ).encode()
+        with (
+            mock.patch.object(remote, "host_settings", return_value=([], "a" * 40)),
+            mock.patch.object(remote, "get", side_effect=[(listing, 200), (None, 404)]),
+            contextlib.redirect_stdout(output),
+            contextlib.redirect_stderr(errors),
+        ):
+            status = cli.main(["https://github.com/example/project", "--json"])
+        self.assertEqual(status, 1)
+        self.assertEqual(output.getvalue(), "")
+        self.assertIn("Cannot read selected source app.py", errors.getvalue())
+        self.assertIn("No score", errors.getvalue())
+
+    def test_oversized_source_has_an_actionable_compact_result(self):
+        self.write("app.py", "eval(payload)\n")
+        self.write("large.js", "x" * (sources.MAX_FILE + 1))
+        status, result, _ = self.invoke()
+        self.assertEqual(status, 1)
+        self.assertIsNone(result["score"])
+        self.assertIn(
+            "1 selected file(s) exceed the 512 KiB file limit", cli.render(result)
+        )
+        self.assertIn("large.js", cli.render(result, details=True))
 
     def test_comments_and_string_examples_do_not_become_findings(self):
         self.write("app.py", "# eval(payload)\nexample = 'eval(payload)'\n")
@@ -840,7 +994,7 @@ class ScoreTests(unittest.TestCase):
         self.write("app.py", source.replace("return actor == owner", "return True"))
         status, result, _ = self.invoke("--worktree")
         self.assertEqual(status, 0)
-        self.assertEqual(result["relevance_version"], 2)
+        self.assertEqual(result["relevance_version"], 3)
         self.assertEqual(result["relevance"], "high")
         self.assertEqual(result["findings"], [])
         self.assertTrue(
@@ -1130,20 +1284,137 @@ class ScoreTests(unittest.TestCase):
 
 
 class RemoteTests(unittest.TestCase):
-    @staticmethod
-    def archive(entries):
-        raw = io.BytesIO()
-        with tarfile.open(fileobj=raw, mode="w") as archive:
-            for path, content, kind in entries:
-                item = tarfile.TarInfo(path)
-                item.type = kind
-                if kind == tarfile.REGTYPE:
-                    item.size = len(content)
-                    archive.addfile(item, io.BytesIO(content))
+    def test_source_http_limits_bound_headers_and_streamed_data(self):
+        for length, chunks, succeeds in (
+            ("6", [], False),
+            (None, [b"123456"], False),
+            ("5", [b"12345", b""], True),
+        ):
+            connection = mock.Mock()
+            response = mock.Mock(status=200)
+            response.getheader.return_value = length
+            response.read.side_effect = chunks
+            connection.getresponse.return_value = response
+            with (
+                self.subTest(length=length, succeeds=succeeds),
+                mock.patch.object(
+                    remote,
+                    "public_addresses",
+                    return_value=[(2, 1, 6, "", ("8.8.8.8", 443))],
+                ),
+                mock.patch.object(
+                    remote.http.client, "HTTPSConnection", return_value=connection
+                ),
+                mock.patch.object(remote.socket, "socket", return_value=mock.Mock()),
+            ):
+                if succeeds:
+                    self.assertEqual(
+                        remote.get(
+                            "https://api.github.com/repos/example/project",
+                            sources.Budget(),
+                            limit=5,
+                        ),
+                        (b"12345", 200),
+                    )
                 else:
-                    item.linkname = "../../outside.py"
-                    archive.addfile(item)
-        return gzip.compress(raw.getvalue())
+                    with self.assertRaisesRegex(
+                        sources.SourceError, "5-byte download limit"
+                    ):
+                        remote.get(
+                            "https://api.github.com/repos/example/project",
+                            sources.Budget(),
+                            limit=5,
+                        )
+                connection.close.assert_called_once()
+
+    def test_connection_reuse_preserves_checked_destination_and_closes_on_failure(self):
+        connection = mock.Mock()
+        response = mock.Mock(status=200)
+        response.getheader.return_value = None
+        response.read.side_effect = [b"first", b"", b"second", b""]
+        connection.getresponse.return_value = response
+        cache = {}
+        with (
+            mock.patch.object(
+                remote,
+                "public_addresses",
+                return_value=[(2, 1, 6, "", ("8.8.8.8", 443))],
+            ) as addresses,
+            mock.patch.object(
+                remote.http.client, "HTTPSConnection", return_value=connection
+            ) as connect,
+            mock.patch.object(remote.socket, "socket", return_value=mock.Mock()),
+        ):
+            for expected in (b"first", b"second"):
+                self.assertEqual(
+                    remote.get(
+                        "https://api.github.com/repos/example/project",
+                        sources.Budget(),
+                        connections=cache,
+                    ),
+                    (expected, 200),
+                )
+            self.assertEqual(addresses.call_count, 1)
+            self.assertEqual(connect.call_count, 1)
+            connection.close.assert_not_called()
+            connection.request.side_effect = OSError("SYNTHETIC_PRIVATE_DIAGNOSTIC")
+            self.assertEqual(
+                remote.get(
+                    "https://api.github.com/repos/example/project",
+                    sources.Budget(),
+                    connections=cache,
+                ),
+                (None, 0),
+            )
+            self.assertEqual(cache, {})
+            connection.close.assert_called_once()
+
+    def test_parallel_downloads_are_bounded_and_results_are_sorted(self):
+        entries = [
+            self.entry(f"app-{i:02}.py", size=1)
+            for i in range(2 * remote_sources.MAX_PARALLEL)
+        ]
+        barrier = threading.Barrier(remote_sources.MAX_PARALLEL)
+        lock = threading.Lock()
+        active, peak = 0, 0
+
+        def read(url, **kwargs):
+            nonlocal active, peak
+            if "/git/trees/" in url:
+                return self.listing(entries)
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            try:
+                barrier.wait(timeout=2)
+                return b"x"
+            finally:
+                with lock:
+                    active -= 1
+
+        files, _ = remote_sources.select_files(
+            "github.com", "example/project", "a" * 40, sources.Budget(), read
+        )
+        self.assertEqual(peak, remote_sources.MAX_PARALLEL)
+        self.assertEqual(list(files), sorted(row["path"] for row in entries))
+
+    def test_gitlab_metadata_limit_applies_across_all_pages(self):
+        first = json.dumps([{"path": f"app-{i}.bin"} for i in range(100)]).encode()
+        read = mock.Mock(side_effect=[first, b"[]"])
+        with mock.patch.object(remote_sources, "MAX_INDEX", len(first) + 1):
+            with self.assertRaisesRegex(sources.SourceError, "metadata limit"):
+                remote_sources.tree_entries(
+                    "gitlab.com", "group/project", "a" * 40, sources.Budget(), read
+                )
+        self.assertEqual(read.call_args.kwargs["limit"], 1)
+
+    @staticmethod
+    def entry(path="app.py", *, size=28, oid="b" * 40, mode="100644", kind="blob"):
+        return {"path": path, "size": size, "sha": oid, "mode": mode, "type": kind}
+
+    @staticmethod
+    def listing(entries, *, truncated=False):
+        return json.dumps({"tree": entries, "truncated": truncated}).encode()
 
     def test_only_explicit_canonical_supported_git_urls(self):
         self.assertEqual(
@@ -1212,19 +1483,13 @@ class RemoteTests(unittest.TestCase):
             raw_socket, server_hostname="api.github.com"
         )
 
-    def test_redirects_do_not_authorize_new_hosts_or_forward_credentials(self):
-        first, second = mock.Mock(), mock.Mock()
-        redirection = mock.Mock(status=302)
-        redirection.getheader.return_value = (
-            "https://codeload.github.com/example/project/tar.gz/commit"
+    def test_source_redirects_are_rejected_without_following_them(self):
+        connection = mock.Mock()
+        response = mock.Mock(status=302)
+        response.getheader.return_value = (
+            "https://raw.githubusercontent.com/example/project/app.py"
         )
-        success = mock.Mock(status=200)
-        success.getheader.return_value = None
-        success.read.side_effect = [b"archive", b""]
-        first.getresponse.return_value, second.getresponse.return_value = (
-            redirection,
-            success,
-        )
+        connection.getresponse.return_value = response
         with (
             mock.patch.object(
                 remote,
@@ -1232,47 +1497,59 @@ class RemoteTests(unittest.TestCase):
                 return_value=[(2, 1, 6, "", ("8.8.8.8", 443))],
             ),
             mock.patch.object(
-                remote.http.client, "HTTPSConnection", side_effect=[first, second]
+                remote.http.client, "HTTPSConnection", return_value=connection
+            ) as connect,
+            mock.patch.object(remote.socket, "socket", return_value=mock.Mock()),
+        ):
+            with self.assertRaisesRegex(
+                sources.SourceError, "redirects are not followed"
+            ):
+                remote.get(
+                    "https://api.github.com/repos/example/project",
+                    sources.Budget(),
+                    token="isolated-test-value",
+                    token_host="api.github.com",
+                )
+        self.assertEqual(connect.call_count, 1)
+        response.read.assert_not_called()
+
+    def test_api_credentials_are_not_forwarded_to_public_source_host(self):
+        connection = mock.Mock()
+        response = mock.Mock(status=200)
+        response.getheader.return_value = None
+        response.read.side_effect = [b"x", b""]
+        connection.getresponse.return_value = response
+        with (
+            mock.patch.object(
+                remote,
+                "public_addresses",
+                return_value=[(2, 1, 6, "", ("8.8.8.8", 443))],
+            ),
+            mock.patch.object(
+                remote.http.client, "HTTPSConnection", return_value=connection
             ),
             mock.patch.object(remote.socket, "socket", return_value=mock.Mock()),
         ):
             remote.get(
-                "https://api.github.com/repos/example/project/tarball/commit",
+                "https://raw.githubusercontent.com/example/project/"
+                + "a" * 40
+                + "/app.py",
                 sources.Budget(),
                 token="isolated-test-value",
                 token_host="api.github.com",
-                archive=True,
             )
-        self.assertIn("Authorization", first.request.call_args.kwargs["headers"])
-        self.assertNotIn("Authorization", second.request.call_args.kwargs["headers"])
-        redirection.getheader.return_value = "https://gitlab.com/unselected/project"
-        with (
-            mock.patch.object(
-                remote,
-                "public_addresses",
-                return_value=[(2, 1, 6, "", ("8.8.8.8", 443))],
-            ),
-            mock.patch.object(
-                remote.http.client, "HTTPSConnection", return_value=first
-            ),
-            mock.patch.object(remote.socket, "socket", return_value=mock.Mock()),
-        ):
-            with self.assertRaises(sources.SourceError):
-                remote.get(
-                    "https://api.github.com/repos/example/project/tarball/commit",
-                    sources.Budget(),
-                    archive=True,
-                )
+        headers = connection.request.call_args.kwargs["headers"]
+        self.assertNotIn("Authorization", headers)
+        self.assertNotIn("PRIVATE-TOKEN", headers)
 
     def test_unreadable_host_settings_remain_unknown(self):
         with mock.patch.object(
             remote, "json_get", return_value=({}, "not readable (HTTP 403)")
         ):
-            settings, revision, archive = remote.host_settings(
+            settings, revision = remote.host_settings(
                 "github.com", "example/project", sources.Budget()
             )
         self.assertIsNone(revision)
-        self.assertIsNone(archive)
         self.assertTrue(all(row["status"] == "unknown" for row in settings))
         findings, checks = remote.settings_checks(settings)
         self.assertEqual(findings, [])
@@ -1292,12 +1569,11 @@ class RemoteTests(unittest.TestCase):
             ),
         ]
         with mock.patch.object(remote, "json_get", side_effect=responses):
-            settings, revision, archive = remote.host_settings(
+            settings, revision = remote.host_settings(
                 "github.com", "example/project", sources.Budget()
             )
         self.assertEqual([row["status"] for row in settings[:2]], ["set", "set"])
         self.assertEqual(revision, "a" * 40)
-        self.assertTrue(archive.endswith("a" * 40))
 
     def test_gitlab_only_credits_reviews_for_the_selected_branch(self):
         project = {
@@ -1317,7 +1593,7 @@ class RemoteTests(unittest.TestCase):
             "json_get",
             side_effect=[(project, None), (branch, None), (rules, None)],
         ):
-            settings, revision, archive = remote.host_settings(
+            settings, revision = remote.host_settings(
                 "gitlab.com", "group/project", sources.Budget(), "isolated-test-value"
             )
         self.assertEqual(
@@ -1336,7 +1612,7 @@ class RemoteTests(unittest.TestCase):
             "json_get",
             side_effect=[(project, None), (branch, None), (rules, None)],
         ):
-            settings, _, _ = remote.host_settings(
+            settings, _ = remote.host_settings(
                 "gitlab.com", "group/project", sources.Budget(), "isolated-test-value"
             )
         self.assertEqual(
@@ -1349,9 +1625,7 @@ class RemoteTests(unittest.TestCase):
         )
 
     def test_url_runtime_reads_pinned_source_and_settings(self):
-        data = self.archive(
-            [("root/app.py", b"requests.get(url, verify=True)\n", tarfile.REGTYPE)]
-        )
+        source = b"requests.get(url, verify=True)\n"
         settings = [
             remote.setting("default_branch_protection", False),
             remote.setting("required_reviews", None),
@@ -1359,15 +1633,16 @@ class RemoteTests(unittest.TestCase):
         output = io.StringIO()
         with (
             mock.patch.object(
-                remote,
-                "host_settings",
-                return_value=(
-                    settings,
-                    "a" * 40,
-                    "https://api.github.com/repos/example/project/tarball/" + "a" * 40,
-                ),
+                remote, "host_settings", return_value=(settings, "a" * 40)
             ),
-            mock.patch.object(remote, "get", return_value=(data, 200)),
+            mock.patch.object(
+                remote,
+                "get",
+                side_effect=[
+                    (self.listing([self.entry(size=len(source))]), 200),
+                    (source, 200),
+                ],
+            ) as fetch,
             contextlib.redirect_stdout(output),
         ):
             status = cli.main(["https://github.com/example/project.git", "--json"])
@@ -1378,9 +1653,18 @@ class RemoteTests(unittest.TestCase):
         self.assertEqual(result["host_settings"], settings)
         self.assertEqual(result["score"], 79)
         self.assertEqual(result["grade"], "C")
+        self.assertEqual(
+            fetch.call_args_list[0].args[0],
+            "https://api.github.com/repos/example/project/git/trees/"
+            + "a" * 40
+            + "?recursive=1",
+        )
+        self.assertEqual(
+            fetch.call_args_list[1].args[0],
+            "https://raw.githubusercontent.com/example/project/" + "a" * 40 + "/app.py",
+        )
 
     def test_host_controls_alone_cannot_award_a_source_score(self):
-        data = self.archive([("root/app.java", b"class App {}", tarfile.REGTYPE)])
         output = io.StringIO()
         with (
             mock.patch.object(
@@ -1389,43 +1673,183 @@ class RemoteTests(unittest.TestCase):
                 return_value=(
                     [remote.setting("default_branch_protection", True)],
                     "a" * 40,
-                    "https://api.github.com/archive",
                 ),
             ),
-            mock.patch.object(remote, "get", return_value=(data, 200)),
+            mock.patch.object(
+                remote,
+                "get",
+                return_value=(self.listing([self.entry("app.java")]), 200),
+            ) as fetch,
             contextlib.redirect_stdout(output),
         ):
             status = cli.main(["https://github.com/example/project", "--json"])
         self.assertEqual(status, 2)
         self.assertIsNone(json.loads(output.getvalue())["grade"])
+        self.assertEqual(fetch.call_count, 1)
 
-    def test_archive_is_not_extracted_and_paths_are_confined(self):
-        data = self.archive([("root/app.py", b"eval(payload)\n", tarfile.REGTYPE)])
-        files, exclusions = remote.archive_files(data, sources.Budget())
-        self.assertEqual(files["app.py"]["text"], "eval(payload)\n")
-        self.assertEqual(exclusions, [])
-        for path in ("root/../../outside.py", "/root/app.py", "root/C:\\outside.py"):
-            with self.subTest(path=path), self.assertRaises(sources.SourceError):
-                remote.archive_files(
-                    self.archive([(path, b"x", tarfile.REGTYPE)]), sources.Budget()
-                )
-
-    def test_archive_links_duplicates_and_expansion_limits(self):
-        _, exclusions = remote.archive_files(
-            self.archive([("root/app.py", b"", tarfile.SYMTYPE)]), sources.Budget()
+    def test_selective_download_skips_large_assets_and_oversized_sources(self):
+        source = b"eval(payload)\n"
+        entries = [
+            self.entry("asset.bin", size=100 * 1024 * 1024),
+            self.entry("vendor/ignored.py", size=100 * 1024 * 1024),
+            self.entry("large.js", size=sources.MAX_FILE + 1),
+            self.entry(size=len(source)),
+        ]
+        read = mock.Mock(side_effect=[self.listing(entries), source])
+        files, exclusions = remote_sources.select_files(
+            "github.com", "example/project", "a" * 40, sources.Budget(), read
         )
-        self.assertEqual(exclusions[0]["reason"], "link or submodule")
-        data = self.archive(
-            [
-                ("root/app.py", b"a", tarfile.REGTYPE),
-                ("root/app.py", b"b", tarfile.REGTYPE),
+        self.assertEqual(list(files), ["app.py"])
+        self.assertEqual(read.call_count, 2)
+        self.assertEqual(read.call_args.kwargs["limit"], sources.MAX_FILE)
+        self.assertEqual(
+            next(row["reason"] for row in exclusions if row["file"] == "large.js"),
+            "oversized",
+        )
+
+    def test_remote_listing_rejects_unsafe_ambiguous_and_incomplete_input(self):
+        cases = [
+            self.listing([], truncated=True),
+            self.listing([self.entry("../outside.py")]),
+            self.listing([self.entry("/outside.py")]),
+            self.listing([self.entry("C:\\outside.py")]),
+            self.listing([self.entry(), self.entry()]),
+            self.listing([self.entry(oid="../../outside")]),
+            self.listing([self.entry(size=-1)]),
+            self.listing([self.entry(mode="unknown")]),
+            self.listing([self.entry(kind="unknown")]),
+            self.listing([None]),
+            b"[]",
+            b"invalid JSON",
+        ]
+        for listing in cases:
+            with self.subTest(listing=listing[:160]):
+                read = mock.Mock(return_value=listing)
+                with self.assertRaises(sources.SourceError):
+                    remote_sources.select_files(
+                        "github.com",
+                        "example/project",
+                        "a" * 40,
+                        sources.Budget(),
+                        read,
+                    )
+                self.assertEqual(read.call_count, 1)
+
+    def test_links_and_submodules_are_excluded_without_following_them(self):
+        read = mock.Mock(
+            return_value=self.listing(
+                [
+                    self.entry(mode="120000"),
+                    self.entry("submodule", kind="commit", mode="160000"),
+                ]
+            )
+        )
+        files, exclusions = remote_sources.select_files(
+            "github.com", "example/project", "a" * 40, sources.Budget(), read
+        )
+        self.assertEqual(files, {})
+        self.assertEqual(
+            [row["reason"] for row in exclusions], ["link or submodule"] * 2
+        )
+        self.assertEqual(read.call_count, 1)
+
+    def test_remote_file_count_and_byte_limits_precede_source_downloads(self):
+        for limit, value, entries in (
+            ("MAX_FILES", 1, [self.entry(), self.entry("other.py")]),
+            ("MAX_BYTES", 10, [self.entry(size=11)]),
+        ):
+            with (
+                self.subTest(limit=limit),
+                mock.patch.object(remote_sources, limit, value),
+            ):
+                read = mock.Mock(return_value=self.listing(entries))
+                with self.assertRaises(sources.SourceError):
+                    remote_sources.select_files(
+                        "github.com",
+                        "example/project",
+                        "a" * 40,
+                        sources.Budget(),
+                        read,
+                    )
+                self.assertEqual(read.call_count, 1)
+
+    def test_selected_source_size_mismatch_fails_without_a_score(self):
+        read = mock.Mock(side_effect=[self.listing([self.entry(size=1)]), b"too large"])
+        with self.assertRaisesRegex(sources.SourceError, "listed size"):
+            remote_sources.select_files(
+                "github.com", "example/project", "a" * 40, sources.Budget(), read
+            )
+
+    def test_authenticated_github_download_stays_on_api_host(self):
+        read = mock.Mock(side_effect=[self.listing([self.entry(size=1)]), b"x"])
+        remote_sources.select_files(
+            "github.com",
+            "example/project",
+            "a" * 40,
+            sources.Budget(),
+            read,
+            authenticated=True,
+        )
+        self.assertEqual(
+            read.call_args.args[0],
+            "https://api.github.com/repos/example/project/git/blobs/" + "b" * 40,
+        )
+
+    def test_gitlab_listing_is_paginated_and_sources_use_pinned_blob_ids(self):
+        rows = [
+            {"path": f"file-{i}.bin", "type": "blob", "mode": "100644"}
+            for i in range(100)
+        ]
+        read = mock.Mock(
+            side_effect=[
+                json.dumps(rows).encode(),
+                json.dumps(
+                    [
+                        {
+                            "path": "app.py",
+                            "type": "blob",
+                            "mode": "100755",
+                            "id": "b" * 40,
+                        }
+                    ]
+                ).encode(),
+                b"x",
             ]
         )
-        with self.assertRaises(sources.SourceError):
-            remote.archive_files(data, sources.Budget())
-        with mock.patch.object(remote, "MAX_BYTES", -8 * 1024 * 1024 + 100):
-            with self.assertRaises(sources.SourceError):
-                remote.archive_files(gzip.compress(b"x" * 101), sources.Budget())
+        files, _ = remote_sources.select_files(
+            "gitlab.com", "group/team/project", "a" * 40, sources.Budget(), read
+        )
+        self.assertTrue(files["app.py"]["executable"])
+        self.assertIn("page=2", read.call_args_list[1].args[0])
+        self.assertEqual(
+            read.call_args.args[0],
+            "https://gitlab.com/api/v4/projects/group%2Fteam%2Fproject/repository/blobs/"
+            + "b" * 40
+            + "/raw",
+        )
+
+    def test_missing_inaccessible_and_rate_limited_repositories_have_clear_errors(self):
+        for status, expected in (
+            (404, "not found or not accessible"),
+            (401, "authentication failed"),
+            (403, "access denied or API rate limit"),
+            (429, "API rate limit"),
+            (0, "connection failed"),
+        ):
+            with (
+                self.subTest(status=status),
+                mock.patch.object(remote, "get", return_value=(None, status)),
+            ):
+                output, errors = io.StringIO(), io.StringIO()
+                with (
+                    contextlib.redirect_stdout(output),
+                    contextlib.redirect_stderr(errors),
+                ):
+                    result = cli.main(["https://github.com/example/project", "--json"])
+                self.assertEqual(result, 1)
+                self.assertEqual(output.getvalue(), "")
+                self.assertIn(expected, errors.getvalue())
+                self.assertIn("No score", errors.getvalue())
 
 
 if __name__ == "__main__":

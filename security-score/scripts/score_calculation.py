@@ -33,6 +33,14 @@ def validate_scoring():
         raise ValueError("Weights must be whole points in 1–100.")
     if any(type(value) is not int or not 0 <= value <= 100 for value in CAPS.values()):
         raise ValueError("Severity caps must be integers in 0–100.")
+    severities = ("critical", "high", "medium", "low")
+    if any(
+        WEIGHTS[a] < WEIGHTS[b] or CAPS[a] > CAPS[b]
+        for a, b in zip(severities, severities[1:])
+    ):
+        raise ValueError(
+            "Higher severity must not have a lower weight or a higher cap."
+        )
     if POLICY["scoring"]["grade_bands"] != [
         [90, "A"],
         [80, "B"],
@@ -115,6 +123,11 @@ def calculate(findings, checks, *, complete=True, require_source=False):
         and (not require_source or row["area"] != "repository-host")
         for row in checks
     )
+    if any(
+        row["status"] == "unclear" and row["area"] != "repository-host"
+        for row in checks
+    ):
+        known = 0
     verdict = "incomplete" if not complete else "scored" if known else "undetermined"
     score = (
         min((row["score"] for row in rows if row["score"] is not None), default=None)
