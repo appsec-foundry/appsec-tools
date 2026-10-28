@@ -2,6 +2,29 @@
 
 Assess a repository with a score from 0 to 100 (A–F), or classify the security relevance of changes. See [Security Score explained](<security score.md>) for how to read the results and how the score is calculated.
 
+## Interpreting the scale
+
+**Higher is better.** The number describes the static patterns recognized by this scanner. Each assessed area starts at 100; findings deduct points, severity can cap the result, and the lowest area result determines the overall index.
+
+The interpretation below applies to the default internal engine. The optional Analyzer engine has its own [scoring policy](references/compatibility.md).
+
+| Index | Grade, when fully scored | Meaning in plain language |
+| --- | --- | --- |
+| 0–9 | F | Extremely low index. Deductions in at least one area have nearly or completely exhausted its 100-point budget. |
+| 10–19 | F | Very low index. The weakest assessed area retains only 10–19 points after deductions and caps. |
+| 20–29 | F | Low index. The weakest assessed area retains only 20–29 points. |
+| 30–39 | F | Low index. A critical candidate alone caps its area at 39; accumulated lower-severity candidates can also produce this range. |
+| 40–49 | F | Below half the scale. Accumulated deductions leave the weakest assessed area below 50 points. |
+| 50–59 | E | Substantial deductions or a high-severity cap. For example, one high candidate yields 59. |
+| 60–69 | D | Noticeable deductions. For example, four medium candidates in the same area yield 60. |
+| 70–79 | C | Moderate deductions or a medium-severity cap. One medium candidate yields 79. |
+| 80–89 | B | Smaller deductions or a low-severity cap. One low candidate yields 89. |
+| 90–100 | A | Highest band. With the bundled default weights and caps, a scored result in this band is 100: no recognized findings deducted points. |
+
+The ten-point ranges are reading aids; the grading policy makes **no separate risk classification within 0–49**, which is all F. Repeated candidates count, so four high candidates in one area already yield 0. Additional candidates cannot lower that area below 0. Tests, examples, assets, and other selected sources remain in the assessment; `--details` separates their path-hint groups.
+
+**0 does not establish that every part of an application is insecure, and 100 does not establish that it is safe.** The index is neither a security percentage nor an attack probability. Review candidate validity and coverage with `--details`. A value marked `(partial)`, or printed by `--quiet` with exit status 1 or 2, describes recognized evidence only and receives no repository grade. See [the worked examples](<security score.md>) for the exact deductions and limits.
+
 ## Quick start
 
 ### Installation
