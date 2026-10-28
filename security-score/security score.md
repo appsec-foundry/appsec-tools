@@ -43,10 +43,11 @@ These examples assume no other area scores lower. Fixing a finding may leave the
 
 | Result | Meaning |
 | --- | --- |
-| `undetermined` | No recognized source or dependency evidence is available, or application coverage remains unclear. Host settings alone are insufficient. |
+| `partial` | Recognized evidence exists alongside unknown application coverage. An observed pattern index remains available, without a repository grade. |
+| `undetermined` | No recognized source or dependency evidence is available. Host settings alone are insufficient. |
 | `incomplete` | Required processing failed or reached a limit, such as the time budget. |
 
-Neither result includes a score or grade. Available findings remain visible with `--details`. Compare scores only for the same engine, compatible scoring and rule versions, and similar scan coverage.
+These results include no repository score or grade. Since scoring version 4, `observed_score` and origin-group indices preserve recognized patterns for partial and incomplete results. They do not establish application safety. Detailed text groups repeated candidates and reports parser issues once per file; JSON/YAML retain individual locations. Path hints separate source, tests, examples, assets, build files, and host settings without assuming which files run in production or silently excluding them. Compare indices only for the same engine, compatible scoring and rule versions, and similar scan coverage.
 
 ## Changes use relevance instead of points
 

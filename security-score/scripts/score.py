@@ -45,6 +45,8 @@ except (
     )
     raise SystemExit(1) from None
 from score_sources import Budget, SourceError, command, excluded, fingerprint, select
+from score_reporting import explain as explain_observations
+from score_calculation import has_unknown
 from score_architecture import describe
 from score_relevance import VERSION as RELEVANCE_VERSION, analyze as analyze_relevance
 from score_remote import (
@@ -222,6 +224,8 @@ def render(result, details=False):
                 else "required source checks could not finish"
             )
             return f"incomplete: {reason}; no score or grade. Use --details for affected files and limits."
+        if result["verdict"] == "partial":
+            return f"partial: observed pattern index {result['observed_score']}/100; coverage remains uncertain; no repository grade. Use --details."
         return (
             f"{result['score']}/100 ({result['grade']})"
             if result["score"] is not None
@@ -249,21 +253,36 @@ def render(result, details=False):
         f"Scope: {scope['kind']} · {scope['selection']} · {scope['repository']}",
         "Check outcomes: "
         + json.dumps(result["coverage"]["check_outcomes"], sort_keys=True),
-        f"Findings affecting this score: {result['coverage']['scored_findings']}",
+        f"Static pattern candidates: {result['coverage']['scored_findings']}",
+        f"Observed pattern index: {result.get('observed_score')} / 100 (recognized evidence only)",
     ]
     for area in result["areas"]:
         lines.append(
             f"  {area['area']}: {area['score'] if area['score'] is not None else 'unscored'}"
         )
-    for finding in result["findings"]:
-        change = (
-            f" · {finding['change']} ({finding['side']})" if "change" in finding else ""
+    lines.append("Candidate groups (path hints; runtime use unverified):")
+    for group in result.get("origin_groups", []):
+        lines.append(
+            f"  {group['origin']}: {group['findings']} patterns; observed index={group['observed_score']}"
         )
+    candidates = {}
+    for finding in result["findings"]:
+        key = (finding.get("origin", "source"), finding["rule"])
+        candidates.setdefault(key, []).append(finding)
+    for (origin, rule), occurrences in sorted(candidates.items()):
+        first = occurrences[0]
         lines += [
-            f"{finding['severity'].upper()} · {finding['rule']} · {finding['file']}:{finding['line']}{change}",
-            f"  {finding['title']}",
-            f"  Next: {finding['next_action']}",
+            f"{origin} · {first['severity'].upper()} · {rule} · {len(occurrences)} candidate(s)",
+            f"  {first['title']} (static pattern; exploitability unverified)",
+            f"  Review: {first['next_action']}",
         ]
+        by_file = {}
+        for finding in occurrences:
+            by_file.setdefault(finding["file"], []).append(finding["line"])
+        for path, locations in sorted(by_file.items()):
+            shown = ", ".join(str(line) for line in locations[:5])
+            extra = f" (+{len(locations) - 5} more)" if len(locations) > 5 else ""
+            lines.append(f"    {path}:{shown}{extra}")
     for area in result["areas"]:
         lines.append(f"Calculation {area['area']}:")
         for entry in area["breakdown"]:
@@ -274,7 +293,8 @@ def render(result, details=False):
         lines.append(
             f"  100 - {area['deduction']} = {100 - area['deduction']}; "
             f"cap={area['severity_cap']}; floor=0; "
-            f"score={area['score'] if area['score'] is not None else 'withheld'}"
+            f"score={area['score'] if area['score'] is not None else 'withheld'}; "
+            f"observed={area.get('observed_score', area['score'])}"
         )
     if result["score"] is not None:
         scores = ", ".join(
@@ -293,11 +313,21 @@ def render(result, details=False):
         lines.append(f"Host {entry['setting']}: {entry['status']} · {entry['reason']}")
     for warning in result["warnings"]:
         lines.append("Limit: " + warning)
-    for check in result["checks"]:
-        if check["status"] == "unclear" and check["area"] != "repository-host":
-            lines.append(
-                f"Unclear application check: {check['rule']} · {check['file']}"
-            )
+    for error in result.get("source_errors", []):
+        lines.append(
+            f"Source processing issue: {error['file']} · {error['reason']} ({len(error['affected_rules'])} checks unavailable)"
+        )
+    unclear_groups = Counter(
+        (row.get("origin", "source"), row["rule"])
+        for row in result["checks"]
+        if has_unknown(row)
+        and not row.get("error")
+        and row["area"] != "repository-host"
+    )
+    for (origin, rule), count in sorted(unclear_groups.items()):
+        lines.append(
+            f"Unknown evidence: {origin} · {rule} · {count} file(s); see JSON/YAML for paths"
+        )
     for entry in result["exclusions"]:
         if entry["reason"] in {"oversized", "link or submodule", "binary or non-UTF-8"}:
             reason = (
@@ -676,6 +706,7 @@ def run(options):
                 )
         result = calculate(findings, checks, complete=complete, require_source=True)
         result["analysis"] = "repository-score"
+        explain_observations(result, findings, checks)
     if remote:
         scope["remote_selection"] = remote
         scope["remote_validation"] = (
@@ -736,6 +767,7 @@ def run(options):
     return result, (0 if complete else 1) if change else {
         "scored": 0,
         "undetermined": 2,
+        "partial": 2,
         "incomplete": 1,
     }[result["verdict"]]
 

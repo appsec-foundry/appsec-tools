@@ -24,7 +24,16 @@ Installed wheels embed the Git commit at build time, so this does not need a loc
 
 Release verification is covered by `python3 -B -m unittest test_packaging -v` from this directory, using the declared build tools (`setuptools>=61` and `wheel`). It builds a source archive and wheel, installs into an isolated environment without downloading dependencies, and checks the installed version with Git absent from `PATH`.
 
-To update an existing Git installation, use `pipx upgrade appsec-security-score`. Older pipx versions may leave the same package version installed when using `install --force`. To explicitly replace it from the current checkout, including an unchanged version number, run:
+For routine updates, run `pipx upgrade appsec-security-score`, then check `security-score --version`. This uses the installation source recorded by pipx. There is no need for `--force` on a routine upgrade.
+
+Use forced installation when explicitly replacing an existing installation or repairing a stale one. Older pipx versions may leave the same package version installed with `install --force` alone: that flag permits replacing the pipx environment/apps, while the pip arguments below explicitly upgrade and reinstall the package without reusing the pip cache. To replace it from GitHub:
+
+```sh
+pipx install --force --pip-args="--upgrade --force-reinstall --no-cache-dir" "git+ssh://git@github.com/appsec-foundry/appsec-analyzer-tools.git#subdirectory=security-score"
+security-score --version
+```
+
+Or install the current local checkout (including an unchanged version number):
 
 ```sh
 pipx install --force --pip-args="--upgrade --force-reinstall --no-cache-dir" ./security-score
@@ -39,6 +48,8 @@ security-score /path/to/repository --details
 ```
 
 Without a path, `security-score` scans the current directory. The default output shows the score and grade; `--details` adds findings, file locations, and explanations.
+
+With uncertain coverage, the tool reports `partial` and an observed pattern index without a repository score or grade. `--details` groups static candidates by path hints (`source`, `tests`, `examples`, `assets`, `build`, and `repository-host`) and summarizes repeated locations and parser issues. These hints do not prove production use or third-party ownership and do not remove candidates from the assessment. JSON/YAML retain every candidate and location.
 
 ### Repository URL
 

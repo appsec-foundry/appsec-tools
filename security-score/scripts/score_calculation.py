@@ -100,6 +100,12 @@ def calculate_area(area, findings, *, assessed):
     }
 
 
+def has_unknown(row):
+    return row["status"] == "unclear" or any(
+        location["status"] == "unclear" for location in row.get("locations", [])
+    )
+
+
 def calculate(findings, checks, *, complete=True, require_source=False):
     """Score recognized evidence only; retain coverage gates independently of points."""
     statuses = Counter(row["status"] for row in checks)
@@ -123,12 +129,21 @@ def calculate(findings, checks, *, complete=True, require_source=False):
         and (not require_source or row["area"] != "repository-host")
         for row in checks
     )
-    if any(
-        row["status"] == "unclear" and row["area"] != "repository-host"
-        for row in checks
-    ):
-        known = 0
-    verdict = "incomplete" if not complete else "scored" if known else "undetermined"
+    uncertain = any(
+        has_unknown(row) and row["area"] != "repository-host" for row in checks
+    )
+    observed = min(
+        (row["score"] for row in rows if row["score"] is not None), default=None
+    )
+    verdict = (
+        "incomplete"
+        if not complete
+        else "undetermined"
+        if not known
+        else "partial"
+        if uncertain
+        else "scored"
+    )
     score = (
         min((row["score"] for row in rows if row["score"] is not None), default=None)
         if verdict == "scored"
@@ -136,10 +151,12 @@ def calculate(findings, checks, *, complete=True, require_source=False):
     )
     if verdict != "scored":
         for row in rows:
+            row["observed_score"] = row["score"]
             row["score"] = None
     return {
         "verdict": verdict,
         "score": score,
+        "observed_score": observed,
         "grade": grade(score),
         "areas": rows,
         "coverage": {

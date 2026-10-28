@@ -27,6 +27,108 @@ import score_version  # noqa: E402
 
 
 class ScoreTests(unittest.TestCase):
+    def test_partial_evidence_has_an_index_without_a_repository_grade(self):
+        self.write("app.py", "eval(payload)\nsubprocess.run(command, shell=setting)\n")
+        status, result, _ = self.invoke()
+        self.assertEqual(status, 2)
+        self.assertEqual(result["verdict"], "partial")
+        self.assertEqual(result["observed_score"], 59)
+        self.assertIsNone(result["score"])
+        self.assertIsNone(result["grade"])
+        self.assertIn("no repository grade", cli.render(result))
+
+    def test_uncertain_operation_is_not_hidden_by_violation_of_same_rule(self):
+        self.write(
+            "app.js",
+            "import {exec} from 'child_process'; exec(input); custom.exec(input);",
+        )
+        status, result, _ = self.invoke()
+        self.assertEqual(status, 2)
+        self.assertEqual(result["verdict"], "partial")
+        self.assertEqual(result["observed_score"], 59)
+        self.assertIsNone(result["grade"])
+
+    def test_origin_hints_do_not_silently_remove_runtime_findings(self):
+        for path in (
+            "app.py",
+            "tests/test_app.py",
+            "data/static/codefixes/demo.py",
+            "assets/bundle.py",
+        ):
+            self.write(path, "eval(payload)\n")
+        _, result, _ = self.invoke()
+        self.assertEqual(result["score"], 0)
+        self.assertEqual(len(result["findings"]), 4)
+        self.assertEqual(
+            {row["origin"] for row in result["findings"]},
+            {"source", "tests", "examples", "assets"},
+        )
+        self.assertTrue(
+            all(row["certainty"] == "static-pattern" for row in result["findings"])
+        )
+        self.assertTrue(
+            all(group["observed_score"] == 59 for group in result["origin_groups"])
+        )
+
+    def test_parse_diagnostics_are_grouped_once_per_file(self):
+        self.write("bad.py", "def broken(\n")
+        self.write("app.py", "eval(payload)\n")
+        _, result, _ = self.invoke()
+        self.assertEqual(len(result["source_errors"]), 1)
+        self.assertGreater(len(result["source_errors"][0]["affected_rules"]), 1)
+        output = cli.render(result, details=True)
+        self.assertEqual(output.count("Source processing issue: bad.py"), 1)
+        self.assertNotIn("Unclear application check:", output)
+        self.assertEqual(result["observed_score"], 59)
+        self.assertIsNone(result["grade"])
+
+    def test_repeated_candidates_are_compact_but_json_keeps_locations(self):
+        self.write("app.py", "eval(payload)\n" * 12)
+        _, result, _ = self.invoke()
+        self.assertEqual(len(result["findings"]), 12)
+        self.assertEqual(
+            cli.render(result, details=True).count(
+                "static pattern; exploitability unverified"
+            ),
+            1,
+        )
+
+    def test_js_shell_requires_child_process_identity(self):
+        cases = [
+            ("const re = /x/; re.exec(input);", 0, True),
+            ("custom.exec(input); object.execSync(input);", 0, True),
+            ("wrapper.cp.exec(input);", 0, True),
+            (
+                "import * as cp from 'child_process'; const alias = cp; alias.exec(input);",
+                0,
+                True,
+            ),
+            ("exec(input);", 0, True),
+            ("child_process.exec(input);", 0, True),
+            ("import {exec as run} from 'node:child_process'; run(input);", 1, False),
+            ("const {exec: run} = require('child_process'); run(input);", 1, False),
+            (
+                "import * as cp from 'child_process'; cp.exec(input); cp.execSync(input);",
+                2,
+                False,
+            ),
+            ("// import {exec} from 'child_process';\nexec(input);", 0, True),
+            (
+                "const doc = `import {exec} from 'child_process';`; exec(input);",
+                0,
+                True,
+            ),
+        ]
+        for source, count, unclear in cases:
+            with self.subTest(source=source):
+                findings, checks = core.scan(
+                    {"app.js": {"text": source}}, sources.Budget()
+                )
+                shell_findings = [row for row in findings if row["rule"] == "JS-SHELL"]
+                self.assertEqual(len(shell_findings), count)
+                shell = next(row for row in checks if row["rule"] == "JS-SHELL")
+                self.assertEqual(shell["status"] == "unclear", unclear)
+
     def test_version_reports_release_and_commit_without_scanning(self):
         output = io.StringIO()
         with (
@@ -71,7 +173,7 @@ class ScoreTests(unittest.TestCase):
         )
         status, result, _ = self.invoke()
         self.assertEqual(status, 2)
-        self.assertEqual(result["verdict"], "undetermined")
+        self.assertEqual(result["verdict"], "partial")
         self.assertIsNone(result["score"])
         self.assertTrue(result["findings"])
 
@@ -260,7 +362,7 @@ class ScoreTests(unittest.TestCase):
                 self.write("remaining.py", "eval(payload)\n" * (count - 1))
                 status, result, _ = self.invoke()
                 self.assertEqual(status, 0)
-                self.assertEqual(result["scoring_version"], 3)
+                self.assertEqual(result["scoring_version"], 4)
                 self.assertEqual(result["score"], expected)
                 area = next(
                     row for row in result["areas"] if row["area"] == "execution"
@@ -355,12 +457,12 @@ class ScoreTests(unittest.TestCase):
 
         original = run_installed()
         policy["scoring"]["weights"]["high"] = 15
-        policy["scoring_version"] = 4
+        policy["scoring_version"] = 5
         catalog.write_text(json.dumps(policy))
         adjusted = run_installed()
         self.assertEqual(original["score"], 25)
         self.assertEqual((adjusted["score"], adjusted["grade"]), (55, "E"))
-        self.assertEqual(adjusted["scoring_version"], 4)
+        self.assertEqual(adjusted["scoring_version"], 5)
         self.assertNotEqual(
             original["comparability"]["catalog_fingerprint"],
             adjusted["comparability"]["catalog_fingerprint"],
@@ -1032,7 +1134,7 @@ class ScoreTests(unittest.TestCase):
         self.write("app.py", source.replace("return actor == owner", "return True"))
         status, result, _ = self.invoke("--worktree")
         self.assertEqual(status, 0)
-        self.assertEqual(result["relevance_version"], 3)
+        self.assertEqual(result["relevance_version"], 4)
         self.assertEqual(result["relevance"], "high")
         self.assertEqual(result["findings"], [])
         self.assertTrue(

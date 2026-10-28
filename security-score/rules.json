@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "scoring_version": 3,
+  "scoring_version": 4,
   "scoring": {
     "weights": {
       "critical": 50,
@@ -318,12 +318,12 @@
       "area": "execution",
       "severity": "high",
       "title": "JavaScript command execution through exec",
-      "criteria": "Recognize direct exec/execSync and child_process.exec/execSync calls. Input origin and imported identity need verification.",
+      "criteria": "Recognize exec/execSync calls with a narrow child_process import binding. Unresolved bare or member calls remain unclear; unrelated object.exec methods do not produce shell findings.",
       "next_action": "Use an explicitly selected executable with an argument array and review shell options.",
       "examples": [
         {
           "file": "app.js",
-          "source": "child_process.exec(command);\n",
+          "source": "import * as child_process from 'node:child_process';\nchild_process.exec(command);\n",
           "outcome": "violated",
           "expected_score": 59,
           "expected_grade": "E"
@@ -337,7 +337,7 @@
         },
         {
           "file": "app.js",
-          "source": "child_process.execFile(program, args);\n",
+          "source": "const child_process = require('child_process');\nchild_process.execFile(program, args);\n",
           "outcome": "unclear",
           "expected_score": null,
           "expected_grade": null
@@ -952,9 +952,9 @@
       ]
     }
   ],
-  "rule_version": 4,
+  "rule_version": 5,
   "change_relevance": {
-    "version": 3,
+    "version": 4,
     "documentation_extensions": [
       ".md",
       ".rst",

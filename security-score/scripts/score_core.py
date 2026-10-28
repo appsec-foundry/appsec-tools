@@ -126,6 +126,7 @@ IMPLEMENTATION_HASH = hashlib.sha256(
         for name in (
             "score_core.py",
             "score_calculation.py",
+            "score_reporting.py",
             "score_sources.py",
             "score_remote.py",
             "score_remote_sources.py",
@@ -385,6 +386,63 @@ def javascript_code(text):
     return "".join(out)
 
 
+def shell_observations(text, code):
+    """Resolve narrow child_process imports; a method called exec is insufficient."""
+    bindings = {}
+    methods = {"exec", "execSync", "execFile", "execFileSync"}
+    declarations = [
+        (
+            r"\bimport\s+(\*\s+as\s+\w+|\w+|\{[^{}\n]*\})\s+from\s+['\"](?:node:)?child_process['\"]",
+            "as",
+        ),
+        (
+            r"\b(?:const|let|var)\s+(\w+|\{[^{}\n]*\})\s*=\s*require\s*\(\s*['\"](?:node:)?child_process['\"]\s*\)",
+            ":",
+        ),
+    ]
+    for pattern, separator in declarations:
+        for match in re.finditer(pattern, text):
+            if code[match.start()].isspace():
+                continue
+            binding = match[1].strip()
+            if binding.startswith("{"):
+                for item in binding[1:-1].split(","):
+                    names = re.split(
+                        r"\s+as\s+" if separator == "as" else r"\s*:\s*", item.strip()
+                    )
+                    if names[0] in methods and re.fullmatch(
+                        r"[A-Za-z_$][\w$]*", names[-1]
+                    ):
+                        bindings[names[-1]] = names[0]
+            else:
+                namespace = binding.split()[-1]
+                bindings.update(
+                    {namespace + "." + method: method for method in methods}
+                )
+    breaks = [match.start() for match in re.finditer("\n", code)]
+    rows = []
+    handled = set()
+    for match in re.finditer(
+        r"(?<![\w$.])([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)?)\s*\(", code
+    ):
+        name = re.sub(r"\s", "", match[1])
+        method = bindings.get(name)
+        if method:
+            status = "violated" if method in {"exec", "execSync"} else "unclear"
+        elif name.split(".")[-1] in methods:
+            status = "unclear"
+        else:
+            continue
+        handled.add(match.end())
+        rows.append((bisect_right(breaks, match.start()) + 1, status))
+    for match in re.finditer(
+        r"\.\s*(?:exec|execSync|execFile|execFileSync)\s*\(", code
+    ):
+        if match.end() not in handled:
+            rows.append((bisect_right(breaks, match.start()) + 1, "unclear"))
+    return rows
+
+
 def other_observations(rule, text, code=None):
     kind = rule["kind"]
     code = (
@@ -395,6 +453,8 @@ def other_observations(rule, text, code=None):
         else text
     )
     observations = []
+    if kind == "js-shell":
+        return shell_observations(text, code), False
     if kind == "js-eval":
         line_breaks = [match.start() for match in re.finditer("\n", code)]
         return [
@@ -406,14 +466,7 @@ def other_observations(rule, text, code=None):
         ], False
     for number, line in enumerate(code.splitlines(), 1):
         status = None
-        if kind == "js-shell":
-            if re.search(r"\b(?:child_process\.)?exec(?:Sync)?\s*\(", line):
-                status = "violated"
-            elif re.search(r"\b(?:child_process\.)?execFile(?:Sync)?\s*\(", line):
-                status = (
-                    "unclear"  # shell options and executable identity need context.
-                )
-        elif kind == "js-random" and re.search(
+        if kind == "js-random" and re.search(
             r"\b(?:token|secret|otp|nonce|sessionId|resetToken)\b", line
         ):
             if re.search(r"\bMath\.random\s*\(", line):
@@ -519,19 +572,22 @@ def scan_source(path, source, budget, findings, checks, files):
     budget.check()
     text = textwrap.dedent(source["text"]) if source.get("fragment") else source["text"]
     tree, parse_error = None, False
+    parse_reason = "Source syntax or lexical context could not be read reliably."
     if Path(path).suffix.lower() == ".py":
         try:
             tree = ast.parse(text)
         except (SyntaxError, ValueError, RecursionError):
             parse_error = True
+            parse_reason = "Python syntax is unsupported or invalid for this scanner."
     try:
         code = (
             javascript_code(text)
             if Path(path).suffix.lower() in JS_EXTENSIONS
             else text
         )
-    except SyntaxError:
+    except SyntaxError as error:
         code, parse_error = "", True
+        parse_reason = f"JavaScript lexer limitation: {error.msg}"
     code_lines = code.splitlines()
     signatures = {}
     signatures_ready = False
@@ -599,9 +655,7 @@ def scan_source(path, source, budget, findings, checks, files):
             }
         )
         if parse_error:
-            checks[-1]["error"] = (
-                "Source syntax or lexical context could not be read reliably."
-            )
+            checks[-1]["error"] = parse_reason
         for line, outcome in observed:
             if outcome != "violated":
                 continue
