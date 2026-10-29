@@ -108,6 +108,12 @@ def test_redirect_cycle():
         t.fetch(a, {})
 
 
+def test_utf8_bom_html_accepted():
+    url = "https://example.org/a"
+    t, _ = transport({url: Response(200, {"content-type": "text/html"}, b"\xef\xbb\xbf<main>OK</main>", url)})
+    assert t.fetch(url, {}).url == url
+
+
 def test_tls_defaults():
     t, _ = transport({})
     assert t.context.check_hostname
@@ -134,7 +140,7 @@ def test_compression_limit_at_transport(monkeypatch):
         def close(self): pass
     monkeypatch.setattr(http, "PinnedHTTPSConnection", Connection)
     t = Transport(Scope({"allowed-origins": ["https://example.org"]}), dict(DEFAULTS, **{"max-response-bytes": 1024}), Budget(10))
-    with pytest.raises(HarvestError, match="Größenlimit"):
+    with pytest.raises(HarvestError, match="size limit"):
         t.request("GET", "https://example.org/")
 
 

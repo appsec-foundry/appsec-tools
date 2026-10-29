@@ -5,7 +5,7 @@ import html
 import re
 from urllib.parse import quote, urljoin, urlsplit
 
-from bs4 import BeautifulSoup, NavigableString, Tag
+from bs4 import BeautifulSoup, Comment, Declaration, Doctype, NavigableString, ProcessingInstruction, Tag
 
 from .errors import AuthError, HarvestError
 from .urls import canonical
@@ -96,7 +96,7 @@ def field_value(spec, item, page, rich=True):
     if not nodes:
         return ""
     if len(nodes) != 1 and not spec.get("many", False):
-        raise HarvestError("Feldselektor ist mehrdeutig; many explizit setzen.")
+        raise HarvestError("Field selector is ambiguous; set many explicitly.")
     values = []
     for node in nodes:
         value = str(node.get(spec["attribute"], "")) if "attribute" in spec else (prose(node) if rich else text_content(node))
@@ -106,7 +106,7 @@ def field_value(spec, item, page, rich=True):
 
 def section_for(heading):
     if not re.fullmatch(r"h[1-6]", heading.name):
-        raise HarvestError("sections-Regeln müssen Überschriften auswählen.")
+        raise HarvestError("sections rules must select headings.")
     result = BeautifulSoup("<section></section>", "html.parser").section
     if heading.get("id"):
         result["id"] = heading["id"]
@@ -123,20 +123,23 @@ def parse_page(content, limits):
     try:
         soup = BeautifulSoup(content, "html.parser")
     except Exception:
-        raise HarvestError("HTML konnte nicht verarbeitet werden.") from None
+        raise HarvestError("HTML could not be parsed.") from None
     stack = [(soup, 0)]
     count = 0
     while stack:
         node, depth = stack.pop()
         count += 1
         if count > limits["max-nodes"] or depth > 150:
-            raise HarvestError("HTML-Struktur überschreitet Parser-Limits.")
+            raise HarvestError("HTML structure exceeds parser limits.")
         if isinstance(node, Tag):
             stack.extend((c, depth + 1) for c in node.children)
     if soup.select_one('input[type="password"]'):
-        raise AuthError("Anmeldeseite statt Quellinhalt empfangen.")
+        raise AuthError("Received a login page instead of source content.")
     for node in soup.select("script, style, iframe, object, svg, template"):
         node.decompose()
+    # Comments and declarations are not rendered and must not become requirement text.
+    for node in soup.find_all(string=lambda s: isinstance(s, (Comment, Declaration, Doctype, ProcessingInstruction))):
+        node.extract()
     return soup
 
 
@@ -144,7 +147,7 @@ def extract(source, soup, page_url, fetched_at):
     config = source["extraction"]
     roots = soup.select(config["content-selector"])
     if len(roots) != 1:
-        raise HarvestError("Hauptinhalt fehlt oder ist mehrdeutig; Layout prüfen.")
+        raise HarvestError("Main content is missing or ambiguous; check the layout.")
     root = roots[0]
     for selector in config.get("exclude-selectors", []):
         for node in list(root.select(selector)):
@@ -158,13 +161,13 @@ def extract(source, soup, page_url, fetched_at):
             continue
         items = root.select(rule["item-selector"])
         if not items and rule.get("required", True):
-            raise HarvestError(f"Extraktionsregel {rule['id']} hat keinen Treffer.")
+            raise HarvestError(f"Extraction rule {rule['id']} has no matches.")
         for index, original in enumerate(items):
             if id(original) in seen_nodes:
-                raise HarvestError("Mehrere Regeln erfassen denselben Inhaltsblock.")
+                raise HarvestError("Several rules capture the same content block.")
             seen_nodes.add(id(original))
             if rule["strategy"] == "table-rows" and original.name != "tr":
-                raise HarvestError("table-rows muss Tabellenzeilen auswählen.")
+                raise HarvestError("table-rows must select table rows.")
             item = section_for(original) if rule["strategy"] == "sections" else original
             values = {name: field_value(spec, item, soup, rich=name not in {"original-id", "title", "obligation", "category", "revision"})
                       for name, spec in rule["fields"].items()}
@@ -173,7 +176,7 @@ def extract(source, soup, page_url, fetched_at):
                     values[scalar] = " ".join(values[scalar].split())
             statement = values.pop("statement")
             if not statement:
-                raise HarvestError(f"Leere Aussage in Regel {rule['id']}.")
+                raise HarvestError(f"Empty statement in rule {rule['id']}.")
             if context:
                 values["context"] = "\n\n".join(dict.fromkeys(filter(None, (context, values.get("context", "")))))
             original_id = values.pop("original-id", "")
@@ -199,7 +202,7 @@ def extract(source, soup, page_url, fetched_at):
                 page_url + ("#" + quote(anchor, safe="-._~") if anchor else ""), locator, rule["id"],
                 original_id, {k: v for k, v in values.items() if v}, sorted(set(refs)), fetched_at))
             if len(results) > source["limits"]["max-items"]:
-                raise HarvestError("Requirement-Limit überschritten.")
+                raise HarvestError("Requirement limit exceeded.")
     if not results and not config.get("allow-empty-pages", False):
-        raise HarvestError("Seite enthält keine erkannten Requirements; Layout prüfen.")
+        raise HarvestError("Page contains no recognized requirements; check the layout.")
     return results

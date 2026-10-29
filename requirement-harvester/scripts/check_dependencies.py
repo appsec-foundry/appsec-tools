@@ -24,13 +24,13 @@ def main():
             data = json.loads(raw)
             advisories = data.get("vulnerabilities", [])
             if advisories:
-                print(f"{name}=={version}: bekannte Sicherheitsmeldung(en): {len(advisories)}")
+                print(f"{name}=={version}: known advisories: {len(advisories)}")
                 failed = True
         except Exception:
-            print(f"{name}=={version}: Prüfung nicht möglich")
+            print(f"{name}=={version}: check not possible")
             failed = True
     if not failed:
-        print(f"{len(pins)} Paketversionen geprüft; keine von PyPI gemeldeten Schwachstellen.")
+        print(f"{len(pins)} package versions checked; no vulnerabilities reported by PyPI.")
     return 1 if failed else 0
 
 

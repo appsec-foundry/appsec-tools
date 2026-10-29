@@ -24,7 +24,7 @@ def fixture_transport(pages, calls):
             self.budget.request()
             calls.append(url)
             if url not in pages:
-                raise HarvestError("Testquelle nicht verfügbar.")
+                raise HarvestError("Test source unavailable.")
             return Response(200, {"content-type": "text/html"}, pages[url], url)
     return Transport
 
@@ -63,11 +63,39 @@ def test_conflict_and_budget(config_factory):
     a = source["start-urls"][0]
     b = a + "-next"
     pages = {a: page("First", links=f'<a href="{b}">next</a>'), b: page("Conflict")}
-    with pytest.raises(HarvestError, match="Widersprüchliche"):
+    with pytest.raises(HarvestError, match="Conflicting"):
         crawl_source(source, time.monotonic() + 30, {}, fixture_transport(pages, []))
     source["limits"]["max-pages"] = 1
-    with pytest.raises(HarvestError, match="Seitenbudget"):
+    with pytest.raises(HarvestError, match="Page budget"):
         crawl_source(source, time.monotonic() + 30, {}, fixture_transport(pages, []))
+
+
+def test_identical_page_variants_are_deduplicated(config_factory):
+    source = config_factory()["sources"][0]
+    base = "https://example.org/policies/"
+    unlabelled = page("Secrets MUST be rotated.", "").replace(b'id=""', b"")
+    pages = {base + "start": unlabelled.replace(b"</main>", b'<a href="start.html">alias</a><a href="other">other</a></main>'),
+             base + "start.html": unlabelled,
+             base + "other": page("Other text.", "").replace(b'id=""', b"")}
+    report = {}
+    rows = crawl_source(source, time.monotonic() + 30, report, fixture_transport(pages, []))
+    assert sorted(r.statement for r in rows) == ["Other text.", "Secrets MUST be rotated."]
+    alias = next(p for p in report["pages"] if p["url"].endswith("start.html"))
+    assert alias["status"] == "duplicate-content" and alias["duplicate-of"] == base + "start"
+
+
+def test_report_samples_unique_and_unresolved_only_in_scope(config_factory):
+    source = config_factory()["sources"][0]
+    base = "https://example.org/policies/"
+    source["start-urls"] = [base + "start", base + "second"]
+    source["limits"]["max-depth"] = 0
+    nav = '<a href="https://other.example/">home</a>'
+    refs = 'Rule <a href="https://external.example/doc">ext</a> <a href="missing">int</a>'
+    pages = {base + "start": page(refs, "R1", nav), base + "second": page("Second", "R2", nav)}
+    report = {}
+    crawl_source(source, time.monotonic() + 30, report, fixture_transport(pages, []))
+    assert report["excluded-sample"] == ["https://other.example/", "https://external.example/doc"]
+    assert report["unresolved-references"] == [base + "missing"]
 
 
 def test_cli_full_run_dry_run_and_failure(raw_config, config_factory, tmp_path, monkeypatch):

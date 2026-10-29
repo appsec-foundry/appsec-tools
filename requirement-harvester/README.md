@@ -18,18 +18,24 @@ cd appsec-analyzer-tools/requirement-harvester
 pipx install .
 ```
 
-Read the public TSS-WEB example:
+Read the public TSS-WEB example. `validate` checks the configuration without
+network access, `run --dry-run` fetches and extracts but writes only the run
+report, and `run` also writes the catalog:
 
-```sh
-requirement-harvester validate --config examples/tss-web.yaml          # check the configuration, no network access
-requirement-harvester run --config examples/tss-web.yaml --dry-run     # fetch and extract, write only the report
-requirement-harvester run --config examples/tss-web.yaml               # write the catalog
+```console
+$ requirement-harvester validate --config examples/tss-web.yaml
+Configuration valid; no network access made.
+$ requirement-harvester run --config examples/tss-web.yaml --dry-run
+{"status": "complete", "requirements": 116, "catalogs": 1, "dry-run": true}
+$ requirement-harvester run --config examples/tss-web.yaml
+{"status": "complete", "requirements": 116, "catalogs": 1, "dry-run": false}
 ```
 
 The catalog is written to `out/tss-web.oscal.yaml`, the run report to
 `out/tss-web-report.json`. Output paths are set in the configuration and are
 relative to the configuration file. A successful run replaces the previous
-files; a failed run leaves them unchanged.
+catalog. A failed run prints the error and exit code, leaves the catalog
+unchanged, and records the error in the report.
 
 To install without a clone:
 
@@ -47,8 +53,7 @@ pipx install "git+ssh://git@github.com/appsec-foundry/appsec-analyzer-tools.git#
    - [entra-ci.yaml](examples/entra-ci.yaml): Microsoft Entra ID in CI
    - [multiple-outputs.yaml](examples/multiple-outputs.yaml): several catalogs
    - [owasp-cheatsheets.yaml](examples/owasp-cheatsheets.yaml): OWASP Cheat
-     Sheet Series, one entry per section; content under CC BY-SA, keep the source
-     URLs when passing the catalog on; a full crawl has not been tested yet
+     Sheet Series, one entry per section; see the notes in the file
 2. Set the start pages, the allowed scope, and the CSS selectors.
 3. Run `validate`, then `run --dry-run`, and check the found entries and the
    page list in the report against your pages.
@@ -59,8 +64,8 @@ A minimal configuration for requirements in list items:
 ```yaml
 config-version: 1
 output:
-  catalog: ../out/requirements.oscal.yaml
-  report: ../out/report.json
+  catalog: out/requirements.oscal.yaml
+  report: out/report.json
   title: Company Requirements
   version: 1.0.0
 sources:
@@ -114,12 +119,16 @@ catalog:
         prose: Confidential data MUST be encrypted before it is stored.
 ```
 
-The appsec-analyzer catalog format and other output formats are not supported.
+OSCAL YAML is the only output format. appsec-analyzer reads its own
+requirements catalog format, not OSCAL, so it cannot import this catalog
+directly yet ([details](requirements.md#integration-with-appsec-analyzer)).
 
 ## Limits
 
 - Reads static HTML over HTTPS. JavaScript rendering, PDFs, and attachments are
   not supported.
+- HTTP proxies are not used; the machine needs direct HTTPS access to the
+  sources.
 - Access: public, API token, HTTP Basic, and Microsoft Entra ID bearer tokens.
   Form logins need an adapter for the target application.
 - Obligation comes only from a configured field. The tool does not derive MUST,

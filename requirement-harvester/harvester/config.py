@@ -28,12 +28,12 @@ def load_config(path):
     if errors:
         # Schema messages can contain accidental credential literals: report path only.
         location = ".".join(str(p) for p in errors[0].path) or "root"
-        raise ConfigError(f"Config-Schema verletzt bei {location} ({errors[0].validator}).")
+        raise ConfigError(f"Configuration violates the schema at {location} ({errors[0].validator}).")
     cfg = copy.deepcopy(data)
     cfg["defaults"] = DEFAULTS | cfg.get("defaults", {})
     ids = [s["id"] for s in cfg["sources"]]
     if len(set(ids)) != len(ids):
-        raise ConfigError("Quell-IDs müssen eindeutig sein.")
+        raise ConfigError("Source IDs must be unique.")
     for source in cfg["sources"]:
         crawl = source["crawl"]
         source["limits"] = cfg["defaults"] | {k: v for k, v in crawl.items() if k in DEFAULTS}
@@ -44,21 +44,21 @@ def load_config(path):
                 if not any(n.version == p.version and n.subnet_of(p) for p in private):
                     raise ValueError()
             except ValueError:
-                raise ConfigError("Private Netzfreigaben müssen innerhalb RFC1918 oder IPv6-ULA liegen.") from None
+                raise ConfigError("Allowed private networks must lie within RFC1918 or IPv6 ULA ranges.") from None
         try:
             if any(o != origin(o) for o in crawl["allowed-origins"]):
-                raise ConfigError("Origins müssen exakt als https://host[:port] angegeben werden.")
+                raise ConfigError("Origins must be given exactly as https://host[:port].")
             for key in ("allowed-path-prefixes", "exclude-path-prefixes"):
                 for prefix in crawl.get(key, []):
                     if not prefix.startswith("/") or canonical("https://scope.example" + prefix) != "https://scope.example" + prefix:
-                        raise ConfigError("Pfadbereiche müssen normalisierte absolute Pfade sein.")
+                        raise ConfigError("Path prefixes must be normalized absolute paths.")
             forbidden = {"token", "access_token", "id_token", "password", "secret", "api_key", "apikey", "code", "key"}
             if forbidden & {k.lower() for k in crawl.get("allowed-query-keys", [])}:
-                raise ConfigError("Credential-Queryparameter sind nicht zulässig.")
+                raise ConfigError("Credential query parameters are not allowed.")
             scope = Scope(crawl)
             source["start-urls"] = list(dict.fromkeys(canonical(u) for u in source["start-urls"]))
             if not all(scope.allows(u) for u in source["start-urls"]):
-                raise ConfigError("Startseite liegt außerhalb ihres Scopes.")
+                raise ConfigError("Start page is outside its scope.")
         except HarvestError as e:
             raise ConfigError(str(e)) from None
         extraction = source["extraction"]
@@ -73,46 +73,46 @@ def load_config(path):
                 selectors.append(rule["page-selector"])
             selectors.extend(f["selector"] for f in rule["fields"].values() if "selector" in f)
         if len(set(rule_ids)) != len(rule_ids):
-            raise ConfigError("Regel-IDs müssen pro Quelle eindeutig sein.")
+            raise ConfigError("Rule IDs must be unique per source.")
         try:
             for selector in selectors:
                 soupsieve.compile(selector)
         except Exception:
-            raise ConfigError("Ungültiger CSS-Selektor.") from None
+            raise ConfigError("Invalid CSS selector.") from None
         auth = source.setdefault("auth", {"mode": "none"})
         if auth["mode"] != "none" and len(scope.origins) != 1:
-            raise ConfigError("Authentifizierte Quellen benötigen genau eine Origin.")
+            raise ConfigError("Authenticated sources need exactly one origin.")
         if auth["mode"] == "entra":
             if auth["flow"] == "interactive":
                 if "token-file" not in auth or "client-secret-env" in auth:
-                    raise ConfigError("Interaktives Entra benötigt token-file ohne Client-Secret.")
+                    raise ConfigError("Interactive Entra needs token-file and no client secret.")
                 auth["token-file"] = str((path.parent / auth["token-file"]).absolute())
             else:
                 if "client-secret-env" not in auth or "token-file" in auth or len(auth["scopes"]) != 1 or not auth["scopes"][0].endswith("/.default"):
-                    raise ConfigError("Entra-CI benötigt client-secret-env und einen /.default-Scope.")
+                    raise ConfigError("Entra client credentials need client-secret-env and one /.default scope.")
             if "credential-origin" in auth and auth["credential-origin"] not in scope.origins:
-                raise ConfigError("Entra-Ziel stimmt nicht mit Quell-Origin überein.")
+                raise ConfigError("Entra credential origin does not match the source origin.")
             auth["credential-origin"] = next(iter(scope.origins))
         if "ca-bundle" in source:
             source["ca-bundle"] = str((path.parent / source["ca-bundle"]).resolve())
             if not Path(source["ca-bundle"]).is_file():
-                raise ConfigError("CA-Datei ist nicht verfügbar.")
+                raise ConfigError("CA bundle is not available.")
     output = cfg["output"]
     catalogs = output.get("catalogs", [{"id": "combined", "path": output.get("catalog"), "title": output.get("title"), "version": output.get("version"), "source-ids": ids}])
     if len({c["id"] for c in catalogs}) != len(catalogs):
-        raise ConfigError("Katalog-IDs müssen eindeutig sein.")
+        raise ConfigError("Catalog IDs must be unique.")
     assigned = {s for c in catalogs for s in c["source-ids"]}
     if assigned != set(ids):
-        raise ConfigError("Ausgabezuordnung enthält unbekannte oder fehlende Quellen.")
+        raise ConfigError("Output assignment contains unknown or missing sources.")
     targets = [output["report"]] + [c["path"] for c in catalogs]
     resolved = [(path.parent / p).resolve() for p in targets]
     inputs = {path} | {Path(s["ca-bundle"]) for s in cfg["sources"] if "ca-bundle" in s}
     token_paths = [Path(s["auth"]["token-file"]).resolve() for s in cfg["sources"] if "token-file" in s["auth"]]
     if len(set(token_paths)) != len(token_paths) or any(p in inputs or p.is_dir() for p in token_paths):
-        raise ConfigError("Token-Dateipfade kollidieren miteinander oder mit Eingaben.")
+        raise ConfigError("Token file paths collide with each other or with inputs.")
     inputs |= set(token_paths)
     if len(set(resolved)) != len(resolved) or any(p in inputs or p.is_dir() for p in resolved):
-        raise ConfigError("Ausgabepfade kollidieren miteinander oder mit Eingaben.")
+        raise ConfigError("Output paths collide with each other or with inputs.")
     output["report"] = str(resolved[0])
     for c, target in zip(catalogs, resolved[1:]):
         c["path"] = str(target)

@@ -17,7 +17,7 @@ from .urls import Scope
 def secret(name):
     value = os.environ.get(name, "")
     if not value or len(value) > 16384 or any(ord(c) < 32 or ord(c) == 127 for c in value):
-        raise AuthError("Erforderliche Credential-Umgebungsvariable fehlt oder ist ungültig.")
+        raise AuthError("Required credential environment variable is missing or invalid.")
     return value
 
 
@@ -40,7 +40,7 @@ class EntraHTTP:
     def _request(self, method, url, headers=None, body=None):
         result = self.transport.request(method, url, headers, body)
         if result.status_code not in {200, 400, 401}:
-            raise AuthError("Entra-Endpunkt lieferte keinen gültigen Token-Response.")
+            raise AuthError("Entra endpoint returned no valid token response.")
         return result
 
 
@@ -67,34 +67,34 @@ def binding(source):
 
 def checked_token(result):
     if not isinstance(result, dict) or result.get("error"):
-        raise AuthError("Entra-Anmeldung fehlgeschlagen oder abgebrochen.")
+        raise AuthError("Entra sign-in failed or was cancelled.")
     token = result.get("access_token", "")
     if (not isinstance(token, str) or not token or len(token) > 65536
             or any(ord(c) <= 32 or ord(c) >= 127 for c in token)
             or result.get("token_type", "Bearer").lower() != "bearer"):
-        raise AuthError("Entra lieferte kein gültiges Bearer-Token.")
+        raise AuthError("Entra returned no valid bearer token.")
     return token
 
 
 def login(source):
     auth = source["auth"]
     if auth["mode"] != "entra" or auth["flow"] != "interactive":
-        raise AuthError("login benötigt eine interaktive Entra-Quelle.")
+        raise AuthError("login needs an interactive Entra source.")
     try:
         app = application(source, Budget(300, 30))
         result = app.acquire_token_interactive(scopes=auth["scopes"], timeout=240,
-                    success_template="Anmeldung abgeschlossen. Dieses Fenster kann geschlossen werden.",
-                    error_template="Anmeldung fehlgeschlagen. Dieses Fenster kann geschlossen werden.")
+                    success_template="Sign-in complete. You can close this window.",
+                    error_template="Sign-in failed. You can close this window.")
         token = checked_token(result)
         lifetime = int(result.get("expires_in", 0))
         if not 60 < lifetime <= 86400:
-            raise AuthError("Ungültige Token-Lebensdauer.")
+            raise AuthError("Invalid token lifetime.")
         write_json(auth["token-file"], {"binding": binding(source), "access_token": token,
                                       "expires_at": time.time() + lifetime})
     except HarvestError:
         raise
     except Exception:
-        raise AuthError("Interaktive Entra-Anmeldung fehlgeschlagen.") from None
+        raise AuthError("Interactive Entra sign-in failed.") from None
 
 
 def stored_token(source):
@@ -103,13 +103,13 @@ def stored_token(source):
         with os.fdopen(fd, "rb") as f:
             st = os.fstat(f.fileno())
             if not stat.S_ISREG(st.st_mode) or st.st_mode & 0o077 or st.st_uid != os.getuid() or st.st_size > 100000:
-                raise AuthError("Token-Datei benötigt Eigentümerzugriff mit Modus 0600.")
+                raise AuthError("Token file must be owned by the current user with mode 0600.")
             data = json.load(f)
         if data.get("binding") != binding(source) or data.get("expires_at", 0) <= time.time() + 60:
-            raise AuthError("Entra-Token ist abgelaufen oder gehört zu einer anderen Quelle.")
+            raise AuthError("Entra token has expired or belongs to another source.")
         return checked_token(data)
     except (OSError, ValueError, TypeError, AttributeError):
-        raise AuthError("Entra-Token-Datei fehlt oder ist ungültig; login erneut ausführen.") from None
+        raise AuthError("Entra token file is missing or invalid; run login again.") from None
 
 
 def headers_for(source, budget):
@@ -123,7 +123,7 @@ def headers_for(source, budget):
     if auth["mode"] == "basic":
         username, password = secret(auth["username-env"]), secret(auth["password-env"])
         if ":" in username:
-            raise AuthError("Basic-Benutzername enthält einen Doppelpunkt.")
+            raise AuthError("Basic username contains a colon.")
         value = base64.b64encode((username + ":" + password).encode()).decode("ascii")
         return {"Authorization": "Basic " + value}
     if auth["flow"] == "interactive":
@@ -135,4 +135,4 @@ def headers_for(source, budget):
     except HarvestError:
         raise
     except Exception:
-        raise AuthError("Entra-Anwendungsanmeldung fehlgeschlagen.") from None
+        raise AuthError("Entra application sign-in failed.") from None

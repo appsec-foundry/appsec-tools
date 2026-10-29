@@ -16,7 +16,7 @@ from .oscal import build_catalog, now
 
 
 def _timeout(signum, frame):
-    raise HarvestError("Harte Laufzeitgrenze erreicht.")
+    raise HarvestError("Hard run time limit reached.")
 
 
 def run(cfg, dry_run=False):
@@ -48,10 +48,10 @@ def run(cfg, dry_run=False):
                 source["status"] = "failed"
     except KeyboardInterrupt:
         code = 130
-        report.update({"status": "aborted", "error": "Durch Benutzer abgebrochen.", "exit-code": code})
+        report.update({"status": "aborted", "error": "Cancelled by the user.", "exit-code": code})
     except (OSError, ValueError, TypeError, RecursionError):
         code = 4
-        report.update({"status": "failed", "error": "Verarbeitung fehlgeschlagen.", "exit-code": code})
+        report.update({"status": "failed", "error": "Processing failed.", "exit-code": code})
     finally:
         report["finished"] = now()
         # Allow diagnostic output after a hard crawl timeout, but never further crawling.
@@ -65,16 +65,16 @@ def run(cfg, dry_run=False):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Requirements deterministisch aus HTTPS-Seiten nach OSCAL-YAML übertragen.")
+    parser = argparse.ArgumentParser(description="Deterministically export requirements from HTTPS pages to OSCAL YAML.")
     parser.add_argument("--version", action="version", version=__version__)
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("schema", help="JSON-Schema für die Config ausgeben")
+    commands.add_parser("schema", help="Print the configuration JSON schema")
     for name in ("validate", "run", "login"):
         sub = commands.add_parser(name)
         sub.add_argument("--config", required=True, type=Path)
         if name == "run":
             sub.add_argument("--dry-run", action="store_true")
-            sub.add_argument("--non-interactive", action="store_true", help="Explizite CI-Kennzeichnung; run fragt grundsätzlich nie nach Eingaben")
+            sub.add_argument("--non-interactive", action="store_true", help="Explicit CI marker; run never prompts for input")
         if name == "login":
             sub.add_argument("--source", required=True)
     args = parser.parse_args(argv)
@@ -84,21 +84,21 @@ def main(argv=None):
             return 0
         cfg = load_config(args.config)
         if args.command == "validate":
-            print("Config gültig; kein Netzwerkzugriff ausgeführt.")
+            print("Configuration valid; no network access made.")
             return 0
         if not hasattr(signal, "setitimer"):
-            raise ConfigError("Diese Version benötigt Linux/macOS für harte Zeitlimits.")
+            raise ConfigError("This version needs Linux or macOS for hard time limits.")
         previous = signal.signal(signal.SIGALRM, _timeout)
         signal.setitimer(signal.ITIMER_REAL, 300 if args.command == "login" else cfg["defaults"]["max-run-seconds"])
         try:
             if args.command == "login":
                 if not sys.stdin.isatty():
-                    raise AuthError("login benötigt ein interaktives Terminal.")
+                    raise AuthError("login needs an interactive terminal.")
                 source = next((s for s in cfg["sources"] if s["id"] == args.source), None)
                 if source is None:
-                    raise ConfigError("Unbekannte Quelle für login.")
+                    raise ConfigError("Unknown source for login.")
                 login(source)
-                print("Anmeldung gespeichert; Token-Datei ist nur für ihren Eigentümer lesbar.")
+                print("Sign-in saved; the token file is readable only by its owner.")
                 return 0
             return run(cfg, args.dry_run)
         finally:
@@ -108,8 +108,8 @@ def main(argv=None):
         print(json.dumps({"error": str(error), "exit-code": error.code}, ensure_ascii=False), file=sys.stderr)
         return error.code
     except KeyboardInterrupt:
-        print("Abgebrochen.", file=sys.stderr)
+        print("Cancelled.", file=sys.stderr)
         return 130
     except Exception:
-        print('Fehler bei der Verarbeitung; keine Diagnoseinhalte oder Zugangsdaten ausgegeben.', file=sys.stderr)
+        print('Processing error; no diagnostic content or credentials were printed.', file=sys.stderr)
         return 4

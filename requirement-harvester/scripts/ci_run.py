@@ -20,19 +20,18 @@ def execute(config_path, stage):
     try:
         stage.mkdir(mode=0o700)
     except OSError:
-        print("CI-Artefaktverzeichnis muss neu und beschreibbar sein.", file=sys.stderr)
+        print("CI artifact directory must be new and writable.", file=sys.stderr)
         return 5
     try:
-        cfg = load_config(config_path)
         code = main(["run", "--config", str(config_path), "--non-interactive"])
-        report_path = Path(cfg["output"]["report"])
         if code != 0:
             write_json(stage / "report.json", {"status": "failed", "exit-code": code,
-                "message": "Crawl fehlgeschlagen; keine Katalog-Artefakte veröffentlicht."})
+                "message": "Run failed; no catalog artifacts published."})
             return code
-        report = json.loads(report_path.read_text())
+        cfg = load_config(config_path)
+        report = json.loads(Path(cfg["output"]["report"]).read_text())
         if report.get("status") != "complete" or any(o.get("status") != "written" for o in report.get("outputs", [])):
-            raise HarvestError("CI-Lauf besitzt keinen vollständigen Veröffentlichungsnachweis.")
+            raise HarvestError("CI run has no complete publication record.")
         # Read everything before publishing any staging file.
         catalogs = [(c["id"], Path(c["path"]).read_bytes()) for c in cfg["catalogs"]]
         with tempfile.TemporaryDirectory(prefix=".pending-", dir=stage) as temporary:
@@ -43,11 +42,11 @@ def execute(config_path, stage):
             os.replace(pending, stage / "catalogs")
         return 0
     except (HarvestError, OSError, ValueError):
-        write_json(stage / "report.json", {"status": "failed", "message": "CI-Ausgabe konnte nicht bereitgestellt werden."})
+        write_json(stage / "report.json", {"status": "failed", "message": "CI output could not be staged."})
         return 5
 
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        raise SystemExit("Aufruf: python scripts/ci_run.py CONFIG")
+        raise SystemExit("Usage: python scripts/ci_run.py CONFIG")
     raise SystemExit(execute(sys.argv[1], Path.cwd() / "ci-artifacts"))

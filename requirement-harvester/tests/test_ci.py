@@ -54,6 +54,14 @@ def test_ci_stages_only_successful_current_catalogs(config_factory, tmp_path, mo
     assert ci.execute(config_path, tmp_path / "success") == 5
 
 
+def test_ci_invalid_config_keeps_config_exit_code(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("config-version: 1\nunknown: true\n")
+    assert ci.execute(config_path, tmp_path / "artifacts") == 2
+    assert json.loads((tmp_path / "artifacts/report.json").read_text())["exit-code"] == 2
+    assert not (tmp_path / "artifacts/catalogs").exists()
+
+
 def test_no_partial_catalog_staging(config_factory, tmp_path, monkeypatch):
     cfg = config_factory()
     factory = fixture_transport({cfg["sources"][0]["start-urls"][0]: page()}, [])

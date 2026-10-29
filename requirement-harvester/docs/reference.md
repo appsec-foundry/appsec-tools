@@ -10,7 +10,7 @@ The complete [JSON schema](../harvester/schemas/config.schema.json) is the
 authoritative configuration interface. Another example is [table.yaml](../examples/table.yaml).
 
 ```bash
-.venv/bin/python -m harvester schema > /tmp/harvester-config.schema.json
+requirement-harvester schema > /tmp/harvester-config.schema.json
 ```
 
 A configuration contains `config-version: 1`, `output`, optional `defaults`, and
@@ -35,6 +35,9 @@ and so on. `null` removes the depth limit, while other resource limits still
 apply. `crawl.mode: explicit-pages` limits a run to start pages. Multiple start
 pages are processed together in breadth-first order; the shortest distance
 applies when there are multiple link paths. Unlinked pages are not discovered.
+A page whose extracted entries are identical to those of an earlier page of the
+same source, such as the same page with and without `.html`, adds no entries
+and is marked `duplicate-content` in the report.
 
 Important defaults: 200 pages, link depth 3, 400 requests per source, 5 MiB per
 response before and after decompression, a 1-second interval between requests,
@@ -72,7 +75,7 @@ Each rule has a unique `id`, an `item-selector`, `fields`, and a strategy:
 | Strategy | Meaning |
 | --- | --- |
 | `blocks` | One requirement per selected content block, such as a list item. |
-| `table-rows` | One requirement per `tr`; when the entire row is used, table headers are retained as field labels. |
+| `table-rows` | One requirement per `tr`; when the entire row is used, the `th` cells in the table's `thead` are retained as field labels. |
 | `sections` | A heading and following sibling elements up to the next heading of equal or higher level. |
 
 `page-selector` activates a rule only on matching pages. An active rule must
@@ -103,7 +106,11 @@ Otherwise, multiple matches are an error. Alternatively, `value` sets an
 explicit constant. Missing optional fields remain empty. The tool does not
 infer obligation from keywords or add MUST or SHOULD.
 
-Paragraphs, nested lists, tables, and code are retained as Markdown. Conditions
+Paragraphs, nested lists, tables, and code are retained as Markdown. In these
+Markdown fields, `&`, `<`, and `>` outside code are written as HTML entities and
+Markdown characters are escaped, so `>=` appears as `&gt;=`. `original-id`,
+`title`, `obligation`, `category`, and `revision` are single-line plain text.
+HTML comments are not content. Conditions
 and exceptions belong in the statement or corresponding context fields. Rules
 cannot prove their own semantic completeness: check trial runs against
 representative pages and expected results.
@@ -174,8 +181,8 @@ auth:
 ```
 
 ```bash
-.venv/bin/python -m harvester login --config company.yaml --source company
-.venv/bin/python -m harvester run --config company.yaml
+requirement-harvester login --config company.yaml --source company
+requirement-harvester run --config company.yaml
 ```
 
 Interactive sign-in uses MSAL's authorization-code flow with PKCE and a local
@@ -231,6 +238,16 @@ Each new export gets a new document UUID and modification time; control IDs and
 semantic content remain stable for identical inputs. Therefore, comparing the
 entire file including runtime metadata does not yield byte-identical results.
 
+The run report is written on every run, including failed runs. A failed run
+replaces no catalog, except files already written before a later file fails to
+publish; `outputs` shows which files were written. For each source, the report
+lists the pages with depth and status (`extracted`, `no-requirements`,
+`duplicate-content`, `duplicate-redirect`, or `failed`), the number of excluded
+links with up to 100 distinct examples, and the number of links beyond the depth
+limit. `unresolved-references` lists links in requirements to in-scope pages or
+anchors that were not found; links outside the scope stay in the catalog but are
+not checked. A dry run adds a `preview` of all entries.
+
 | Exit code | Meaning |
 | --- | --- |
 | 0 | Success; a dry run validates but writes no catalog. |
@@ -247,6 +264,7 @@ with setup guidance, are in [ci/README.md](../ci/README.md). They are not
 enabled automatically. The tool has no write access to repositories.
 
 ```bash
+python3 -m venv .venv
 .venv/bin/python -m pip install --require-hashes -r requirements-dev.lock
 .venv/bin/python -m pytest
 python3 scripts/check_dependencies.py

@@ -41,7 +41,7 @@ def build_catalog(target, sources, requirements, timestamp=None):
             links.extend({"href": ref, "rel": "reference"} for ref in req.references if ref != req.url)
             controls.append({"id": req.id, "title": req.title, "props": props, "links": links, "parts": parts})
         if not controls:
-            raise OutputError("Ein zugeordneter Quellkatalog enthält keine Requirements.")
+            raise OutputError("An assigned source contains no requirements.")
         groups.append({"id": source_id, "title": source_map[source_id]["title"], "controls": controls})
     result = {"catalog": {"uuid": str(uuid.uuid4()), "metadata": {"title": target["title"],
                 "last-modified": timestamp or now(), "version": target["version"], "oscal-version": "1.2.3"}, "groups": groups}}
@@ -55,7 +55,7 @@ def validate_catalog(document):
     # Python re cannot evaluate these; do not remove or weaken the patterns.
     def pattern(validator, expression, instance, subschema):
         if isinstance(instance, str) and not regex.search(expression, instance, timeout=1):
-            yield jsonschema.ValidationError("OSCAL-Zeichenmuster verletzt.")
+            yield jsonschema.ValidationError("OSCAL character pattern violated.")
     cls = jsonschema.validators.extend(jsonschema.validators.validator_for(schema), {"pattern": pattern})
     validator = cls(schema, format_checker=jsonschema.FormatChecker())
     error = next(validator.iter_errors(document), None)
@@ -69,12 +69,12 @@ def validate_catalog(document):
                 leaves.append(current)
         error = max(leaves, key=lambda e: len(list(e.absolute_path)))
         location = ".".join(str(x) for x in error.absolute_path)
-        raise OutputError(f"Export verletzt das OSCAL-1.2.3-Katalogschema bei {location} ({error.validator}).")
+        raise OutputError(f"Export violates the OSCAL 1.2.3 catalog schema at {location} ({error.validator}).")
     ids = set()
     for group in document["catalog"].get("groups", []):
         for control in group.get("controls", []):
             if control["id"] in ids or not control.get("title") or not any(p.get("name") == "statement" and p.get("prose", "").strip() for p in control.get("parts", [])):
-                raise OutputError("Export verletzt fachliche Katalogregeln.")
+                raise OutputError("Export violates catalog content rules.")
             ids.add(control["id"])
     if not ids:
-        raise OutputError("Leerer Katalog wird nicht veröffentlicht.")
+        raise OutputError("An empty catalog is not published.")

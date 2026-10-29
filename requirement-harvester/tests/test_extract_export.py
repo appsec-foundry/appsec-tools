@@ -77,6 +77,11 @@ def test_extraction_failures(config_factory, content):
         items(config_factory(), content)
 
 
+def test_comments_and_declarations_are_not_content(config_factory):
+    rows = items(config_factory(), page("Data MUST be encrypted.<!-- internal: drop this --><?php echo 1 ?>"))
+    assert rows[0].statement == "Data MUST be encrypted."
+
+
 def test_login_page(config_factory):
     with pytest.raises(AuthError):
         items(config_factory(), b'<main><input type="password"></main>')

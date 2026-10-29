@@ -8,7 +8,7 @@ from .errors import HarvestError
 def canonical(url):
     """Normalize URLs without allowing encoded separators or traversal."""
     if not isinstance(url, str) or len(url) > 8192 or re.search(r"[\x00-\x20\x7f\\]", url):
-        raise HarvestError("Ungültige URL-Zeichen.")
+        raise HarvestError("Invalid URL characters.")
     try:
         p = urlsplit(url)
         if p.scheme != "https" or not p.hostname or p.username is not None or p.password is not None:
@@ -38,7 +38,7 @@ def canonical(url):
         query = urlencode(sorted(pairs))
         return urlunsplit(("https", netloc, path, query, ""))
     except (ValueError, UnicodeError):
-        raise HarvestError("Ungültige HTTPS-URL.") from None
+        raise HarvestError("Invalid HTTPS URL.") from None
 
 
 def origin(url):
@@ -77,16 +77,16 @@ class Scope:
 
     def require(self, url):
         if not self.allows(url):
-            raise HarvestError("URL außerhalb des konfigurierten Scopes.")
+            raise HarvestError("URL outside the configured scope.")
 
     def check_address(self, address):
         ip = ipaddress.ip_address(address)
         if getattr(ip, "ipv4_mapped", None):
             ip = ip.ipv4_mapped
         if getattr(ip, "sixtofour", None) or getattr(ip, "teredo", None):
-            raise HarvestError("IPv6-Übergangsadressen sind nicht zulässig.")
+            raise HarvestError("IPv6 transition addresses are not allowed.")
         # Never permit link-local metadata, loopback or special-use ranges.
         if ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified or ip.is_reserved:
-            raise HarvestError("Nicht zulässige Netzwerkadresse.")
+            raise HarvestError("Network address not allowed.")
         if not ip.is_global and not any(ip.version == n.version and ip in n for n in self.networks):
-            raise HarvestError("Internes Zielnetz ist nicht freigegeben.")
+            raise HarvestError("Internal destination network is not allowed.")

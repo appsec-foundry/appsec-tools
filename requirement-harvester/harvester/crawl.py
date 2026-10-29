@@ -19,8 +19,8 @@ def crawl_source(source, deadline, report, transport_factory=Transport):
     queue = deque((url, 0) for url in sorted(source["start-urls"]))
     queued = set(source["start-urls"])
     if len(queued) > limits["max-queue"]:
-        raise HarvestError("Startseiten überschreiten das Linkwarteschlangen-Budget.")
-    visited, requirements, anchors = set(), {}, {}
+        raise HarvestError("Start pages exceed the link queue budget.")
+    visited, requirements, anchors, contents = set(), {}, {}, {}
     report.update({"source-id": source["id"], "pages": [], "excluded-count": 0,
                    "excluded-sample": [], "depth-limited-count": 0, "requirements": 0, "status": "running"})
     while queue:
@@ -29,7 +29,7 @@ def crawl_source(source, deadline, report, transport_factory=Transport):
         if url in visited:
             continue
         if len(visited) >= limits["max-pages"]:
-            raise HarvestError("Seitenbudget mit offenen Seiten ausgeschöpft.")
+            raise HarvestError("Page budget exhausted with pages still pending.")
         page_report = {"url": display_url(url), "depth": depth, "status": "fetching"}
         report["pages"].append(page_report)
         try:
@@ -41,17 +41,25 @@ def crawl_source(source, deadline, report, transport_factory=Transport):
             soup = parse_page(response.content, limits)
             anchors[response.url] = {str(n["id"]) for n in soup.find_all(id=True)}
             rows = extract(source, soup, response.url, now())
-            for req in rows:
-                previous = requirements.get(req.id)
-                if previous:
-                    if (previous.statement, previous.title, previous.attributes) != (req.statement, req.title, req.attributes):
-                        raise HarvestError("Widersprüchliche Requirements mit gleicher Quellidentität.")
-                    previous.references = sorted(set(previous.references + req.references + [req.url]) - {previous.url})
-                else:
-                    requirements[req.id] = req
-                if len(requirements) > limits["max-items"]:
-                    raise HarvestError("Quell-Requirement-Limit überschritten.")
-            page_report.update({"url": display_url(response.url), "status": "extracted" if rows else "no-requirements", "requirements": len(rows)})
+            # The same page under another URL, such as with and without .html, adds no entries.
+            fingerprint = tuple((r.rule_id, r.locator, r.original_id, r.title, r.statement,
+                                 tuple(sorted(r.attributes.items()))) for r in rows)
+            first = contents.setdefault(fingerprint, response.url) if rows else response.url
+            if first != response.url:
+                page_report.update({"url": display_url(response.url), "status": "duplicate-content",
+                                    "duplicate-of": display_url(first)})
+            else:
+                for req in rows:
+                    previous = requirements.get(req.id)
+                    if previous:
+                        if (previous.statement, previous.title, previous.attributes) != (req.statement, req.title, req.attributes):
+                            raise HarvestError("Conflicting requirements with the same source identity.")
+                        previous.references = sorted(set(previous.references + req.references + [req.url]) - {previous.url})
+                    else:
+                        requirements[req.id] = req
+                    if len(requirements) > limits["max-items"]:
+                        raise HarvestError("Source requirement limit exceeded.")
+                page_report.update({"url": display_url(response.url), "status": "extracted" if rows else "no-requirements", "requirements": len(rows)})
             links = set()
             if source["crawl"].get("mode", "linked-pages") != "explicit-pages":
                 for link in soup.select("a[href]"):
@@ -65,8 +73,9 @@ def crawl_source(source, deadline, report, transport_factory=Transport):
                         continue
                     if not scope.allows(dest):
                         report["excluded-count"] += 1
-                        if len(report["excluded-sample"]) < 100:
-                            report["excluded-sample"].append(display_url(dest))
+                        sample = display_url(dest)
+                        if len(report["excluded-sample"]) < 100 and sample not in report["excluded-sample"]:
+                            report["excluded-sample"].append(sample)
                     elif dest not in queued and dest not in visited:
                         links.add(dest)
             if limits["max-depth"] is not None and depth >= limits["max-depth"]:
@@ -74,16 +83,17 @@ def crawl_source(source, deadline, report, transport_factory=Transport):
             else:
                 for dest in sorted(links):
                     if len(queued) >= limits["max-queue"]:
-                        raise HarvestError("Linkwarteschlangen-Budget ausgeschöpft.")
+                        raise HarvestError("Link queue budget exhausted.")
                     queue.append((dest, depth + 1))
                     queued.add(dest)
         except HarvestError as error:
             page_report.update({"status": "failed", "error": str(error)})
             raise
     if not requirements:
-        raise HarvestError("Quelle liefert keine Requirements.")
+        raise HarvestError("Source returned no requirements.")
+    # Links outside the scope are kept in the catalog but are never fetched, so they cannot be resolved.
     report["unresolved-references"] = sorted({display_url(ref) for req in requirements.values()
-        for ref in req.references if canonical(ref) not in visited or
-        (urlsplit(ref).fragment and unquote(urlsplit(ref).fragment) not in anchors.get(canonical(ref), set()))})[:100]
+        for ref in req.references if scope.allows(ref) and (canonical(ref) not in visited or
+        (urlsplit(ref).fragment and unquote(urlsplit(ref).fragment) not in anchors.get(canonical(ref), set())))})[:100]
     report.update({"requirements": len(requirements), "status": "complete"})
     return list(requirements.values())
