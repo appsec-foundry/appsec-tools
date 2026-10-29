@@ -1,10 +1,12 @@
 import copy
+from pathlib import Path
 
 import pytest
 import yaml
 
 from harvester.config import load_config
 from harvester.errors import ConfigError, HarvestError
+from harvester.extract import extract, parse_page
 from harvester.urls import Scope, canonical
 
 
@@ -72,3 +74,22 @@ def test_scope_segments_and_query():
     for u in ["https://example.org/policies-old/x", "https://example.org/policies/history/x",
               "https://sub.example.org/policies/x", "https://example.org/policies/x?token=foo"]:
         assert not scope.allows(u)
+
+
+def test_owasp_cheatsheets_example():
+    cfg = load_config(Path(__file__).parent.parent / "examples" / "owasp-cheatsheets.yaml")
+    source = cfg["sources"][0]
+    sheet = b"""<html><head><link rel="canonical" href="https://cheatsheetseries.owasp.org/cheatsheets/X_Cheat_Sheet.html"></head>
+    <body><article class="md-content__inner"><h1 id="x">X<a class="headerlink" href="#x">&para;</a></h1>
+    <h2 id="1-intro">1 Intro<a class="headerlink" href="#1-intro">&para;</a></h2><p>Do the safe thing.</p>
+    <h2 id="2-more">2 More</h2><p>Do more.</p></article></body></html>"""
+    index = b"""<html><head><link rel="canonical" href="https://cheatsheetseries.owasp.org/Glossary.html"></head>
+    <body><article class="md-content__inner"><h1 id="i">Index</h1><h2 id="a">A</h2><p>A Sheet</p></article></body></html>"""
+
+    def run(content, url):
+        return extract(source, parse_page(content, source["limits"]), url, "2026-10-29T00:00:00Z")
+
+    found = run(sheet, "https://cheatsheetseries.owasp.org/cheatsheets/X_Cheat_Sheet.html")
+    assert [(r.original_id, r.title) for r in found] == [("1-intro", "1 Intro"), ("2-more", "2 More")]
+    assert "Do the safe thing." in found[0].statement
+    assert run(index, "https://cheatsheetseries.owasp.org/Glossary.html") == []

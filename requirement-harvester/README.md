@@ -16,9 +16,11 @@ No local clone is needed. From an existing clone, you can instead run
 ## Run
 
 Save an [example configuration](examples/lists.yaml) as `my-config.yaml` and
-adjust its URLs and selectors. For a public source example, use
-[TSS-WEB](examples/tss-web.yaml). Configuration examples are separate files;
-`pipx` does not install them in your working directory.
+adjust its URLs and selectors. For public source examples, use
+[TSS-WEB](examples/tss-web.yaml) or the
+[OWASP Cheat Sheet Series](examples/owasp-cheatsheets.yaml). Configuration
+examples are separate files; `pipx` does not install them in your working
+directory.
 
 ```sh
 requirement-harvester validate --config my-config.yaml
@@ -29,6 +31,16 @@ requirement-harvester run --config my-config.yaml
 add `--dry-run`; this writes a preview report but no catalog. Output paths are
 set in the configuration and resolved relative to that file. A successful run
 replaces the output files.
+
+### OWASP Cheat Sheet Series
+
+`examples/owasp-cheatsheets.yaml` starts at the alphabetical index of
+`cheatsheetseries.owasp.org` and writes each `h2` section of every cheat sheet
+as one entry. The cheat sheets are best-practice guidance rather than
+normative requirements, so entries carry no obligation level. They are
+published under CC BY-SA; keep the source URL provenance when you redistribute
+the catalog. The configuration passes `validate`, and extraction was checked
+against saved sample pages; a complete crawl of all pages has not been run yet.
 
 ## CI and reference
 

@@ -1,0 +1,38 @@
+config-version: 1
+output:
+  catalog: ../out/owasp-cheatsheets.oscal.yaml
+  report: ../out/owasp-cheatsheets-report.json
+  title: OWASP Cheat Sheet Series
+  version: "1.0.0"
+  oscal-version: "1.2.3"
+defaults:
+  max-pages: 200
+  max-depth: 1
+  max-run-seconds: 300
+  request-interval-seconds: 0.5
+sources:
+  - id: owasp-cheatsheets
+    title: OWASP Cheat Sheet Series
+    adapter: html
+    # The alphabetical index links to every cheat sheet.
+    start-urls:
+      - https://cheatsheetseries.owasp.org/Glossary.html
+    crawl:
+      allowed-origins: [https://cheatsheetseries.owasp.org]
+      allowed-path-prefixes: [/Glossary.html, /cheatsheets/]
+    auth:
+      mode: none
+    extraction:
+      content-selector: article.md-content__inner
+      exclude-selectors: [a.headerlink]
+      # The index page only lists links and carries no requirements.
+      allow-empty-pages: true
+      rules:
+        - id: sections
+          strategy: sections
+          page-selector: 'head link[rel="canonical"][href*="/cheatsheets/"]'
+          item-selector: ":scope > h2"
+          fields:
+            original-id: {attribute: id}
+            title: {selector: h2}
+            statement: {}
