@@ -70,6 +70,7 @@ class PackagingTests(unittest.TestCase):
                     commit, packaged.read("_security_score_build.py").decode()
                 )
                 self.assertIn("score_remote_sources.py", packaged.namelist())
+                self.assertIn("score_update.py", packaged.namelist())
             environment = root / "venv"
             venv.EnvBuilder(with_pip=False).create(environment)
             python = environment / "bin" / "python"

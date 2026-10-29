@@ -16,6 +16,7 @@ import shutil
 import sys
 import threading
 from urllib.parse import urlsplit
+from score_update import UpdateAction
 from score_version import VersionAction
 
 try:
@@ -126,6 +127,12 @@ def parser():
         action=VersionAction,
         nargs=0,
         help="Show package version and source commit, then exit",
+    )
+    result.add_argument(
+        "--update",
+        action=UpdateAction,
+        nargs=0,
+        help="Reinstall the latest version from the pipx installation source, then exit",
     )
     result.add_argument(
         "repository",

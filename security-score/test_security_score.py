@@ -25,6 +25,7 @@ import score_sources as sources  # noqa: E402
 import score_remote as remote  # noqa: E402
 import score_remote_sources as remote_sources  # noqa: E402
 import score_relevance as relevance  # noqa: E402
+import score_update  # noqa: E402
 import score_version  # noqa: E402
 
 
@@ -282,6 +283,55 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(
             build, {"version": "0.1.1", "commit": "unknown", "dirty": False}
         )
+
+    def update(self, which, status=0):
+        with (
+            mock.patch.object(score_update.shutil, "which", side_effect=which),
+            mock.patch.object(score_update, "version_text", return_value="old"),
+            mock.patch.object(
+                score_update.subprocess,
+                "run",
+                return_value=mock.Mock(returncode=status),
+            ) as run,
+            mock.patch.object(
+                cli, "run", side_effect=AssertionError("update scanned sources")
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()) as errors,
+            self.assertRaises(SystemExit) as exited,
+        ):
+            cli.main(["--update", "ignored-repository"])
+        return exited.exception.code, run, errors.getvalue()
+
+    def test_update_reinstalls_through_pipx_with_fixed_arguments(self):
+        code, run, _ = self.update(lambda name: f"/bin/{name}")
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [
+                [
+                    "/bin/pipx",
+                    "upgrade",
+                    "--pip-args=--upgrade --force-reinstall --no-cache-dir",
+                    "appsec-security-score",
+                ],
+                ["/bin/security-score", "--version"],
+            ],
+        )
+        for call in run.call_args_list:
+            self.assertFalse(call.kwargs.get("shell"))
+
+    def test_update_without_pipx_fails_without_running_anything(self):
+        code, run, errors = self.update(lambda name: None)
+        self.assertEqual(code, 1)
+        run.assert_not_called()
+        self.assertIn("pipx upgrade appsec-security-score", errors)
+
+    def test_failed_update_keeps_exit_status_and_skips_version_check(self):
+        code, run, errors = self.update(lambda name: f"/bin/{name}", status=3)
+        self.assertEqual(code, 3)
+        self.assertEqual(run.call_count, 1)
+        self.assertIn("Update failed", errors)
 
     def test_unknown_application_checks_withhold_score_despite_safe_evidence(self):
         self.write(

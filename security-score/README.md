@@ -54,7 +54,13 @@ Installed wheels embed the Git commit at build time, so this does not need a loc
 
 Release verification is covered by `python3 -B -m unittest test_packaging -v` from this directory, using the declared build tools (`setuptools>=61` and `wheel`). It builds a source archive and wheel, installs into an isolated environment without downloading dependencies, and checks the installed version with Git absent from `PATH`.
 
-For routine updates, run `pipx upgrade appsec-security-score`, then check `security-score --version`. This uses the installation source recorded by pipx. There is no need for `--force` on a routine upgrade.
+To update to the latest version, run:
+
+```sh
+security-score --update
+```
+
+This prints the installed version, runs `pipx upgrade --pip-args="--upgrade --force-reinstall --no-cache-dir" appsec-security-score`, and then prints the version of the new installation. It reinstalls from the installation source recorded by pipx, so the same Git access as for the initial installation is required, and a new commit replaces the installed copy even when the version number is unchanged. The source is the repository's default branch (or the local clone you installed from), not a pinned or signed release; review changes you do not trust before updating. The command only updates the pipx installation named `appsec-security-score`: it does not scan, accept other arguments, or work without `pipx` on `PATH`; exit status is that of `pipx`.
 
 Use forced installation when explicitly replacing an existing installation or repairing a stale one. Older pipx versions may leave the same package version installed with `install --force` alone: that flag permits replacing the pipx environment/apps, while the pip arguments below explicitly upgrade and reinstall the package without reusing the pip cache. To replace it from GitHub:
 
@@ -166,6 +172,7 @@ Change analysis returns `high`, `medium`, `low`, or `unclear` security relevance
 | `--timeout SECONDS` | Total execution budget: 0.1–120 seconds; default 60. URL scans reserve time for analysis and retain available evidence when source selection reaches a limit. |
 | `-h`, `--help` | Show CLI help. |
 | `--version` | Show package version and embedded source commit, then exit without scanning. |
+| `--update` | Reinstall the latest version through the pipx installation, then exit without scanning. See [Installation](#installation). |
 
 Choose one change selector: `--staged`, `--unstaged`, `--worktree`, `--base`, `--commit`, or `--patch`/`--diff`. These operate on local sources; repository URLs select a repository scan.
 
