@@ -40,6 +40,17 @@ are recommendations, so the entries have no obligation level. The content is
 licensed under CC BY-SA; keep the source URLs when you pass the catalog on.
 A full crawl has not been tested yet.
 
+## Input and output
+
+Input is static HTML pages (HTTPS only). The output is an
+[OSCAL](https://pages.nist.gov/OSCAL/) 1.2.3 catalog in YAML, checked against
+the official NIST schema before it is written. Each source becomes a group and
+each requirement a control with its statement, source URL, and original ID.
+Details are in [docs/reference.md](docs/reference.md#output-and-oscal).
+
+Other output formats are not supported, including the appsec-analyzer catalog
+format.
+
 ## CI and reference
 
 The [GitLab and GitHub templates](ci/README.md) use a local virtual
