@@ -8,9 +8,13 @@ from __future__ import annotations
 
 import ast
 from bisect import bisect_right
+from collections import Counter
 import json
 from pathlib import Path
 import re
+
+from score_core import JS_EXTENSIONS, qualified
+from score_reporting import source_priority
 
 
 # A download piped to an interpreter, also through sudo or `sh -c "$(curl ...)"`.
@@ -471,50 +475,311 @@ def observations(rule, path, text, code, files):
     return rows
 
 
-def describe(files, budget):
+# (trait, kind, names): declared npm packages that indicate an architecture trait.
+NPM_TRAITS = (
+    (
+        "frontend",
+        None,
+        ("react", "@angular/core", "vue", "preact", "svelte", "solid-js"),
+    ),
+    (
+        "templates",
+        None,
+        ("ejs", "pug", "hbs", "handlebars", "express-handlebars", "nunjucks"),
+    ),
+    (
+        "persistence",
+        "sql",
+        (
+            "pg",
+            "mysql",
+            "mysql2",
+            "sqlite3",
+            "better-sqlite3",
+            "mssql",
+            "oracledb",
+            "sequelize",
+            "knex",
+            "@prisma/client",
+            "typeorm",
+            "drizzle-orm",
+        ),
+    ),
+    ("persistence", "document", ("mongodb", "mongoose")),
+    (
+        "authentication",
+        "local-password",
+        (
+            "bcrypt",
+            "bcryptjs",
+            "argon2",
+            "@node-rs/argon2",
+            "@node-rs/bcrypt",
+            "passport-local",
+        ),
+    ),
+    (
+        "authentication",
+        "federated",
+        (
+            "openid-client",
+            "express-openid-connect",
+            "passport-openidconnect",
+            "passport-oauth2",
+            "passport-saml",
+            "@node-saml/passport-saml",
+            "next-auth",
+            "@auth/core",
+            "@azure/msal-node",
+            "@azure/msal-browser",
+            "angular-oauth2-oidc",
+            "oidc-client-ts",
+            "keycloak-js",
+            "keycloak-connect",
+            "@auth0/auth0-react",
+            "@auth0/auth0-spa-js",
+        ),
+    ),
+    (
+        "authentication",
+        "jwt",
+        ("jsonwebtoken", "jose", "express-jwt", "passport-jwt", "@nestjs/jwt"),
+    ),
+    (
+        "authentication",
+        "session",
+        (
+            "express-session",
+            "cookie-session",
+            "koa-session",
+            "@fastify/session",
+            "iron-session",
+        ),
+    ),
+)
+# The same for Python imports; a name also matches its submodules and members.
+PYTHON_TRAITS = (
+    (
+        "templates",
+        None,
+        (
+            "jinja2",
+            "mako",
+            "django.template",
+            "django.shortcuts.render",
+            "flask.render_template",
+            "fastapi.templating",
+            "starlette.templating",
+        ),
+    ),
+    (
+        "persistence",
+        "sql",
+        (
+            "sqlalchemy",
+            "django.db",
+            "sqlite3",
+            "psycopg",
+            "psycopg2",
+            "pymysql",
+            "MySQLdb",
+            "asyncpg",
+            "peewee",
+        ),
+    ),
+    ("persistence", "document", ("pymongo", "motor", "mongoengine")),
+    (
+        "authentication",
+        "local-password",
+        (
+            "bcrypt",
+            "argon2",
+            "passlib",
+            "flask_bcrypt",
+            "werkzeug.security",
+            "django.contrib.auth.authenticate",
+            "django.contrib.auth.hashers",
+            "fastapi.security.OAuth2PasswordRequestForm",
+        ),
+    ),
+    (
+        "authentication",
+        "federated",
+        (
+            "authlib",
+            "social_core",
+            "social_django",
+            "allauth",
+            "onelogin.saml2",
+            "saml2",
+            "msal",
+            "requests_oauthlib",
+            "mozilla_django_oidc",
+            "flask_dance",
+        ),
+    ),
+    (
+        "authentication",
+        "jwt",
+        ("jwt", "jose", "flask_jwt_extended", "rest_framework_simplejwt"),
+    ),
+    (
+        "authentication",
+        "session",
+        ("flask_login", "flask_session", "django.contrib.sessions"),
+    ),
+)
+# A password read from a request body indicates a local password login.
+JS_PASSWORD_INPUT = re.compile(
+    r"\b(?:req|request|ctx\.request)\.body\s*(?:\??\.\s*|\[\s*['\"])(?:password|passwd)\b"
+    r"|\{[^{}\n]{0,200}\bpassword\b[^{}\n]{0,200}\}\s*=\s*(?:req|request|ctx\.request)\.body\b"
+)
+PYTHON_REQUEST_FIELDS = {
+    "request.form",
+    "request.json",
+    "request.POST",
+    "request.data",
+    "request.values",
+    "request.get_json()",
+    "form.cleaned_data",
+    "self.cleaned_data",
+}
+PASSWORD_KEYS = {"password", "passwd"}
+
+
+def python_imports(tree):
+    """Absolute dotted import names, including `from` members; relative ones are local."""
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            names.add(node.module)
+            names.update(node.module + "." + alias.name for alias in node.names)
+    return names
+
+
+def python_password_input(tree):
+    """First line reading a password key from a recognized request field."""
+
+    def field(node):
+        if isinstance(node, ast.Call) and not node.args:
+            return qualified(node.func) + "()"
+        return qualified(node)
+
+    lines = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript):
+            base, key = node.value, node.slice
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and node.args
+        ):
+            base, key = node.func.value, node.args[0]
+        else:
+            continue
+        if (
+            isinstance(key, ast.Constant)
+            and key.value in PASSWORD_KEYS
+            and field(base) in PYTHON_REQUEST_FIELDS
+        ):
+            lines.append(node.lineno)
+    return min(lines, default=None)
+
+
+def sql_queries(checks):
+    """How recognized SQL query calls build their text, from the PY-SQL/JS-SQL checks."""
+    counts, first = Counter(), None
+    for row in checks:
+        if row["rule"] not in {"PY-SQL", "JS-SQL"}:
+            continue
+        for item in row.get("locations", []):
+            counts[item["status"]] += 1
+            key = (source_priority(row["file"]), row["file"], item["line"])
+            if item["status"] == "violated" and (first is None or key < first):
+                first = key
+    calls = sum(counts.values())
+    return {
+        "status": "constructed"
+        if counts["violated"]
+        else "unresolved"
+        if counts["unclear"]
+        else "literal"
+        if calls
+        else "none",
+        "calls": calls,
+        "constructed": counts["violated"],
+        "literal": counts["satisfied"],
+        "unresolved": counts["unclear"],
+        **({"example": {"file": first[1], "line": first[2]}} if first else {}),
+    }
+
+
+def describe(files, budget, checks=()):
     """Technology observations are context, not scored control evidence."""
-    frontend, persistence = [], []
+    traits = {"frontend": [], "templates": [], "persistence": [], "authentication": []}
+    keys = {"persistence": "kind", "authentication": "mechanism"}
+
+    def add(trait, kind, name, path, line=None):
+        row = {"technology": name, "file": path}
+        if trait in keys:
+            row[keys[trait]] = kind
+        if line is not None:
+            row["line"] = line
+        traits[trait].append(row)
+
     for path, source in sorted(files.items()):
         budget.check()
+        suffix = Path(path).suffix.lower()
         if Path(path).name == "package.json":
             manifest = document(source["text"]) or {}
             dependencies = {}
             for key in ("dependencies", "devDependencies"):
                 if isinstance(manifest.get(key), dict):
                     dependencies.update(manifest[key])
-            for name in ("react", "@angular/core", "vue", "preact"):
-                if name in dependencies:
-                    frontend.append({"technology": name, "file": path})
-            for name in (
-                "pg",
-                "mysql2",
-                "mongodb",
-                "mongoose",
-                "sequelize",
-                "knex",
-                "@prisma/client",
-                "typeorm",
-            ):
-                if name in dependencies:
-                    persistence.append({"technology": name, "file": path})
-        elif Path(path).suffix == ".py":
+            for trait, kind, names in NPM_TRAITS:
+                for name in names:
+                    if name in dependencies:
+                        add(trait, kind, name, path)
+        elif suffix in JS_EXTENSIONS:
+            for number, line in enumerate(source["text"].splitlines(), 1):
+                if not re.match(r"\s*(?://|/?\*)", line) and JS_PASSWORD_INPUT.search(
+                    line
+                ):
+                    add(
+                        "authentication",
+                        "local-password",
+                        "password from request",
+                        path,
+                        number,
+                    )
+                    break
+        elif suffix == ".py":
             try:
                 tree = ast.parse(source["text"])
             except (SyntaxError, ValueError, RecursionError):
                 continue
-            modules = set()
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    modules.update(alias.name.split(".")[0] for alias in node.names)
-                elif isinstance(node, ast.ImportFrom) and node.module:
-                    modules.add(node.module.split(".")[0])
-            for name in sorted(
-                modules
-                & {"sqlalchemy", "django", "sqlite3", "psycopg", "psycopg2", "pymongo"}
-            ):
-                persistence.append({"technology": name, "file": path})
+            imports = python_imports(tree)
+            for trait, kind, names in PYTHON_TRAITS:
+                for name in names:
+                    if any(
+                        imported == name or imported.startswith(name + ".")
+                        for imported in imports
+                    ):
+                        add(trait, kind, name, path)
+            line = python_password_input(tree)
+            if line is not None:
+                add(
+                    "authentication",
+                    "local-password",
+                    "password from request",
+                    path,
+                    line,
+                )
     return {
-        "frontend": frontend,
-        "persistence": persistence,
-        "interpretation": "Declared technologies and imports only; their presence gives no score credit. CSP delivery, authorization, DB privileges and deployment controls require wider evidence.",
+        **traits,
+        "sql_queries": sql_queries(checks),
+        "interpretation": "Declared packages, imports and selected code patterns only; their presence gives no score credit, and an unrecognized trait may still exist. CSP delivery, authorization, DB privileges and deployment controls require wider evidence.",
     }

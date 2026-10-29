@@ -662,7 +662,7 @@ def run(options):
     try:
         scan(before, budget, old_findings, old_checks)
         scan(after, budget, findings, checks)
-        architecture = describe(after, budget)
+        architecture = describe(after, budget, checks)
     except (SourceError, ScanLimit) as error:
         scan_error = str(error)
     change = scope["kind"] == "change"
@@ -701,7 +701,9 @@ def run(options):
     checks.extend(host_checks)
     architecture = architecture or {
         "frontend": [],
+        "templates": [],
         "persistence": [],
+        "authentication": [],
         "interpretation": "Architecture observation did not complete.",
     }
     if (

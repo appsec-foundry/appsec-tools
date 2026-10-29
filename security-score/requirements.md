@@ -55,3 +55,9 @@ Tests pin the exact behavior.
   output need a live run of the installed CLI against
   `https://github.com/juice-shop/juice-shop` before release. Once enabled, this test
   fails on missing evidence, crashes, or a missed deadline instead of skipping.
+
+- **REQ-10 — Architecture profile.** A repository scan reports recognized
+  architecture traits with their evidence: authentication mechanisms, single-page
+  app or server-side templates, persistence, and how SQL query text is built. The
+  profile is context only and never changes score or grade; a trait that is not
+  recognized is reported as such, not as absent.

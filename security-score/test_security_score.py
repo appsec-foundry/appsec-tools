@@ -1493,14 +1493,164 @@ class ScoreTests(unittest.TestCase):
     ):
         self.write(
             "package.json",
-            '{"dependencies":{"@angular/core":"1.0.0","sequelize":"1.0.0"}}',
+            '{"dependencies":{"@angular/core":"1.0.0","sequelize":"1.0.0",'
+            '"bcrypt":"1.0.0","jsonwebtoken":"1.0.0"}}',
         )
         _, result, _ = self.invoke()
         details = cli.render(result, details=True)
+        self.assertIsNone(result["score"])
         self.assertRegex(details, r"(?m)^Authentication\s+not assessed")
         self.assertRegex(details, r"(?m)^Architecture\s+not assessed")
-        self.assertIn("@angular/core, sequelize", details)
-        self.assertIn("technology presence adds no score credit", details)
+        self.assertIn("Profile (context only, adds no score credit):", details)
+        self.assertIn("local passwords (bcrypt), JWT (jsonwebtoken)", details)
+        self.assertIn("single-page app (@angular/core)", details)
+        self.assertIn("SQL (sequelize)", details)
+
+    def test_architecture_profile_recognizes_packages_imports_and_password_input(
+        self,
+    ):
+        self.write(
+            "package.json",
+            '{"dependencies":{"openid-client":"1","express-session":"1","pug":"1",'
+            '"mongoose":"1","svelte":"1"}}',
+        )
+        self.write("routes/login.js", "\nconst { email, password } = req.body;\n")
+        self.write(
+            "app.py",
+            "from fastapi.security import OAuth2PasswordRequestForm\n"
+            "from flask import render_template\nimport psycopg2\n",
+        )
+        self.write(
+            "views.py", "def login(request):\n    return request.form['password']\n"
+        )
+        self.write(
+            "api.py", "def login(request):\n    request.get_json().get('passwd')\n"
+        )
+        architecture_result = self.invoke()[1]["architecture"]
+        self.assertEqual(
+            sorted(
+                (row["mechanism"], row["technology"], row["file"], row.get("line"))
+                for row in architecture_result["authentication"]
+            ),
+            [
+                ("federated", "openid-client", "package.json", None),
+                (
+                    "local-password",
+                    "fastapi.security.OAuth2PasswordRequestForm",
+                    "app.py",
+                    None,
+                ),
+                ("local-password", "password from request", "api.py", 2),
+                ("local-password", "password from request", "routes/login.js", 2),
+                ("local-password", "password from request", "views.py", 2),
+                ("session", "express-session", "package.json", None),
+            ],
+        )
+        self.assertEqual(
+            {row["technology"] for row in architecture_result["frontend"]}, {"svelte"}
+        )
+        self.assertEqual(
+            {row["technology"] for row in architecture_result["templates"]},
+            {"pug", "flask.render_template"},
+        )
+        self.assertEqual(
+            {
+                (row["kind"], row["technology"])
+                for row in architecture_result["persistence"]
+            },
+            {("document", "mongoose"), ("sql", "psycopg2")},
+        )
+
+    def test_architecture_profile_ignores_comments_relative_imports_and_other_keys(
+        self,
+    ):
+        self.write(
+            "a.js",
+            "// const p = req.body.password;\n * req.body.password\n"
+            "const p = config.password;\nconst { password } = options;\n",
+        )
+        self.write(
+            "b.py",
+            "from .jwt import decode\nfrom .db import sqlite3\n"
+            "value = settings['password']\nvalue = data.get('password')\n"
+            "value = request.form['username']\n",
+        )
+        _, result, _ = self.invoke()
+        self.assertEqual(result["architecture"]["authentication"], [])
+        self.assertEqual(result["architecture"]["persistence"], [])
+        profile = topic_block(cli.render(result, details=True), "Architecture")
+        for label in ("Authentication", "Frontend", "Persistence", "SQL queries"):
+            self.assertRegex(profile, rf"(?m)^    {label}\s+none recognized$")
+
+    def test_architecture_profile_summarizes_sql_query_construction(self):
+        self.write(
+            "db.py",
+            "cursor.execute('SELECT 1')\ncursor.execute(query)\n"
+            "cursor.execute('SELECT ' + value)\n",
+        )
+        self.write("db.js", "db.query(`SELECT * FROM t WHERE id = ${id}`);\n")
+        _, result, _ = self.invoke()
+        self.assertEqual(
+            result["architecture"]["sql_queries"],
+            {
+                "status": "constructed",
+                "calls": 4,
+                "constructed": 2,
+                "literal": 1,
+                "unresolved": 1,
+                "example": {"file": "db.js", "line": 1},
+            },
+        )
+        self.assertIn(
+            "concatenated or interpolated in 2 of 4 query calls, 1 unresolved (db.js:1)",
+            cli.render(result, details=True),
+        )
+        self.write("db.py", "cursor.execute('SELECT 1')\n")
+        self.write("db.js", "\n")
+        _, result, _ = self.invoke()
+        self.assertEqual(result["architecture"]["sql_queries"]["status"], "literal")
+        self.assertIn(
+            "literal query text in 1 query call", cli.render(result, details=True)
+        )
+
+    def test_architecture_profile_describes_only_the_proposed_side(self):
+        self.init("cursor.execute('SELECT ' + value)\n")
+        self.write("app.py", "cursor.execute('SELECT 1')\n")
+        result = self.invoke("--unstaged")[1]
+        self.assertEqual(
+            result["architecture"]["sql_queries"],
+            {
+                "status": "literal",
+                "calls": 1,
+                "constructed": 0,
+                "literal": 1,
+                "unresolved": 0,
+            },
+        )
+
+    def test_control_characters_in_architecture_profile_never_reach_the_terminal(
+        self,
+    ):
+        self.write("db.js", "db.query(`SELECT * FROM t WHERE id = ${id}`);\n")
+        _, result, _ = self.invoke()
+        result["architecture"]["sql_queries"]["example"]["file"] = "evil\x1b]0;x\x07.js"
+        result["architecture"]["templates"] = [
+            {"technology": "pug\x9b2J", "file": "package.json"}
+        ]
+        details = cli.render(result, details=True)
+        self.assertNotRegex(details, r"[\x00-\x09\x0b-\x1f\x7f-\x9f]")
+        self.assertIn("(evil?]0;x?.js:1)", details)
+        self.assertIn("server-side templates (pug?2J)", details)
+
+    def test_incomplete_architecture_observation_has_no_profile(self):
+        self.write("app.py", "eval(payload)\n")
+        with mock.patch.object(cli, "describe", side_effect=cli.ScanLimit("limit")):
+            _, result, _ = self.invoke()
+        self.assertNotIn("sql_queries", result["architecture"])
+        self.assertIn(
+            "Profile unavailable: architecture observation did not complete.",
+            cli.render(result, details=True),
+        )
 
     def test_colour_only_on_a_capable_terminal_and_never_with_no_color(self):
         class Terminal(io.StringIO):

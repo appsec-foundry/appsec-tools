@@ -59,6 +59,12 @@ Architecture              0/100  ░░░░░░░░░░  19 candidates
             JS-SQL · routes/login.ts:34 (+12 more)
   HIGH      JavaScript code evaluation
             JS-EVAL · lib/xml.ts:12 (+4 more)
+  Profile (context only, adds no score credit):
+    Authentication  local passwords (password from request), JWT (express-jwt, jsonwebtoken)
+    Frontend        single-page app (@angular/core), server-side templates (hbs, pug)
+    Persistence     SQL (sequelize, sqlite3)
+    SQL queries     concatenated or interpolated in 13 of 33 query calls, 14 unresolved
+                    (routes/login.ts:34)
 ...
 Cryptography             59/100  ██████░░░░  1 candidate
   HIGH      Predictable random value for a named secret
@@ -128,7 +134,9 @@ own [scoring policy](references/compatibility.md).
 | Deployment & transport | Debug mode, container host privileges, and TLS verification |
 
 Each topic shows the lowest area score within it and up to three findings with
-file and line. Detected frameworks are shown as context and add no points.
+file and line. Architecture also shows a profile: authentication mechanisms,
+single-page app or server-side templates, persistence, and whether SQL queries
+are built by concatenation. The profile is context and adds no points.
 `--json` and `--yaml` contain every finding and the full calculation.
 
 ### Exit status

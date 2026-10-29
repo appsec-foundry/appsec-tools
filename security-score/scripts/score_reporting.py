@@ -316,6 +316,73 @@ def topic_header(style, topic, width):
     return f"{title}  {score}  {style.bar(index)}  " + style.paint(summary, "dim")
 
 
+PROFILE_LABELS = {
+    "local-password": "local passwords",
+    "federated": "federated login",
+    "jwt": "JWT",
+    "session": "server sessions",
+    "sql": "SQL",
+    "document": "document store",
+}
+
+
+def architecture_profile(style, architecture):
+    """Recognized traits as context; 'none recognized' is no proof of absence."""
+    if "sql_queries" not in architecture:
+        return note(
+            style, "Profile unavailable: architecture observation did not complete."
+        )
+
+    def grouped(groups):
+        return ", ".join(
+            f"{label} ({', '.join(sorted({safe(row['technology']) for row in rows}))})"
+            for label, rows in groups
+            if rows
+        )
+
+    def by(trait, key):
+        rows = architecture.get(trait, [])
+        return [
+            (label, [row for row in rows if row.get(key) == kind])
+            for kind, label in PROFILE_LABELS.items()
+        ]
+
+    sql = architecture["sql_queries"]
+    calls = plural(sql["calls"], "query call")
+    if sql["status"] == "constructed":
+        unresolved = f", {sql['unresolved']} unresolved" if sql["unresolved"] else ""
+        queries = (
+            f"concatenated or interpolated in {sql['constructed']} of {calls}"
+            f"{unresolved} ({location(sql['example'])})"
+        )
+    elif sql["status"] == "unresolved":
+        queries = f"query text unresolved in {sql['unresolved']} of {calls}"
+    elif sql["status"] == "literal":
+        queries = f"literal query text in {calls}"
+    else:
+        queries = ""
+    rows = (
+        ("Authentication", grouped(by("authentication", "mechanism"))),
+        (
+            "Frontend",
+            grouped(
+                (
+                    ("single-page app", architecture.get("frontend", [])),
+                    ("server-side templates", architecture.get("templates", [])),
+                )
+            ),
+        ),
+        ("Persistence", grouped(by("persistence", "kind"))),
+        ("SQL queries", queries),
+    )
+    lines = note(style, "Profile (context only, adds no score credit):")
+    for label, text in rows:
+        lines += wrapped(
+            text or "none recognized", style.width, " " * 20, f"    {label:<16}"
+        )
+    return lines
+
+
 def render_repository(result, summary, style=None):
     """A subscore with a few concrete examples directly beneath each topic."""
     style = style or Style()
@@ -342,21 +409,7 @@ def render_repository(result, summary, style=None):
         lines += ["", topic_header(style, topic, width)]
         lines += topic_examples(style, topic)
         if topic["id"] == "architecture":
-            architecture = result.get("architecture", {})
-            names = sorted(
-                {
-                    safe(row["technology"])
-                    for key in ("frontend", "persistence")
-                    for row in architecture.get(key, [])
-                }
-            )
-            if names:
-                lines += note(
-                    style,
-                    "Context: "
-                    + ", ".join(names)
-                    + "; technology presence adds no score credit.",
-                )
+            lines += architecture_profile(style, result.get("architecture", {}))
             lines += note(
                 style,
                 "Basis: selected execution, SQL and deserialization patterns; no full architectural review.",
