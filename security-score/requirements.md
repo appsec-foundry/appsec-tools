@@ -13,7 +13,8 @@ Tests pin the exact behavior.
   GitLab.com repository URLs, including the repository-host security settings for
   URLs. Analyze changes (staged, unstaged, commits, revision ranges, patches) and
   state the compared versions. Checks cover data access, frontend output and CSP,
-  hardening, and the dependency and build supply chain.
+  token verification, hardening including container privileges, and the
+  dependency, CI workflow and build supply chain.
 
 - **REQ-03 — Score, grade, and change relevance.** A repository scan gives a score
   from 0 to 100, where 100 means no deductions, and a grade: A ≥ 90, B ≥ 80, C ≥ 70,

@@ -7,9 +7,36 @@ Presence of a framework, ORM, or lockfile never establishes application safety.
 from __future__ import annotations
 
 import ast
+from bisect import bisect_right
 import json
 from pathlib import Path
 import re
+
+
+# A download piped to an interpreter, also through sudo or `sh -c "$(curl ...)"`.
+PIPE_TO_SHELL = re.compile(
+    r"\b(?:curl|wget)\b[^\n]{0,1000}\|\s*(?:sudo\s+(?:-\S+\s+){0,3})?(?:ba|z|k|da)?sh\b"
+    r"|\b(?:ba|z|k|da)?sh\s+-c\s+[\"']?\$\(\s*(?:curl|wget)\b"
+    r"|\b(?:Invoke-WebRequest|iwr)\b[^\n]{0,1000}\|\s*(?:iex|Invoke-Expression)\b",
+    re.I,
+)
+UNTRUSTED_CONTEXT = re.compile(
+    r"\bgithub\s*\.\s*(?:head_ref\b|event\s*\.\s*(?:"
+    r"(?:issue|pull_request|discussion)\s*\.\s*(?:title|body)\b"
+    r"|pull_request\s*\.\s*head\s*\.\s*(?:ref|label)\b"
+    r"|(?:comment|review|review_comment|discussion_comment)\s*\.\s*body\b"
+    r"|(?:workflow_run\s*\.\s*)?head_commit\s*\.\s*(?:message|author\s*\.\s*(?:name|email))\b"
+    r"|workflow_run\s*\.\s*head_branch\b"
+    r"|commits\s*(?:\[[^\]]{0,20}\]|\.\s*\*)\s*\.\s*(?:message|author\s*\.\s*(?:name|email))\b"
+    r"|pages\s*(?:\[[^\]]{0,20}\]|\.\s*\*)\s*\.\s*page_name\b"
+    r"))",
+    re.I,
+)
+PROPOSED_REVISION = re.compile(
+    r"\bgithub\s*\.\s*(?:head_ref\b|event\s*\.\s*(?:pull_request\s*\.\s*head\s*\.\s*(?:sha|ref)"
+    r"|workflow_run\s*\.\s*head_(?:sha|branch)|(?:number|pull_request\s*\.\s*number)\b))",
+    re.I,
+)
 
 
 def document(text):
@@ -34,9 +61,22 @@ def csp_status(policy):
     scripts = directives.get("script-src", directives.get("default-src"))
     if scripts is None:
         return "unclear"
-    if any(
-        token in {"*", "'unsafe-inline'", "'unsafe-eval'", "http:", "https:"}
+    # CSP Level 2 ignores 'unsafe-inline' next to a nonce or hash; with
+    # 'strict-dynamic', Level 3 also ignores it and 'self', host and scheme sources.
+    nonce = any(
+        token.startswith(("'nonce-", "'sha256-", "'sha384-", "'sha512-"))
         for token in scripts
+    )
+    dynamic = "'strict-dynamic'" in scripts
+    effective = [
+        token
+        for token in scripts
+        if not ((nonce or dynamic) and token == "'unsafe-inline'")
+        and not (dynamic and (not token.startswith("'") or token == "'self'"))
+    ]
+    if any(
+        token in {"*", "'unsafe-inline'", "'unsafe-eval'", "http:", "https:", "data:"}
+        for token in effective
     ):
         return "violated"
     if (
@@ -173,14 +213,196 @@ def npm_observations(kind, path, text, files):
     for name in ("preinstall", "install", "postinstall", "prepare"):
         value = scripts.get(name)
         if isinstance(value, str):
-            unsafe = re.search(
-                r"\b(?:curl|wget)\b[^\n]{0,1000}\|\s*(?:ba|z|k)?sh\b|\b(?:Invoke-WebRequest|iwr)\b[^\n]{0,1000}\|\s*(?:iex|Invoke-Expression)\b",
-                value,
-                re.I,
-            )
+            unsafe = PIPE_TO_SHELL.search(value)
             rows.append(
                 (line_of(text, '"' + name + '"'), "violated" if unsafe else "unclear")
             )
+    return rows
+
+
+def logical_lines(text, comment=None):
+    """Join backslash continuations; yield (first line, instruction)."""
+    parts, start = [], 1
+    for number, line in enumerate(text.splitlines(), 1):
+        if comment and parts and re.match(comment, line):
+            continue  # Comment lines inside a continuation are removed.
+        parts.append(line.rstrip())
+        if parts[-1].endswith("\\"):
+            parts[-1] = parts[-1][:-1]
+            continue
+        yield start, " ".join(parts)
+        parts, start = [], number + 1
+    if parts:
+        yield start, " ".join(parts)
+
+
+def requirement_observations(text):
+    """Options are unclear unless they add a plaintext, untrusted or mutable source."""
+    rows = []
+    for number, value in logical_lines(text):
+        value = re.sub(r"(?:^|\s)#.*", "", value).strip()
+        if not value:
+            continue
+        if "http://" in value or re.match(
+            r"--(?:extra-index-url|trusted-host)\b", value
+        ):
+            status = "violated"
+        elif value.startswith("-"):
+            vcs = re.match(r"(?:-e|--editable)[\s=]+(?:git|hg|svn|bzr)\+", value)
+            status = (
+                "violated"
+                if vcs and not re.search(r"@[0-9a-fA-F]{40}(?:[#&\s]|$)", value)
+                else "unclear"
+            )
+        elif not re.match(r"[\w.-]+(?:\[[\w,.-]+\])?==[^\s*]+", value):
+            status = "violated"
+        else:
+            status = (
+                "satisfied"
+                if re.search(r"--hash=sha256:[0-9a-fA-F]{64}", value)
+                else "unclear"
+            )
+        rows.append((number, status))
+    return rows
+
+
+def expression_matches(segment, pattern):
+    """Search only inside `${{ ... }}`; plain script text is not expanded."""
+    start = segment.find("${{")
+    while start >= 0:
+        end = segment.find("}}", start + 3)
+        if end < 0:
+            return False
+        if pattern.search(segment, start + 3, end):
+            return True
+        start = segment.find("${{", end + 2)
+    return False
+
+
+def workflow_injection_observations(text):
+    """Untrusted event text expanded into run scripts or github-script code."""
+    rows = []
+    owner = None  # column of the run/script key whose value continues
+    for number, line in enumerate(text.splitlines(), 1):
+        stripped = line.lstrip(" ")
+        indent = len(line) - len(stripped)
+        if owner is not None and stripped and indent <= owner:
+            owner = None
+        if owner is None:
+            match = re.match(r"(?:-\s+)*(run|script)\s*:(?=\s|$)", stripped)
+            if not match:
+                continue
+            owner = indent + match.start(1)
+            segment = stripped[match.end() :]
+        else:
+            segment = line
+        if expression_matches(segment, UNTRUSTED_CONTEXT):
+            rows.append((number, "violated"))
+    return rows
+
+
+def workflow_checkout_observations(text):
+    """A privileged pull request trigger combined with a checkout of proposed code."""
+    lines = text.splitlines()
+    trigger = re.compile(
+        r"\s*(?:[\"']?on[\"']?\s*:[^#\n]*\b(?:pull_request_target|workflow_run)\b"
+        r"|(?:-\s*)?(?:pull_request_target|workflow_run)\s*(?::|$))"
+    )
+    if not any(trigger.match(line) for line in lines):
+        return []
+    rows = []
+    for number, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if re.match(r"(?:-\s+)?ref\s*:", stripped) and expression_matches(
+            stripped, PROPOSED_REVISION
+        ):
+            rows.append((number, "violated"))
+        elif not stripped.startswith("#") and re.search(
+            r"\bgh\s+pr\s+checkout\b", stripped
+        ):
+            rows.append((number, "violated"))
+    return rows
+
+
+def container_privilege_observations(text):
+    """Explicit privileged, host-namespace and Docker socket settings in YAML."""
+    rows = []
+    for number, line in enumerate(text.splitlines(), 1):
+        status = None
+        flag = re.match(
+            r"\s*(?:-\s+)?[\"']?(privileged|allowPrivilegeEscalation|hostNetwork|hostPID|hostIPC)[\"']?\s*:(.*)",
+            line,
+        )
+        if flag:
+            value = re.split(r"\s#", flag[2], maxsplit=1)[0].strip().strip("\"'")
+            if value.lower() in {"true", "yes", "on"}:
+                status = "violated"
+            elif value.lower() in {"false", "no", "off"}:
+                status = "satisfied"
+            elif value:
+                status = "unclear"  # Templated or substituted values are unresolved.
+        elif re.match(
+            r"\s*(?:-\s+)?(?:network_mode|pid|ipc)\s*:\s*[\"']?host[\"']?\s*(?:#|$)",
+            line,
+        ) or re.match(
+            r"\s*(?:-\s+)?(?:(?:source|path)\s*:\s*)?[\"']?(?:/var)?/run/docker\.sock(?:[\"':\s]|$)",
+            line,
+        ):
+            status = "violated"
+        if status:
+            rows.append((number, status))
+    return rows
+
+
+def dockerfile_observations(kind, text):
+    """RUN downloads piped to a shell; remote ADD sources without a pin."""
+    rows = []
+    for number, instruction in logical_lines(text, comment=r"\s*#"):
+        if kind == "image-script":
+            if re.match(r"(?i)\s*RUN\b", instruction) and PIPE_TO_SHELL.search(
+                instruction
+            ):
+                rows.append((number, "violated"))
+            continue
+        match = re.match(r"(?i)\s*ADD\s+((?:--\S+\s+)*)(\S+)", instruction)
+        if match and re.match(r"(?i)https?://", match[2]):
+            pinned = re.search(
+                r"--checksum=sha256:[0-9a-fA-F]{64}(?:\s|$)", match[1]
+            ) or re.search(r"\.git#[0-9a-fA-F]{40}(?::|$)", match[2])
+            rows.append((number, "satisfied" if pinned else "violated"))
+    return rows
+
+
+def js_jwt_observations(text, code):
+    """Literal algorithm allow-lists and expiry handling in token verification options."""
+    rows = []
+    breaks = [match.start() for match in re.finditer("\n", code)]
+    for match in re.finditer(r"\balgorithms\s*:\s*\[", code):
+        number = bisect_right(breaks, match.start()) + 1
+        end = code.find("]", match.end(), match.end() + 400)
+        items = (
+            [item.strip() for item in text[match.end() : end].split(",")]
+            if end >= 0
+            else []
+        )
+        values = [re.fullmatch(r"(['\"`])([\w.-]+)\1", item) for item in items if item]
+        status = (
+            "unclear"
+            if end < 0
+            else "violated"
+            if any(value and value[2].lower() == "none" for value in values)
+            else "satisfied"
+            if values and all(values)
+            else "unclear"
+        )
+        rows.append((number, status))
+    for match in re.finditer(r"\bignoreExpiration\s*:\s*(\w+)", code):
+        rows.append(
+            (
+                bisect_right(breaks, match.start()) + 1,
+                {"true": "violated", "false": "satisfied"}.get(match[1], "unclear"),
+            )
+        )
     return rows
 
 
@@ -190,12 +412,26 @@ def observations(rule, path, text, code, files):
         return npm_observations(kind, path, text, files)
     if kind == "csp":
         return csp_observations(path, text, code)
+    if kind == "requirements":
+        return requirement_observations(text)
+    if kind == "workflow-injection":
+        return workflow_injection_observations(text)
+    if kind == "workflow-checkout":
+        return workflow_checkout_observations(text)
+    if kind == "container-privileges":
+        return container_privilege_observations(text)
+    if kind in {"image-script", "image-add"}:
+        return dockerfile_observations(kind, text)
+    if kind == "js-jwt":
+        return js_jwt_observations(text, code)
     rows = []
     original_lines = text.splitlines()
     for number, line in enumerate(code.splitlines(), 1):
         status = None
         if kind == "js-sql":
-            match = re.search(r"\.(?:query|execute|\$queryRawUnsafe)\s*\(", line)
+            match = re.search(
+                r"\.(?:query|execute|\$queryRawUnsafe|\$executeRawUnsafe)\s*\(", line
+            )
             if match:
                 original = original_lines[number - 1][match.end() :].strip()
                 if re.match(
@@ -225,21 +461,6 @@ def observations(rule, path, text, code, files):
                 r"\{\{[^{}]{1,200}\}\}", line
             ):
                 status = "satisfied"
-        elif kind == "requirements":
-            value = line.strip()
-            if value and not value.startswith("#"):
-                if value.startswith(("-r", "-c", "--")):
-                    status = "unclear"
-                elif "http://" in value or not re.match(
-                    r"[\w.-]+(?:\[[\w,.-]+\])?==[^\s*]+", value
-                ):
-                    status = "violated"
-                else:
-                    status = (
-                        "satisfied"
-                        if re.search(r"--hash=sha256:[0-9a-fA-F]{64}", value)
-                        else "unclear"
-                    )
         elif kind == "workflow-permissions":
             if re.match(r"\s*permissions:\s*write-all\s*(?:#.*)?$", line):
                 status = "violated"

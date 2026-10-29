@@ -43,7 +43,7 @@
     "aggregation": "weakest assessed area",
     "repetitions": "weight * instances"
   },
-  "description": "Compact independent static checks for selected Python, JavaScript/TypeScript, GitHub Actions and Dockerfile mechanisms. No Analyzer parity or runtime verification claim.",
+  "description": "Compact independent static checks for selected Python, JavaScript/TypeScript, GitHub Actions, Dockerfile and container YAML mechanisms. No Analyzer parity or runtime verification claim.",
   "rules": [
     {
       "id": "PY-EXEC",
@@ -76,12 +76,19 @@
       "area": "execution",
       "severity": "high",
       "title": "Python subprocess uses a shell",
-      "criteria": "Recognize literal shell=True; a literal argument list without a shell satisfies this specific check.",
+      "criteria": "Recognize literal shell=True and interfaces that always use a shell: os.system, os.popen, subprocess.getoutput/getstatusoutput and asyncio.create_subprocess_shell. A literal argument list without a shell satisfies this specific check.",
       "next_action": "Use a fixed executable and an argument list with shell=False; validate operation-specific arguments.",
       "examples": [
         {
           "file": "app.py",
           "source": "subprocess.run(command, shell=True)\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "app.py",
+          "source": "os.system(command)\n",
           "outcome": "violated",
           "expected_score": 59,
           "expected_grade": "E"
@@ -139,13 +146,27 @@
       "kind": "py-tls",
       "area": "transport",
       "severity": "high",
-      "title": "Requests certificate verification disabled",
-      "criteria": "Recognize requests module calls with verify=False; true or its documented default satisfies this check.",
+      "title": "Python certificate verification disabled",
+      "criteria": "Recognize requests and httpx calls or clients with verify=False, ssl._create_unverified_context(), and SSL context assignments of check_hostname=False or verify_mode=ssl.CERT_NONE. Verification enabled explicitly or by the documented default satisfies this check.",
       "next_action": "Keep certificate verification enabled and configure the appropriate trust store.",
       "examples": [
         {
           "file": "app.py",
           "source": "requests.get(url, verify=False)\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "app.py",
+          "source": "client = httpx.Client(verify=False)\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "app.py",
+          "source": "context = ssl.create_default_context()\ncontext.verify_mode = ssl.CERT_NONE\n",
           "outcome": "violated",
           "expected_score": 59,
           "expected_grade": "E"
@@ -172,12 +193,19 @@
       "area": "deserialization",
       "severity": "high",
       "title": "YAML executable object loader selected",
-      "criteria": "Recognize yaml.Loader/UnsafeLoader and their C variants; recognize safe_load and SafeLoader.",
+      "criteria": "Recognize yaml.load/load_all with Loader/UnsafeLoader or their C variants and yaml.unsafe_load/unsafe_load_all; recognize safe_load, safe_load_all and SafeLoader.",
       "next_action": "Use yaml.safe_load or an explicitly safe data-only loader.",
       "examples": [
         {
           "file": "app.py",
           "source": "yaml.load(payload, Loader=yaml.Loader)\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "app.py",
+          "source": "yaml.unsafe_load(payload)\n",
           "outcome": "violated",
           "expected_score": 59,
           "expected_grade": "E"
@@ -288,12 +316,76 @@
       ]
     },
     {
+      "id": "PY-RANDOM",
+      "kind": "py-random",
+      "area": "cryptography",
+      "severity": "high",
+      "title": "Predictable Python random value for a named secret",
+      "criteria": "Recognize random module calls on a line whose identifiers name a token, secret, OTP, nonce, salt, CSRF value, password, session ID, API key or private key. secrets, os.urandom and random.SystemRandom satisfy this check.",
+      "next_action": "Generate secret values with the secrets module.",
+      "examples": [
+        {
+          "file": "app.py",
+          "source": "reset_token = random.choice(alphabet)\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "app.py",
+          "source": "reset_token = secrets.token_urlsafe(32)\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "app.py",
+          "source": "delay = random.random()\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "PY-JWT",
+      "kind": "py-jwt",
+      "area": "authentication",
+      "severity": "high",
+      "title": "Python token verification disabled or unrestricted",
+      "criteria": "Recognize jwt.decode calls. verify=False, options disabling verify_signature or verify_exp, and an allowed 'none' algorithm violate this check. A literal algorithm list, including module-level string constants, satisfies it; other algorithm or option values remain unclear.",
+      "next_action": "Verify signatures and expiry and pass an explicit list of the expected algorithms.",
+      "examples": [
+        {
+          "file": "app.py",
+          "source": "claims = jwt.decode(token, options={'verify_signature': False})\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "app.py",
+          "source": "ALGORITHM = 'HS256'\nclaims = jwt.decode(token, key, algorithms=[ALGORITHM])\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "app.py",
+          "source": "claims = jwt.decode(token, key)\n",
+          "outcome": "unclear",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
       "id": "JS-EVAL",
       "kind": "js-eval",
       "area": "execution",
       "severity": "high",
       "title": "JavaScript code evaluation",
-      "criteria": "Recognize eval/Function calls outside comments and string literals; JSON.parse is a data-only alternative.",
+      "criteria": "Recognize eval/Function calls outside comments, string and regular-expression literals; JSON.parse is a data-only alternative. Selector helpers such as $eval are not evaluation.",
       "next_action": "Use fixed application operations and keep input as data.",
       "examples": [
         {
@@ -309,6 +401,13 @@
           "outcome": "satisfied",
           "expected_score": 100,
           "expected_grade": "A"
+        },
+        {
+          "file": "app.js",
+          "source": "const label = await page.$eval('#title', node => node.textContent);\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
         }
       ]
     },
@@ -350,7 +449,7 @@
       "area": "cryptography",
       "severity": "high",
       "title": "Predictable random value for a named secret",
-      "criteria": "Recognize Math.random on a line naming token, secret, otp, nonce, sessionId or resetToken; recognize crypto random APIs.",
+      "criteria": "Recognize Math.random on a line whose identifiers name a token, secret, OTP, nonce, salt, CSRF value, password, session ID, API key or private key, matched by camelCase and snake_case segments; recognize crypto random APIs.",
       "next_action": "Generate security values with a cryptographic random API.",
       "examples": [
         {
@@ -362,10 +461,56 @@
         },
         {
           "file": "app.js",
+          "source": "const accessToken = Math.random().toString(36);\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "app.js",
           "source": "const token = crypto.randomUUID();\n",
           "outcome": "satisfied",
           "expected_score": 100,
           "expected_grade": "A"
+        },
+        {
+          "file": "app.js",
+          "source": "const tokenizerDelay = Math.random();\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "JS-HASH",
+      "kind": "js-hash",
+      "area": "cryptography",
+      "severity": "medium",
+      "title": "Node MD5 or SHA-1 with a named security purpose",
+      "criteria": "Recognize createHash('md5'|'sha1') on a line whose identifiers name a signature, token, password, credential, secret or HMAC. Other algorithms with such a purpose remain unclear; they do not prove an adequate mechanism.",
+      "next_action": "Select a suitable established mechanism for the purpose; use a password KDF for passwords.",
+      "examples": [
+        {
+          "file": "app.js",
+          "source": "const passwordDigest = crypto.createHash('md5').update(password).digest('hex');\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "app.js",
+          "source": "const etag = crypto.createHash('md5').update(body).digest('hex');\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "app.js",
+          "source": "const signature = crypto.createHash('sha256').update(message).digest('hex');\n",
+          "outcome": "unclear",
+          "expected_score": null,
+          "expected_grade": null
         }
       ]
     },
@@ -375,12 +520,26 @@
       "area": "output",
       "severity": "medium",
       "title": "Assignment to an HTML interpretation sink",
-      "criteria": "Recognize innerHTML assignment; the narrow safe text alternative is textContent. Sanitizers and element context need separate verification.",
+      "criteria": "Recognize innerHTML/outerHTML assignment including +=, insertAdjacentHTML and document.write/writeln; the narrow safe text alternative is textContent. Sanitizers and element context need separate verification.",
       "next_action": "Prefer textContent; if HTML is required, verify appropriate sanitization at the actual sink.",
       "examples": [
         {
           "file": "app.js",
           "source": "element.innerHTML = payload;\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "app.js",
+          "source": "element.innerHTML += payload;\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "app.js",
+          "source": "element.insertAdjacentHTML('beforeend', payload);\n",
           "outcome": "violated",
           "expected_score": 79,
           "expected_grade": "C"
@@ -400,12 +559,19 @@
       "area": "transport",
       "severity": "high",
       "title": "Node certificate verification disabled",
-      "criteria": "Recognize literal rejectUnauthorized:false/true in code outside comments and strings.",
+      "criteria": "Recognize literal rejectUnauthorized:false/true and NODE_TLS_REJECT_UNAUTHORIZED assignments of '0'/'1' in code outside comments and strings.",
       "next_action": "Keep certificate verification enabled and configure trusted certificates.",
       "examples": [
         {
           "file": "app.js",
           "source": "const options = { rejectUnauthorized: false };\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "app.js",
+          "source": "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';\n",
           "outcome": "violated",
           "expected_score": 59,
           "expected_grade": "E"
@@ -420,6 +586,38 @@
         {
           "file": "app.js",
           "source": "const options = { rejectUnauthorized: setting };\n",
+          "outcome": "unclear",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "JS-JWT",
+      "kind": "js-jwt",
+      "area": "authentication",
+      "severity": "high",
+      "title": "JavaScript token verification allows none or ignores expiry",
+      "criteria": "Recognize algorithms option arrays and ignoreExpiration. An allowed 'none' algorithm or ignoreExpiration: true violates this check; a literal list of named algorithms satisfies it; other values remain unclear. Calls that only decode a token are not recognized.",
+      "next_action": "Verify tokens with an explicit list of expected signing algorithms and keep expiry checks enabled.",
+      "examples": [
+        {
+          "file": "auth.js",
+          "source": "const claims = jwt.verify(token, key, { algorithms: ['none'] });\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "auth.js",
+          "source": "const claims = jwt.verify(token, key, {\n  algorithms: ['RS256'],\n});\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "auth.js",
+          "source": "const claims = jwt.verify(token, key, { algorithms: [config.algorithm] });\n",
           "outcome": "unclear",
           "expected_score": null,
           "expected_grade": null
@@ -457,7 +655,7 @@
       "area": "supply-chain",
       "severity": "medium",
       "title": "Container base image has no immutable digest",
-      "criteria": "Recognize FROM references; inspect all stages independently. Stage aliases and variables may need context.",
+      "criteria": "Recognize FROM references in Dockerfile and Containerfile variants; inspect all stages independently. A reference to an earlier stage alias pulls no image and is skipped. Variables need context.",
       "next_action": "Pin external base images to reviewed immutable digests.",
       "examples": [
         {
@@ -475,6 +673,13 @@
           "expected_grade": "A"
         },
         {
+          "file": "Dockerfile.production",
+          "source": "FROM node@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa AS build\nFROM build AS runtime\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
           "file": "Dockerfile",
           "source": "FROM ${BASE_IMAGE}\n",
           "outcome": "unclear",
@@ -485,6 +690,7 @@
     },
     {
       "id": "IAC-USER",
+      "enabled": false,
       "kind": "user",
       "area": "hardening",
       "severity": "low",
@@ -516,12 +722,108 @@
       ]
     },
     {
+      "id": "IAC-REMOTE-SCRIPT",
+      "kind": "image-script",
+      "area": "supply-chain",
+      "severity": "high",
+      "title": "Container build pipes a download to an interpreter",
+      "criteria": "Inspect RUN instructions, joined across line continuations, for curl/wget piped to a shell (also through sudo or sh -c \"$(curl ...)\") and Invoke-WebRequest piped to Invoke-Expression. Other downloads remain unverified.",
+      "next_action": "Download to a file, verify a pinned checksum or signature, then execute it.",
+      "examples": [
+        {
+          "file": "Dockerfile",
+          "source": "RUN apt-get update \\\n  && curl -fsSL https://example.invalid/install.sh | bash\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "Dockerfile",
+          "source": "RUN curl -fsSLo tool.tgz https://example.invalid/tool.tgz\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "IAC-ADD-URL",
+      "kind": "image-add",
+      "area": "supply-chain",
+      "severity": "medium",
+      "title": "Container build adds a remote source without a pin",
+      "criteria": "Recognize ADD with an HTTP(S) source. --checksum=sha256 or a Git source pinned to a full commit satisfies this check.",
+      "next_action": "Pin remote build inputs with --checksum or a full commit, or copy reviewed local files.",
+      "examples": [
+        {
+          "file": "Dockerfile",
+          "source": "ADD https://example.invalid/tool.tgz /opt/tool.tgz\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "Dockerfile",
+          "source": "ADD --checksum=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa https://example.invalid/tool.tgz /opt/tool.tgz\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "Dockerfile",
+          "source": "ADD tool.tgz /opt/\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "IAC-PRIVILEGED",
+      "kind": "container-privileges",
+      "area": "hardening",
+      "severity": "high",
+      "title": "Container receives host-level privileges",
+      "criteria": "Inspect YAML keys: privileged, allowPrivilegeEscalation, hostNetwork, hostPID and hostIPC set to true, Compose network_mode/pid/ipc host, and a mounted Docker socket violate this check. Explicit false values satisfy it; templated values remain unclear. Whether the file is deployed is not established.",
+      "next_action": "Remove host-level privileges; grant only the specific capabilities and mounts the workload needs.",
+      "examples": [
+        {
+          "file": "docker-compose.yml",
+          "source": "services:\n  app:\n    privileged: true\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "docker-compose.yml",
+          "source": "services:\n  app:\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock:ro\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "deployment.yaml",
+          "source": "securityContext:\n  allowPrivilegeEscalation: false\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "deployment.yaml",
+          "source": "securityContext:\n  privileged: {{ .Values.privileged }}\n",
+          "outcome": "unclear",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
       "id": "JS-SQL",
       "kind": "js-sql",
       "area": "injection",
       "severity": "high",
       "title": "Constructed SQL passed to a query call",
-      "criteria": "Recognize query/execute calls starting with literal SQL. Interpolation and concatenation are violations; literal SQL satisfies only this construction check. Variable queries remain unclear.",
+      "criteria": "Recognize query/execute, $queryRawUnsafe and $executeRawUnsafe calls starting with literal SQL. Interpolation and concatenation are violations; literal SQL satisfies only this construction check. Variable queries remain unclear.",
       "next_action": "Use a literal SQL statement and driver-bound parameters.",
       "examples": [
         {
@@ -578,7 +880,7 @@
       "area": "frontend-policy",
       "severity": "medium",
       "title": "CSP declares unsafe script execution",
-      "criteria": "Recognize literal enforced CSP declarations. Wildcard, unsafe-inline, unsafe-eval and broad HTTP(S) script sources violate this check. Positive declarations restrict scripts and set object-src none, base-uri none and frame-ancestors. Delivery and nonce generation remain unverified.",
+      "criteria": "Recognize literal enforced CSP declarations. Wildcard, unsafe-inline, unsafe-eval, data: and broad HTTP(S) script sources violate this check, except where browsers ignore them: unsafe-inline next to a nonce or hash, and host and scheme sources next to strict-dynamic. Positive declarations restrict scripts and set object-src none, base-uri none and frame-ancestors. Delivery and nonce generation remain unverified.",
       "next_action": "Review the delivered policy and remove unsafe script execution allowances.",
       "examples": [
         {
@@ -587,6 +889,20 @@
           "outcome": "violated",
           "expected_score": 79,
           "expected_grade": "C"
+        },
+        {
+          "file": "headers.py",
+          "source": "response.headers['Content-Security-Policy'] = \"script-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'\"\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "headers.py",
+          "source": "response.headers['Content-Security-Policy'] = \"script-src 'nonce-r4nd0m' 'strict-dynamic' 'unsafe-inline' https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'\"\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
         },
         {
           "file": "headers.py",
@@ -642,7 +958,7 @@
       "area": "supply-chain",
       "severity": "high",
       "title": "Install lifecycle pipes a download to an interpreter",
-      "criteria": "Inspect preinstall/install/postinstall/prepare scripts for curl/wget piped to a shell or Invoke-WebRequest piped to Invoke-Expression. Other scripts remain unverified.",
+      "criteria": "Inspect preinstall/install/postinstall/prepare scripts for curl/wget piped to a shell (also through sudo or sh -c \"$(curl ...)\") or Invoke-WebRequest piped to Invoke-Expression. Other scripts remain unverified.",
       "next_action": "Remove download-and-execute hooks; use reviewed pinned artifacts with integrity verification.",
       "examples": [
         {
@@ -670,6 +986,7 @@
     },
     {
       "id": "NPM-LOCK",
+      "enabled": false,
       "kind": "npm-lock",
       "area": "supply-chain",
       "severity": "medium",
@@ -702,12 +1019,19 @@
       "area": "supply-chain",
       "severity": "medium",
       "title": "Python install requirements are not exactly pinned",
-      "criteria": "Inspect active requirement lines. Floating or HTTP requirements violate this check. An exact version with a SHA-256 hash is a positive declaration. Includes, options and unhashed pins remain unclear.",
-      "next_action": "Use reviewed exact versions and hashes for reproducible application installation; inspect included constraints.",
+      "criteria": "Inspect active requirement lines joined across backslash continuations. Floating requirements, HTTP sources, --extra-index-url, --trusted-host and editable VCS sources without a full commit violate this check. An exact version with a SHA-256 hash is a positive declaration. Includes, other options, local paths and unhashed pins remain unclear.",
+      "next_action": "Use reviewed exact versions and hashes for reproducible application installation; inspect included constraints and package indexes.",
       "examples": [
         {
           "file": "requirements.txt",
           "source": "example-package>=1.0\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "requirements.txt",
+          "source": "--extra-index-url https://packages.example.invalid/simple\n",
           "outcome": "violated",
           "expected_score": 79,
           "expected_grade": "C"
@@ -721,7 +1045,21 @@
         },
         {
           "file": "requirements.txt",
+          "source": "example-package==1.0.0 \\\n    --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "requirements.txt",
           "source": "example-package==1.0.0\n",
+          "outcome": "unclear",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "requirements.txt",
+          "source": "-e .\n",
           "outcome": "unclear",
           "expected_score": null,
           "expected_grade": null
@@ -750,6 +1088,56 @@
           "outcome": "satisfied",
           "expected_score": 100,
           "expected_grade": "A"
+        }
+      ]
+    },
+    {
+      "id": "CI-SCRIPT-INJECTION",
+      "kind": "workflow-injection",
+      "area": "supply-chain",
+      "severity": "high",
+      "title": "Workflow expands untrusted event text into a script",
+      "criteria": "Inspect run and github-script script values, including block scalars, for ${{ }} expressions that read attacker-editable event fields: issue, pull request and discussion titles and bodies, comment and review bodies, head refs and labels, commit messages and author names. Values passed through env are not expanded into the script and do not match.",
+      "next_action": "Pass the value through an environment variable and quote it in the script instead of expanding it with ${{ }}.",
+      "examples": [
+        {
+          "file": ".github/workflows/triage.yml",
+          "source": "on: issues\njobs:\n  triage:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo \"${{ github.event.issue.title }}\"\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": ".github/workflows/triage.yml",
+          "source": "on: issues\njobs:\n  triage:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo \"$TITLE\"\n        env:\n          TITLE: ${{ github.event.issue.title }}\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "CI-PR-HEAD-CHECKOUT",
+      "kind": "workflow-checkout",
+      "area": "supply-chain",
+      "severity": "high",
+      "title": "Privileged pull request workflow checks out proposed code",
+      "criteria": "In workflows triggered by pull_request_target or workflow_run, recognize ref values that select the pull request head, head branch or merge ref, and gh pr checkout. These triggers run with repository secrets and write tokens; whether the checked-out code is executed is not established.",
+      "next_action": "Run untrusted pull request code in a pull_request workflow without secrets, or keep the privileged workflow from checking out or executing it.",
+      "examples": [
+        {
+          "file": ".github/workflows/preview.yml",
+          "source": "on: pull_request_target\njobs:\n  preview:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": ".github/workflows/preview.yml",
+          "source": "on: pull_request\njobs:\n  preview:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n        with:\n          ref: ${{ github.event.pull_request.head.sha }}\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
         }
       ]
     },
@@ -952,9 +1340,9 @@
       ]
     }
   ],
-  "rule_version": 5,
+  "rule_version": 6,
   "change_relevance": {
-    "version": 4,
+    "version": 5,
     "documentation_extensions": [
       ".md",
       ".rst",
@@ -980,7 +1368,7 @@
         "id": "REL-PIPELINE",
         "level": "high",
         "aspect": "build and deployment authority",
-        "pattern": "(?i)(^|/)(Dockerfile[^/]*|Jenkinsfile|CODEOWNERS|\\.gitlab-ci\\.ya?ml|azure-pipelines\\.ya?ml|docker-compose[^/]*\\.ya?ml)$|(^|/)(\\.github/workflows|\\.circleci)/|(^|/)(deploy|charts|helm|k8s)/.*\\.(?:ya?ml|json|tf)$",
+        "pattern": "(?i)(^|/)(Dockerfile[^/]*|Containerfile[^/]*|[^/]+\\.Dockerfile|Jenkinsfile|CODEOWNERS|\\.gitlab-ci\\.ya?ml|azure-pipelines\\.ya?ml|(?:docker-)?compose[^/]*\\.ya?ml)$|(^|/)(\\.github/workflows|\\.circleci)/|(^|/)(deploy|charts|helm|k8s)/.*\\.(?:ya?ml|json|tf)$",
         "reason": "Build, release, ownership or deployment configuration changed; review execution and privileges."
       },
       {
@@ -1124,6 +1512,12 @@
         "level": "medium",
         "aspect": "output",
         "reason": "A recognized security operation or control is in the affected change context; inspect its behavior even when no weakness is detected."
+      },
+      "authentication": {
+        "id": "REL-CONTROL-AUTHENTICATION",
+        "level": "high",
+        "aspect": "authentication",
+        "reason": "A recognized security operation or control is in the affected change context; inspect its behavior even when no weakness is detected."
       }
     },
     "documentation_rule": {
@@ -1144,6 +1538,12 @@
         "file": "auth.py",
         "before": "def authorize(user):\n    return True\n",
         "after": "def authorize(user):\n    return user.is_admin\n",
+        "expected_relevance": "high"
+      },
+      {
+        "file": "session.py",
+        "before": "claims = jwt.decode(value, key, algorithms=['RS256'])\n",
+        "after": "claims = jwt.decode(value, key, algorithms=['RS256', 'ES256'])\n",
         "expected_relevance": "high"
       },
       {

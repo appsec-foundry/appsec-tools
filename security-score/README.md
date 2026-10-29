@@ -52,11 +52,11 @@ Repository               79/100  ████████░░  2 candidates
             HOST-REQUIRED-REVIEWS · host API
 
 Authentication          not assessed
-  The current rule catalog does not assess login, sessions or access control.
+  No recognized control evidence from the available checks.
 
-Architecture              0/100  ░░░░░░░░░░  17 candidates
+Architecture              0/100  ░░░░░░░░░░  19 candidates
   HIGH      Constructed SQL passed to a query call
-            JS-SQL · routes/login.ts:34 (+10 more)
+            JS-SQL · routes/login.ts:34 (+12 more)
   HIGH      JavaScript code evaluation
             JS-EVAL · lib/xml.ts:12 (+4 more)
 ...
@@ -64,12 +64,11 @@ Cryptography             59/100  ██████░░░░  1 candidate
   HIGH      Predictable random value for a named secret
             JS-RANDOM · lib/insecurity.ts:53
 
-Deployment & transport  100/100  ██████████  no candidates; some checks unclear
-  OK        Non-root container user declared
-            IAC-USER · Dockerfile:39
+Deployment & transport  not assessed
+  No recognized control evidence from the available checks.
 
 Coverage
-  867 files checked · 63 candidates · scan incomplete
+  949 files checked · 65 candidates · scan incomplete
 ```
 
 This scan hit a limit, so its exit status is `1` and there is no grade.
@@ -121,12 +120,12 @@ own [scoring policy](references/compatibility.md).
 | Topic | Checks |
 | --- | --- |
 | Repository | Host settings such as branch protection and required reviews (URL scans only) |
-| Authentication | Not assessed yet: no rules for login, sessions, or access control |
+| Authentication | JWT verification options: disabled signature or expiry checks, the `none` algorithm; no rules for login, sessions, or access control |
 | Architecture | Code execution, SQL injection, and unsafe deserialization patterns |
 | Frontend | HTML output sinks, framework bypasses, and Content Security Policy |
-| Dependencies & CI | Package sources, install scripts, lockfiles, Action and image pinning, CI permissions |
+| Dependencies & CI | Package sources and indexes, install scripts, Action and image pinning, CI permissions, workflow script injection, privileged pull request checkouts, downloads in container builds |
 | Cryptography | Weak hashes and predictable random values |
-| Deployment & transport | Debug mode, container user, and TLS verification |
+| Deployment & transport | Debug mode, container host privileges, and TLS verification |
 
 Each topic shows the lowest area score within it and up to three findings with
 file and line. Detected frameworks are shown as context and add no points.

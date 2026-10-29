@@ -9,7 +9,7 @@ import hashlib
 from pathlib import Path
 import re
 import textwrap
-from score_reporting import source_priority
+from score_reporting import container_build_file, source_priority
 
 from score_calculation import (
     CATALOG_BYTES,
@@ -37,13 +37,19 @@ def validate_policy():
         "py-pickle",
         "py-hash",
         "py-debug",
+        "py-random",
+        "py-jwt",
         "js-eval",
         "js-shell",
         "js-random",
+        "js-hash",
         "js-html",
         "js-tls",
+        "js-jwt",
         "actions",
         "image",
+        "image-script",
+        "image-add",
         "user",
         "js-sql",
         "frontend",
@@ -53,18 +59,22 @@ def validate_policy():
         "npm-install",
         "requirements",
         "workflow-permissions",
+        "workflow-injection",
+        "workflow-checkout",
+        "container-privileges",
         "host",
     }
+    catalog = POLICY["rules"]  # Disabled rules still reserve their IDs.
     if (
         type(VERSION) is not int
         or VERSION < 1
-        or not isinstance(RULES, list)
-        or not RULES
+        or not isinstance(catalog, list)
+        or not catalog
     ):
         raise ValueError("Invalid rule catalog version or rule list.")
     validate_scoring()
     identifiers = set()
-    for rule in RULES:
+    for rule in catalog:
         if (
             not isinstance(rule, dict)
             or not re.fullmatch(r"[A-Z][A-Z0-9-]{0,79}", rule.get("id", ""))
@@ -74,6 +84,8 @@ def validate_policy():
         identifiers.add(rule["id"])
         if rule.get("kind") not in kinds or rule.get("severity") not in WEIGHTS:
             raise ValueError("Unknown detector or severity in rule catalog.")
+        if type(rule.get("enabled", True)) is not bool:
+            raise ValueError("A rule's enabled flag must be true or false.")
         for field in ("area", "title", "criteria", "next_action"):
             if not isinstance(rule.get(field), str) or not rule[field].strip():
                 raise ValueError(
@@ -117,9 +129,13 @@ def validate_policy():
         for example in relevance["examples"]
     ):
         raise ValueError("Relevance examples need expected outcomes.")
+    if not any(rule.get("enabled", True) for rule in catalog):
+        raise ValueError("Invalid rule catalog version or rule list.")
 
 
 validate_policy()
+# Disabled rules keep their ID reserved and their examples, but never run.
+RULES = [rule for rule in RULES if rule.get("enabled", True)]
 CATALOG_HASH = hashlib.sha256(CATALOG_BYTES).hexdigest()
 IMPLEMENTATION_HASH = hashlib.sha256(
     b"".join(
@@ -156,7 +172,7 @@ class ScanLimit(ValueError):
 def supported(path):
     return (
         Path(path).suffix.lower() in SOURCE_EXTENSIONS
-        or Path(path).name == "Dockerfile"
+        or container_build_file(Path(path).name)
         or (Path(path).name.startswith("requirements") and Path(path).suffix == ".txt")
     )
 
@@ -215,6 +231,86 @@ def literal(node, value):
     )
 
 
+SECRET_WORDS = {"token", "secret", "otp", "nonce", "salt", "csrf", "xsrf", "password"}
+SECRET_PAIRS = {("session", "id"), ("api", "key"), ("private", "key")}
+DIGEST_WORDS = {"signature", "token", "password", "credential", "secret", "hmac"}
+
+
+def identifier_named(line, words, pairs=()):
+    """Match camelCase and snake_case identifier segments, not substrings."""
+    for identifier in re.findall(r"[A-Za-z_$][\w$]*", line):
+        parts = [
+            part.lower()
+            for part in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+", identifier)
+        ]
+        if words.intersection(parts) or any(
+            pair in pairs for pair in zip(parts, parts[1:])
+        ):
+            return True
+    return False
+
+
+def module_strings(tree):
+    """Module-level names bound exactly once to a string literal."""
+    values, counts = {}, Counter()
+    for node in tree.body:
+        targets = (
+            node.targets
+            if isinstance(node, ast.Assign)
+            else [node.target]
+            if isinstance(node, (ast.AnnAssign, ast.AugAssign))
+            else []
+        )
+        for target in targets:
+            for name in ast.walk(target):
+                if isinstance(name, ast.Name):
+                    counts[name.id] += 1
+            if isinstance(target, ast.Name) and (
+                isinstance(getattr(node, "value", None), ast.Constant)
+                and isinstance(node.value.value, str)
+            ):
+                values[target.id] = node.value.value
+    return {name: value for name, value in values.items() if counts[name] == 1}
+
+
+def jwt_status(call, strings):
+    """Disabled verification violates; only a literal allow-list without none satisfies."""
+    options = {kw.arg: kw.value for kw in call.keywords}
+    if literal(options.get("verify"), False):
+        return "violated"
+    settings = options.get("options")
+    unclear = settings is not None and not isinstance(settings, ast.Dict)
+    if isinstance(settings, ast.Dict):
+        for key, value in zip(settings.keys, settings.values):
+            if key is None:
+                unclear = True
+            elif isinstance(key, ast.Constant) and key.value in {
+                "verify_signature",
+                "verify_exp",
+            }:
+                if literal(value, False):
+                    return "violated"
+                unclear = unclear or not literal(value, True)
+    algorithms = options.get("algorithms")
+    names = (
+        [
+            element.value
+            if isinstance(element, ast.Constant) and isinstance(element.value, str)
+            else strings.get(element.id)
+            if isinstance(element, ast.Name)
+            else None
+            for element in algorithms.elts
+        ]
+        if isinstance(algorithms, (ast.List, ast.Tuple, ast.Set))
+        else []
+    )
+    if any(isinstance(name, str) and name.lower() == "none" for name in names):
+        return "violated"
+    if names and all(isinstance(name, str) for name in names) and not unclear:
+        return "satisfied"
+    return "unclear"
+
+
 def python_observations(rule, text, tree=None):
     """Return (line, status) for recognized calls; unrecognized aliases stay uncovered."""
     try:
@@ -224,7 +320,29 @@ def python_observations(rule, text, tree=None):
     observations = []
     kind = rule["kind"]
     lines = text.splitlines()
+    strings = module_strings(tree) if kind == "py-jwt" else {}
     for call in ast.walk(tree):
+        if (
+            kind == "py-tls"
+            and isinstance(call, ast.Assign)
+            and any(
+                isinstance(target, ast.Attribute)
+                and target.attr in {"check_hostname", "verify_mode"}
+                for target in call.targets
+            )
+        ):
+            value = qualified(call.value)
+            observations.append(
+                (
+                    call.lineno,
+                    "violated"
+                    if literal(call.value, False) or value == "ssl.CERT_NONE"
+                    else "satisfied"
+                    if literal(call.value, True) or value == "ssl.CERT_REQUIRED"
+                    else "unclear",
+                )
+            )
+            continue
         if not isinstance(call, ast.Call):
             continue
         name = qualified(call.func)
@@ -251,6 +369,14 @@ def python_observations(rule, text, tree=None):
                 status = "satisfied"
             else:
                 status = "unclear"
+        elif kind == "py-shell" and name in {
+            "os.system",
+            "os.popen",
+            "subprocess.getoutput",
+            "subprocess.getstatusoutput",
+            "asyncio.create_subprocess_shell",
+        }:
+            status = "violated"  # These interfaces always invoke a shell.
         elif (
             kind == "py-sql"
             and name.rsplit(".", 1)[-1] in {"execute", "executemany"}
@@ -268,8 +394,21 @@ def python_observations(rule, text, tree=None):
             else:
                 status = "unclear"
         elif kind == "py-tls" and name in {
-            "requests." + verb
-            for verb in ("get", "post", "put", "patch", "delete", "head", "request")
+            module + "." + verb
+            for module, verbs in (
+                ("requests", ()),
+                ("httpx", ("options", "stream", "Client", "AsyncClient")),
+            )
+            for verb in (
+                "get",
+                "post",
+                "put",
+                "patch",
+                "delete",
+                "head",
+                "request",
+                *verbs,
+            )
         }:
             verify = options.get("verify", ast.Constant(True))
             status = (
@@ -279,14 +418,24 @@ def python_observations(rule, text, tree=None):
                 if literal(verify, True)
                 else "unclear"
             )
-        elif kind == "py-yaml" and name in {"yaml.load", "yaml.safe_load"}:
+        elif kind == "py-tls" and name == "ssl._create_unverified_context":
+            status = "violated"
+        elif kind == "py-yaml" and name in {
+            "yaml.load",
+            "yaml.load_all",
+            "yaml.safe_load",
+            "yaml.safe_load_all",
+            "yaml.unsafe_load",
+            "yaml.unsafe_load_all",
+        }:
             loader = qualified(options.get("Loader"))
             status = (
                 "satisfied"
-                if name == "yaml.safe_load"
+                if name.startswith("yaml.safe_")
                 or loader in {"yaml.SafeLoader", "yaml.CSafeLoader"}
                 else "violated"
-                if loader
+                if name.startswith("yaml.unsafe_")
+                or loader
                 in {
                     "yaml.Loader",
                     "yaml.UnsafeLoader",
@@ -316,22 +465,109 @@ def python_observations(rule, text, tree=None):
                 if literal(options["debug"], False)
                 else "unclear"
             )
+        elif (
+            kind == "py-random"
+            and (
+                name.startswith(("random.", "secrets."))
+                or name in {"os.urandom", "random.SystemRandom"}
+            )
+            and identifier_named(lines[call.lineno - 1], SECRET_WORDS, SECRET_PAIRS)
+        ):
+            status = (
+                "violated"
+                if name.startswith("random.") and name != "random.SystemRandom"
+                else "satisfied"
+            )
+        elif kind == "py-jwt" and (
+            name == "jwt.decode" or name.endswith(".jwt.decode")
+        ):
+            status = jwt_status(call, strings)
         if status:
             observations.append((call.lineno, status))
     return observations, False
+
+
+REGEX_KEYWORDS = {
+    "return",
+    "typeof",
+    "instanceof",
+    "in",
+    "new",
+    "delete",
+    "void",
+    "throw",
+    "case",
+    "do",
+    "else",
+    "yield",
+    "await",
+}
+
+
+def regex_start(text, previous, position, word_start):
+    """A slash after an operator, an opening bracket or a keyword starts a regex.
+
+    After a value, `)`, `]` or `}` it is division. `<` and `>` count as values so
+    JSX closing tags are never masked; `=>` starts an expression.
+    """
+    if not previous:
+        return True
+    before = text[position - 1] if position else ""
+    if previous.isalnum() or previous in "_$":
+        # Keywords are short; slicing only those keeps long identifiers cheap.
+        return (
+            0 <= position - word_start < 10
+            and text[word_start : position + 1] in REGEX_KEYWORDS
+        )
+    if previous in "+-" and before == previous:
+        return False
+    if previous == ">":
+        return before == "="
+    return previous in "(,=:[!&|?{};~+-*%^"
+
+
+def regex_end(text, start):
+    """Return (end, reached) of a literal closed on the same line; end is None if open."""
+    in_class = False
+    index = start + 1
+    while index < len(text):
+        char = text[index]
+        if char in "\n\r":
+            return None, index
+        if char == "\\":
+            if text[index + 1 : index + 2] in {"\n", "\r", ""}:
+                return None, index + 1
+            index += 2
+            continue
+        if in_class:
+            in_class = char != "]"
+        elif char == "[":
+            in_class = True
+        elif char == "/":
+            index += 1
+            while index < len(text) and (text[index].isalnum() or text[index] in "_$"):
+                index += 1
+            return index, index
+        index += 1
+    return None, index
 
 
 def javascript_code(text):
     """Mask comments and literal contents, preserving offsets and line numbers.
 
     This is a lexer for narrow patterns, not a JavaScript parser. Template
-    interpolation is retained as code; regular-expression literals are not parsed.
+    interpolation is retained as code. Regular-expression literals are recognized
+    from the preceding token; an unclosed candidate is read as division, except in
+    template interpolation, where it fails closed. After one unclosed candidate the
+    rest of its line is read as division, which keeps the lexer linear.
     """
     out = list(text)
     state = None
     quote = None
     escaped = False
     interpolations = []
+    previous, position, word_start = "", 0, -1
+    no_regex_until = -1
     index = 0
     while index < len(text):
         char = text[index]
@@ -351,9 +587,10 @@ def javascript_code(text):
         elif state == "string":
             if quote == "`" and not escaped and pair == "${":
                 out[index : index + 2] = "  "
-                index += 2
                 interpolations.append(0)
                 state = None
+                previous, position, word_start = "{", index + 1, -1
+                index += 2
                 continue
             if char != "\n":
                 out[index] = " "
@@ -363,6 +600,7 @@ def javascript_code(text):
                 escaped = True
             elif char == quote:
                 state = None
+                previous, position, word_start = ")", index, -1  # A literal is a value.
         elif interpolations and char == "}":
             if interpolations[-1] == 0:
                 interpolations.pop()
@@ -370,17 +608,37 @@ def javascript_code(text):
                 out[index] = " "
             else:
                 interpolations[-1] -= 1
+                previous, position, word_start = char, index, -1
         elif interpolations and char == "{":
             interpolations[-1] += 1
+            previous, position, word_start = char, index, -1
         elif pair in {"//", "/*"}:
             state = "line" if pair == "//" else "block"
             out[index : index + 2] = "  "
             index += 1
-        elif interpolations and char == "/":
-            raise SyntaxError("Ambiguous slash in template interpolation")
+        elif char == "/":
+            if regex_start(text, previous, position, word_start):
+                end, reached = (
+                    regex_end(text, index) if index > no_regex_until else (None, index)
+                )
+                if end is not None:
+                    out[index:end] = " " * (end - index)
+                    previous, position, word_start = ")", end - 1, -1
+                    index = end
+                    continue
+                if interpolations:
+                    raise SyntaxError("Ambiguous slash in template interpolation")
+                no_regex_until = max(no_regex_until, reached)
+            previous, position, word_start = char, index, -1
         elif char in {"'", '"', "`"}:
             state, quote = "string", char
             out[index] = " "
+        elif char.isalnum() or char in "_$":
+            if position != index - 1 or word_start < 0:
+                word_start = index
+            previous, position = char, index
+        elif not char.isspace():
+            previous, position, word_start = char, index, -1
         index += 1
     if state in {"string", "block"} or interpolations:
         raise SyntaxError("Incomplete JavaScript lexical context")
@@ -463,29 +721,60 @@ def other_observations(rule, text, code=None):
                 bisect_right(line_breaks, match.start()) + 1,
                 "satisfied" if match.group().startswith("JSON") else "violated",
             )
-            for match in re.finditer(r"\b(?:eval|Function|JSON\.parse)\s*\(", code)
+            # `$eval` (Puppeteer, Playwright) is a selector helper, not evaluation.
+            for match in re.finditer(
+                r"(?<![\w$])(?:eval|Function|JSON\.parse)\s*\(", code
+            )
         ], False
+    original_lines = text.splitlines() if kind in {"js-hash", "js-tls"} else []
+    stages = set()
     for number, line in enumerate(code.splitlines(), 1):
         status = None
-        if kind == "js-random" and re.search(
-            r"\b(?:token|secret|otp|nonce|sessionId|resetToken)\b", line
-        ):
+        if kind == "js-random":
             if re.search(r"\bMath\.random\s*\(", line):
                 status = "violated"
             elif re.search(
-                r"\bcrypto\.(?:randomBytes|randomUUID|getRandomValues)\s*\(", line
+                r"\bcrypto\.(?:randomBytes|randomUUID|getRandomValues|randomInt)\s*\(",
+                line,
             ):
                 status = "satisfied"
+            if status and not identifier_named(line, SECRET_WORDS, SECRET_PAIRS):
+                status = None
+        elif kind == "js-hash":
+            match = re.search(r"\bcreateHash\s*\(", line)
+            if match and identifier_named(line, DIGEST_WORDS):
+                algorithm = re.match(
+                    r"\s*(['\"`])([\w-]+)\1", original_lines[number - 1][match.end() :]
+                )
+                status = (
+                    "violated"
+                    if algorithm and algorithm[2].lower() in {"md5", "sha1"}
+                    else "unclear"
+                )
         elif kind == "js-html":
-            if re.search(r"\.innerHTML\s*=(?!=)", line):
+            if re.search(
+                r"\.(?:inner|outer)HTML\s*\+?=(?!=)|\.insertAdjacentHTML\s*\(|\bdocument\s*\.\s*write(?:ln)?\s*\(",
+                line,
+            ):
                 status = "violated"
             elif re.search(r"\.textContent\s*=(?!=)", line):
                 status = "satisfied"
         elif kind == "js-tls":
             match = re.search(r"\brejectUnauthorized\s*:\s*(\w+)", line)
+            setting = re.search(r"\bNODE_TLS_REJECT_UNAUTHORIZED\s*=(?!=)", line)
             if match:
                 status = {"false": "violated", "true": "satisfied"}.get(
                     match[1], "unclear"
+                )
+            elif setting:
+                value = re.match(
+                    r"\s*(['\"`]?)(\w*)\1\s*(?:[;,)]|$)",
+                    original_lines[number - 1][setting.end() :],
+                )
+                status = (
+                    {"0": "violated", "1": "satisfied"}.get(value[2], "unclear")
+                    if value
+                    else "unclear"
                 )
         elif kind == "actions":
             match = re.match(r"\s*(?:-\s*)?uses:\s*['\"]?([^\s'\"#]+)", line)
@@ -506,8 +795,11 @@ def other_observations(rule, text, code=None):
                 else:
                     status = "unclear"
         elif kind == "image":
-            match = re.match(r"(?i)\s*FROM\s+(?:--platform=\S+\s+)?(\S+)", line)
-            if match and match[1].lower() != "scratch":
+            match = re.match(
+                r"(?i)\s*FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?", line
+            )
+            # A reference to an earlier build stage pulls no image.
+            if match and match[1].lower() not in stages | {"scratch"}:
                 value = match[1]
                 status = (
                     "satisfied"
@@ -516,6 +808,8 @@ def other_observations(rule, text, code=None):
                     if "$" in value
                     else "violated"
                 )
+            if match and match[2]:
+                stages.add(match[2].lower())
         elif kind == "user":
             match = re.match(r"(?i)\s*USER\s+(\S+)", line)
             if match:
@@ -541,8 +835,10 @@ def applies(rule, path):
         return suffix in JS_EXTENSIONS
     if kind == "actions":
         return path.startswith(".github/workflows/") and suffix in {".yml", ".yaml"}
-    if kind == "workflow-permissions":
+    if kind in {"workflow-permissions", "workflow-injection", "workflow-checkout"}:
         return path.startswith(".github/workflows/") and suffix in {".yml", ".yaml"}
+    if kind == "container-privileges":
+        return suffix in {".yml", ".yaml"}
     if kind.startswith("npm-"):
         return Path(path).name == "package.json"
     if kind == "requirements":
@@ -555,7 +851,7 @@ def applies(rule, path):
         return suffix in JS_EXTENSIONS | {".py", ".json", ".conf", ".config"}
     if kind == "host":
         return False
-    return Path(path).name == "Dockerfile"
+    return container_build_file(Path(path).name)
 
 
 def scan(files, budget, findings=None, checks=None):
@@ -641,6 +937,12 @@ def scan_source(path, source, budget, findings, checks, files):
             "npm-install",
             "requirements",
             "workflow-permissions",
+            "workflow-injection",
+            "workflow-checkout",
+            "container-privileges",
+            "image-script",
+            "image-add",
+            "js-jwt",
         }:
             observed = observations(rule, path, text, code, files)
         else:

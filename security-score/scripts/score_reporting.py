@@ -8,6 +8,16 @@ from score_calculation import calculate, has_unknown
 from score_style import Style, safe
 
 
+def container_build_file(name):
+    """Dockerfile, Dockerfile.<variant>, <variant>.Dockerfile and Containerfile."""
+    name = name.lower()
+    return not name.endswith(".dockerignore") and (
+        name in {"dockerfile", "containerfile"}
+        or name.startswith(("dockerfile.", "containerfile."))
+        or name.endswith(".dockerfile")
+    )
+
+
 def origin(path):
     parts = PurePosixPath(path).parts
     lowered = {part.lower() for part in parts}
@@ -32,13 +42,18 @@ def origin(path):
         ".min.js"
     ):
         return "assets"
-    if lowered & {
-        ".github",
-        ".gitlab",
-        "infrastructure",
-        "terraform",
-        "scripts",
-    } or name.startswith("dockerfile"):
+    if (
+        lowered
+        & {
+            ".github",
+            ".gitlab",
+            "infrastructure",
+            "terraform",
+            "scripts",
+        }
+        or name.startswith("dockerfile")
+        or container_build_file(name)
+    ):
         return "build"
     return "source"
 
@@ -49,12 +64,11 @@ def source_priority(path):
     These hints affect order only: every supported source remains eligible.
     """
     name = PurePosixPath(path).name
-    declaration = name in {
-        "package.json",
-        "package-lock.json",
-        "npm-shrinkwrap.json",
-        "Dockerfile",
-    } or name.startswith("requirements")
+    declaration = (
+        name in {"package.json", "package-lock.json", "npm-shrinkwrap.json"}
+        or container_build_file(name)
+        or name.startswith("requirements")
+    )
     group = {"source": 0, "build": 1, "tests": 2, "examples": 3, "assets": 4}
     return (0 if declaration else 1, group.get(origin(path), 0), path)
 
@@ -117,6 +131,12 @@ POSITIVE_REASONS = {
     "WEB-CSP": "CSP declaration meets the bundled policy checks",
     "JS-HTML": "Text assigned through textContent",
     "FRONTEND-BINDING": "Framework text binding recognized",
+    "PY-JWT": "Token verification restricted to listed algorithms",
+    "JS-JWT": "Token verification restricted to listed algorithms",
+    "PY-RANDOM": "Cryptographic random source for a named secret",
+    "JS-RANDOM": "Cryptographic random source for a named secret",
+    "IAC-PRIVILEGED": "Container privileges explicitly restricted",
+    "IAC-ADD-URL": "Remote build input pinned by checksum or commit",
 }
 
 HOST_REASONS = {
@@ -272,7 +292,7 @@ def topic_examples(style, topic):
     if not positive:
         lines += note(
             style,
-            "The current rule catalog does not assess login, sessions or access control."
+            "No token verification recognized; login, sessions and access control are not assessed."
             if topic["id"] == "authentication" and not topic["checks"]
             else "No recognized control evidence from the available checks.",
         )
