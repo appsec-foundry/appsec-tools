@@ -9,10 +9,15 @@ belong in the main repository.
 
 ## Current state
 
-The first tool is the standalone Python Requirement Harvester in
-`requirement-harvester/`. It uses Python >=3.10, local lockfiles, and
-pytest. Run tests in the tool directory with `.venv/bin/python -m pytest`.
-The README describes installation, the CLI, and CI templates.
+The repository contains two standalone Python tools (Python >=3.10). Run
+tests in the tool directory:
+
+- `requirement-harvester/`: local lockfiles and pytest;
+  `.venv/bin/python -m pytest`.
+- `security-score/`: no runtime dependencies, unittest;
+  `python3 -B -m unittest test_security_score -v`.
+
+Each tool's README describes installation, the CLI, and further checks.
 Do not infer features or interfaces of the main project from the repository
 name; verify them before implementing anything that depends on them.
 
@@ -33,6 +38,26 @@ name; verify them before implementing anything that depends on them.
 - Add a linked entry to the central README when a tool exists.
 - Mark planned features as planned; do not document unverified commands or
   interfaces as working.
+- Start each README with what the tool does and a quick start with real
+  commands and output. Write plainly and briefly; put details in reference
+  docs instead of repeating caveats.
+
+## Requirements
+
+Each tool has a `requirements.md` with its purpose, scope, agreed decisions,
+and the functional and security requirements that later work must respect.
+
+- Add or change a requirement only for significant changes: a new capability,
+  a changed scope or interface contract (CLI, configuration, output format,
+  exit codes), a security boundary, or a decision later work must follow.
+- Bug fixes, output layout, wording, refactoring, and new tests need no
+  requirement. Document user-visible behavior in the README or reference
+  docs; tests pin the details.
+- Write one to three sentences per requirement: what must hold and, if not
+  obvious, why. Leave out implementation details, implementation status, test
+  results, and change history.
+- Keep requirement IDs stable. Do not renumber or reuse them; code and tests
+  may reference them.
 
 ## Verification and handoff
 

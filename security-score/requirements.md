@@ -1,23 +1,56 @@
 # Requirements for Security Score
 
-- **REQ-01 — Independent and reproducible.** Use bundled deterministic checks by default, without AppSec Analyzer or model calls. Identical sources, rules, and settings produce the same result. Identify the rule and scoring versions.
+Core requirements for Security Score. Usage and output are described in the
+[README](README.md), the calculation in the [scoring reference](references/scoring.md).
+Tests pin the exact behavior.
 
-- **REQ-02 — Support repositories and changes.** Accept local checkouts, Git URLs, patches, staged/unstaged changes, commits, and PRs/MRs. Identify the examined scope and compared versions. For changes, assess security relevance separately from finding severity and distinguish introduced, worsened, resolved, and relevant pre-existing findings. Cover relevant security architecture: persistence and parameterized data access, frontend output and CSP, hardening, and dependency/build supply chains. For Git URLs, also check repository-host security settings.
+- **REQ-01 — Standalone and deterministic.** The default engine uses only the
+  bundled rules, without AppSec Analyzer or model calls. The same sources, rules,
+  and settings give the same result, and each result names its rule and scoring
+  versions.
 
-- **REQ-03 — Explain a verifiable score.** For repository assessments, score from 0 to 100: 0 is the lowest attainable result; 100 means no deductions from applicable checks. Use grades A (90–100), B (80–<90), C (70–<80), D (60–<70), E (50–<60), and F (<50). For changes, report security relevance as high, medium, low, or unclear, with affected security aspects and findings; do not assign a numeric score or grade. Relevance depends on changed security behavior and boundaries, even when no weakness is detected. Show only score and grade or a compact change-relevance summary by default; `--detail` (alias `--details`) adds category subscores, findings, coverage, and explanation as defined in REQ-08. Publish understandable rules and examples with expected results. Unrelated satisfied checks cannot offset serious findings.
+- **REQ-02 — Repositories and changes.** Scan local checkouts and GitHub.com or
+  GitLab.com repository URLs, including the repository-host security settings for
+  URLs. Analyze changes (staged, unstaged, commits, revision ranges, patches) and
+  state the compared versions. Checks cover data access, frontend output and CSP,
+  hardening, and the dependency and build supply chain.
 
-- **REQ-04 — Report limits honestly.** Distinguish supported controls, detected weaknesses, unknowns, and exclusions. Technology presence alone does not prove effective protection. Withhold score and grade when coverage is insufficient or required checks fail; retain available findings. A high score does not establish safety. For changes, missing findings or context do not establish low security relevance.
+- **REQ-03 — Score, grade, and change relevance.** A repository scan gives a score
+  from 0 to 100, where 100 means no deductions, and a grade: A ≥ 90, B ≥ 80, C ≥ 70,
+  D ≥ 60, E ≥ 50, F < 50. Passed checks cannot offset a serious finding. A change
+  gets a security relevance of high, medium, low, or unclear instead of a score. It
+  depends on the security behavior the change touches, not only on detected
+  weaknesses; introduced, worsened, resolved, and pre-existing findings are
+  reported separately.
 
-- **REQ-05 — Stay fast and bounded.** Aim for a repository indication within a default budget of about 60 seconds. For URL scans, reserve analysis time and retain downloaded sources when time, entry-count or byte limits prevent a complete scan. Report an observed index when recognized source evidence exists, with explicit coverage limits in detailed/structured output and no repository grade for incomplete work. Keep processing bounded, show progress during normal and detailed text runs, suppress it in quiet/structured modes, and clearly report incomplete, failed, or cancelled work according to REQ-08.
+- **REQ-04 — Honest limits.** Keep findings, positive evidence, unknowns, and
+  exclusions apart. A detected technology is no proof of protection. Without
+  enough coverage, or when required checks fail, withhold score and grade but keep
+  the findings. No findings in a change does not mean low relevance, and a high
+  score does not mean the code is safe.
 
-- **REQ-06 — Keep Analyzer optional.** Select AppSec Analyzer only through an explicit parameter. Internal scoring remains the default, including when Analyzer is installed. Explain its prerequisites, supported scope, and separate scoring policy.
+- **REQ-05 — Fast and bounded.** A repository scan should finish within a default
+  budget of about 60 seconds, and all processing is bounded. When a limit stops a
+  scan, report the index of the evidence found so far as partial, without a grade,
+  and state what was not covered.
 
-- **REQ-07 — Human-maintainable calculation.** Make repository score calculations understandable and manually reproducible. Keep scoring values centrally documented and editable without changing detection rules. JSON/YAML and the technical reference retain finding counts, applied values, deductions, limits and aggregation. Detailed console output explains topic subscores through concrete findings or recognized positive evidence, without displaying arithmetic/debug columns.
+- **REQ-06 — Analyzer only on request.** AppSec Analyzer is used only when selected
+  explicitly. The internal engine stays the default, even when Analyzer is installed.
 
-- **REQ-08 — Three explicit console modes.** For repository scans, enforce the following output contract on both stdout and stderr:
-  - Without a detail/quiet flag, print exactly one result line on stdout, such as `59/100 (E)` or `59/100 (partial)`, and show progress on stderr (a spinner on interactive terminals). Do not print category breakdowns, coverage summaries, calculations or findings. This is the normal interactive mode, not quiet mode. When no numeric evidence exists, print the actual verdict instead of inventing a score; failures without a result may print an actionable error on stderr.
-  - With `--detail` (alias `--details`), show the overall result followed by topic blocks: Repository, Authentication, Architecture, Frontend, Dependencies & CI, Cryptography, and Deployment & transport. Each block starts with its subscore and has at most three concrete finding examples or reasons directly beneath it, with severity, rule and an actual file/line or host-setting reference. Do not split scores and findings into a table and a separate list. Do not display deduction/cap columns, formulas or repeated debug metadata. A topic index is the lowest recognized existing area index mapped to that topic; do not pool deductions or change the overall score. Authentication stays unassessed while no matching checks exist. Architecture covers only selected execution, injection and deserialization patterns; observed technology names provide context and never score credit. Start each block with one aligned header line: topic, subscore, a ten-segment bar and the candidate count; place each example's severity and description first and its rule and location on the next line. Mark a partial result once in the overall line and header text instead of repeating it per topic, and explain missing evidence. State total finding and omitted-type counts even when showing only selected examples; retain all findings, locations and calculation detail in JSON/YAML. Show positive evidence with its location when there are no findings, rather than treating absence of findings as proof of safety. End with a short coverage summary and show progress on stderr.
-  - Text presentation: use colour for severity and score bands only when stdout is an interactive, non-`dumb` terminal and `NO_COLOR` is unset; redirected output, files and pipes never contain escape sequences, and colour never carries information the plain text lacks. Fall back to ASCII glyphs when the stream cannot encode the bar and separator characters. Wrap to the terminal width (60–120 columns). Replace control characters in repository-controlled text (paths, titles, reasons) so it cannot alter the terminal. On an interactive terminal progress is one status line that is cleared when the result is printed; elsewhere progress stays plain lines on stderr. Change relevance with `--detail` groups signals by rule, ordered by level, states each reason once and lists files with lines; it does not print raw JSON.
-  - With `--quite` (alias `--quiet`), print only the integer index and a newline, for example `59`, with no other stdout or stderr output. Quiet mode overrides detail mode. If no numeric index exists, print nothing. Preserve exit statuses in all modes, including nonzero statuses for partial/incomplete results. JSON/YAML remain separate structured modes with no progress output.
+- **REQ-07 — Reproducible calculation.** A score can be recalculated by hand.
+  Weights and caps are kept in one place and can be changed without touching the
+  detection rules. Each rule ships with examples and expected results. JSON/YAML
+  output contains every finding and every value used in the calculation.
 
-- **REQ-09 — Qualify the installed CLI end to end.** Changes to remote scanning or console modes require a live regression run against `https://github.com/juice-shop/juice-shop` before claiming release readiness. By default, build the current checkout without package downloads and install its wheel into an isolated environment; verify that the wheel contains the current source and rules. Exercise default, `--detail`/`--details` and `--quite` through real subprocesses and HTTPS requests, checking stdout, stderr, topic subscores, bounded examples beneath each topic, total finding counts and actual locations with a 70-second outer deadline per scan. Verify area arithmetic and topic grouping with offline tests. Do not pin an exact score or finding count for the evolving upstream repository. Record installation identity, wheel/source hashes, output, status and elapsed time. The live suite is opt-in for offline development, but an opted-in run must fail on unavailable repository discovery, absent evidence, crashes or output/deadline violations instead of skipping them or treating an exit code alone as success. A bounded partial indication remains valid only when the numeric evidence and expected output are present.
+- **REQ-08 — Three console modes.** The default text output is one result line on
+  stdout; `--details` adds per-topic subscores with a few located findings each;
+  `--quiet` prints only the number. Progress goes to stderr and is suppressed in
+  quiet and JSON/YAML modes. The exit status is the same in every mode, so scripts
+  can tell a partial result from a complete one. Redirected output contains no
+  color codes, and text from the scanned repository cannot inject terminal control
+  characters.
+
+- **REQ-09 — End-to-end check before release.** Changes to URL scanning or console
+  output need a live run of the installed CLI against
+  `https://github.com/juice-shop/juice-shop` before release. Once enabled, this test
+  fails on missing evidence, crashes, or a missed deadline instead of skipping.

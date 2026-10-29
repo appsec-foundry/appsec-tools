@@ -1,65 +1,134 @@
 # Requirement Harvester
 
-Reads requirements from configured websites and wikis and writes an OSCAL YAML
-catalog. Requires Python 3.10+ on Linux or macOS.
+Reads requirements from websites and wikis and writes them to an
+[OSCAL](https://pages.nist.gov/OSCAL/) 1.2.3 catalog in YAML. A configuration
+file sets which pages are read and how requirements are recognized on them.
+Runs are deterministic and need no LLM.
 
-## Installation
+Requires Python 3.10+ on Linux or macOS, `pipx`, and Git with SSH access to
+GitHub.
 
-With `pipx`, Git, and SSH access to the GitHub repository:
+## Quick start
+
+Install from a clone, which also contains the example configurations:
+
+```sh
+git clone git@github.com:appsec-foundry/appsec-analyzer-tools.git
+cd appsec-analyzer-tools/requirement-harvester
+pipx install .
+```
+
+Read the public TSS-WEB example:
+
+```sh
+requirement-harvester validate --config examples/tss-web.yaml          # check the configuration, no network access
+requirement-harvester run --config examples/tss-web.yaml --dry-run     # fetch and extract, write only the report
+requirement-harvester run --config examples/tss-web.yaml               # write the catalog
+```
+
+The catalog is written to `out/tss-web.oscal.yaml`, the run report to
+`out/tss-web-report.json`. Output paths are set in the configuration and are
+relative to the configuration file. A successful run replaces the previous
+files; a failed run leaves them unchanged.
+
+To install without a clone:
 
 ```sh
 pipx install "git+ssh://git@github.com/appsec-foundry/appsec-analyzer-tools.git#subdirectory=requirement-harvester"
 ```
 
-No local clone is needed. From an existing clone, you can instead run
-`pipx install ./requirement-harvester` at the repository root.
+## Configure your own source
 
-## Run
+1. Copy the example closest to your pages:
+   - [lists.yaml](examples/lists.yaml): one requirement per list item
+   - [sections.yaml](examples/sections.yaml): a heading with its following text
+   - [table.yaml](examples/table.yaml): one requirement per table row
+   - [token.yaml](examples/token.yaml): protected source with an API token
+   - [entra-ci.yaml](examples/entra-ci.yaml): Microsoft Entra ID in CI
+   - [multiple-outputs.yaml](examples/multiple-outputs.yaml): several catalogs
+   - [owasp-cheatsheets.yaml](examples/owasp-cheatsheets.yaml): OWASP Cheat
+     Sheet Series, one entry per section; content under CC BY-SA, keep the source
+     URLs when passing the catalog on; a full crawl has not been tested yet
+2. Set the start pages, the allowed scope, and the CSS selectors.
+3. Run `validate`, then `run --dry-run`, and check the found entries and the
+   page list in the report against your pages.
+4. Run `run` and keep the reviewed configuration under version control.
 
-Save an [example configuration](examples/lists.yaml) as `my-config.yaml` and
-adjust its URLs and selectors. For public sources, see the examples for
-[TSS-WEB](examples/tss-web.yaml) and the
-[OWASP Cheat Sheet Series](examples/owasp-cheatsheets.yaml). `pipx` does not
-install the example files; copy them from the repository.
+A minimal configuration for requirements in list items:
 
-```sh
-requirement-harvester validate --config my-config.yaml
-requirement-harvester run --config my-config.yaml
+```yaml
+config-version: 1
+output:
+  catalog: ../out/requirements.oscal.yaml
+  report: ../out/report.json
+  title: Company Requirements
+  version: 1.0.0
+sources:
+- id: company
+  title: Company Requirements
+  start-urls:
+  - https://wiki.example.org/requirements/engineering
+  crawl:
+    allowed-origins: [https://wiki.example.org]
+    allowed-path-prefixes: [/requirements/]
+    max-depth: 2
+  auth:
+    mode: none
+  extraction:
+    content-selector: main
+    rules:
+    - id: list-items
+      strategy: blocks
+      item-selector: ul.requirements > li
+      fields:
+        original-id: {attribute: id}
+        statement: {}
 ```
 
-`validate` checks the configuration without fetching pages. To preview a run,
-add `--dry-run`; this writes a preview report but no catalog. Output paths are
-set in the configuration and resolved relative to that file. A successful run
-replaces the output files.
+If an assistant writes the configuration for you, check the start pages and
+the allowed scope before the first run.
 
-### OWASP Cheat Sheet Series
+## Output
 
-`examples/owasp-cheatsheets.yaml` reads all cheat sheets from
-`cheatsheetseries.owasp.org` and creates one entry per section. Cheat sheets
-are recommendations, so the entries have no obligation level. The content is
-licensed under CC BY-SA; keep the source URLs when you pass the catalog on.
-A full crawl has not been tested yet.
+Each source becomes an OSCAL group and each requirement a control with its
+statement, source URL, and original ID. The catalog is checked against the
+official NIST schema before it is written. Shortened example:
 
-## Input and output
+```yaml
+catalog:
+  metadata:
+    title: Company Requirements
+    version: 1.0.0
+    oscal-version: 1.2.3
+  groups:
+  - id: company
+    title: Company Requirements
+    controls:
+    - id: company-3f9a2c41d07e8b56a1c4e2d9
+      title: Encryption at rest
+      links:
+      - href: https://wiki.example.org/requirements/engineering#encryption-at-rest
+        rel: reference
+      parts:
+      - name: statement
+        prose: Confidential data MUST be encrypted before it is stored.
+```
 
-Input is static HTML pages (HTTPS only). The output is an
-[OSCAL](https://pages.nist.gov/OSCAL/) 1.2.3 catalog in YAML, checked against
-the official NIST schema before it is written. Each source becomes a group and
-each requirement a control with its statement, source URL, and original ID.
-Details are in [docs/reference.md](docs/reference.md#output-and-oscal).
+The appsec-analyzer catalog format and other output formats are not supported.
 
-Other output formats are not supported, including the appsec-analyzer catalog
-format.
+## Limits
 
-## CI and reference
+- Reads static HTML over HTTPS. JavaScript rendering, PDFs, and attachments are
+  not supported.
+- Access: public, API token, HTTP Basic, and Microsoft Entra ID bearer tokens.
+  Form logins need an adapter for the target application.
+- Obligation comes only from a configured field. The tool does not derive MUST,
+  SHOULD, or MAY from the text.
 
-The [GitLab and GitHub templates](ci/README.md) use a local virtual
-environment and locked dependencies. Put credentials in protected CI
-variables.
+## Further documentation
 
-- [Configuration, authentication, and exit codes](docs/reference.md)
+- [Reference](docs/reference.md): configuration, extraction rules,
+  authentication, output, and exit codes
+- [CI templates](ci/README.md) for GitLab CI/CD and GitHub Actions
 - [Configuration schema](harvester/schemas/config.schema.json)
-- [Requirements](requirements.md)
-
-Supports static HTML, API tokens, HTTP Basic, and Entra bearer tokens.
-JavaScript rendering, PDFs, and form logins are not supported.
+- [Requirements and decisions](requirements.md)

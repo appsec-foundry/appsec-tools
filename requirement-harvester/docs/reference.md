@@ -259,5 +259,5 @@ are recorded in `dependency-provenance.json`.
 
 HTML is read statically. JavaScript rendering, attachments, PDFs, arbitrary
 login forms, and automatic rule changes are not implemented. The
-[requirements document](../requirements.md) records requirements, decisions,
-and implementation status.
+[requirements document](../requirements.md) records requirements and
+decisions.
