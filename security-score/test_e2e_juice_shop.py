@@ -205,54 +205,66 @@ class JuiceShopE2ETests(unittest.TestCase):
         self.assertNotIn("Findings", result.stdout)
         self.assertNotIn("Calculation", result.stdout)
 
-    def test_detail_is_a_category_table_followed_by_located_findings(self):
-        result = self.run_mode("detail", "--detail")
-        self.check_score(
-            re.search(r"^" + SCORE_LINE + r"$", result.stdout, re.M), result
+    def test_detail_has_topic_subscores_with_a_few_examples_directly_below(self):
+        result = self.run_mode("detail", "--details")
+        overall = re.search(
+            r"(?m)^Security score . " + SCORE_LINE + r"$", result.stdout
         )
+        self.check_score(overall, result)
         self.assertIn("Reading selected sources...", result.stderr)
         output = result.stdout
-        self.assertIn("Categories", output)
-        self.assertRegex(output, r"Category\s+Subscore\s+Findings\s+Deduction\s+Cap")
-        self.assertIn("Findings", output)
-        self.assertLess(output.index("Categories"), output.index("\nFindings\n"))
-        self.assertRegex(
-            output, r"(?m)^\s+(?:CRITICAL|HIGH|MEDIUM|LOW) [A-Z][A-Z0-9-]+ "
+        self.assertNotIn("\033", output)
+        headings = list(
+            re.finditer(
+                r"(?m)^(Repository|Authentication|Architecture|Frontend|Dependencies & CI|Cryptography|Deployment & transport) +(not assessed|(100|[1-9]?\d)/100)\b.*$",
+                output,
+            )
         )
-        self.assertRegex(output, r"\b(?:lib|routes|frontend|scripts)/[^\s;]+:\d+")
-        self.assertIn("Review:", output)
-        self.assertIn("Coverage", output)
-        rows = re.findall(
-            r"^([A-Za-z][A-Za-z ]*?) {2,}(unknown|\d+/100) +(\d+) +(\d+|-) +(\d+|-)$",
-            output,
-            re.M,
+        self.assertEqual(
+            [match[1] for match in headings],
+            [
+                "Repository",
+                "Authentication",
+                "Architecture",
+                "Frontend",
+                "Dependencies & CI",
+                "Cryptography",
+                "Deployment & transport",
+            ],
         )
-        self.assertGreater(len(rows), 1, "Category table has no data rows.")
-        total_findings = 0
+        self.assertRegex(output, r"(?m)^Authentication +not assessed")
         scores = []
-        for category, subscore, count, deduction, cap in rows:
-            total_findings += int(count)
-            if subscore == "unknown":
-                self.assertEqual((deduction, cap), ("-", "-"), category)
-            else:
-                score = int(subscore.split("/")[0])
-                self.assertEqual(
-                    score, max(0, min(100 - int(deduction), int(cap))), category
-                )
-                scores.append(score)
-        self.assertTrue(scores)
-        overall = re.search(r"^" + SCORE_LINE + r"$", output, re.M)
+        for number, heading in enumerate(headings):
+            end = (
+                headings[number + 1].start()
+                if number + 1 < len(headings)
+                else output.index("\nCoverage\n")
+            )
+            block = output[heading.end() : end]
+            tags = re.findall(r"(?m)^  (?:CRITICAL|HIGH|MEDIUM|LOW|OK) ", block)
+            self.assertGreaterEqual(len(re.findall(r"(?m)^  \S", block)), 1, heading[1])
+            self.assertLessEqual(len(tags), 3, heading[1])
+            if heading[2] != "not assessed":
+                scores.append(int(heading[3]))
         self.assertEqual(int(overall[1]), min(scores))
-        groups = re.findall(r"\((\d+)\s+x\s+(\d+)\s+=\s+(\d+)\s+points\)", output)
-        self.assertEqual(total_findings, sum(int(group[0]) for group in groups))
-        for count, points, deduction in groups:
-            self.assertEqual(int(count) * int(points), int(deduction))
+        self.assertRegex(output, r"(?m)^  (?:CRITICAL|HIGH|MEDIUM|LOW) +\S")
+        self.assertRegex(
+            output,
+            r"(?m)^ {12}[A-Z][A-Z0-9-]+ . (?:lib|routes|frontend|scripts)/\S+:\d+",
+        )
+        counts = re.findall(r"(?m)^[A-Z].*?(\d+) candidates?$", output)
+        total = re.search(r"\d+ files? checked . (\d+) candidates?", output)
+        self.assertIsNotNone(total)
+        self.assertEqual(sum(map(int, counts)), int(total[1]))
         for debug_fragment in (
             "score=withheld",
             "observed=None",
             "floor=0",
             "Calculation ",
             "Candidate groups",
+            "Deduction",
+            "\nCategories\n",
+            "\nFindings\n",
         ):
             self.assertNotIn(debug_fragment, output)
 

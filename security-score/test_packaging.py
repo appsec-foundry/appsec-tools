@@ -71,6 +71,7 @@ class PackagingTests(unittest.TestCase):
                 )
                 self.assertIn("score_remote_sources.py", packaged.namelist())
                 self.assertIn("score_update.py", packaged.namelist())
+                self.assertIn("score_style.py", packaged.namelist())
             environment = root / "venv"
             venv.EnvBuilder(with_pip=False).create(environment)
             python = environment / "bin" / "python"

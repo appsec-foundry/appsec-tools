@@ -91,14 +91,48 @@ spinner; redirected progress uses plain lines. Category breakdowns, calculations
 and findings appear only with `--detail` (alias `--details`). Quiet mode alone
 suppresses progress.
 
-Detailed output has three parts: a category table (subscore, finding count,
-deduction and severity cap), findings grouped by category/rule with locations and
-review suggestions, and one coverage summary. The score formula appears once.
-Partial category values are explicitly described as observed indices; unknown
-categories stay unknown. Repeated findings are grouped across path hints, with up
-to three files and five lines per file per rule; omitted counts point to `--json`
-for every location. Location labels such as `[tests]` or `[assets]` are path hints,
-not proof of runtime use or ownership.
+Detailed output uses topic blocks. Each starts with one aligned header line
+(topic, subscore, a ten-segment bar and the candidate count) and has at most
+three concrete findings or reasons directly below it. Topics are Repository,
+Authentication, Architecture, Frontend, Dependencies & CI, Cryptography, and
+Deployment & transport. There is no separate score table, findings list or
+arithmetic/debug section. Each example shows its severity and description, then
+the rule and one actual file/line (or the host API for repository settings) on the
+next line. Repeated matches and omitted finding types are counted; `--json`
+retains all occurrences and calculations.
+
+```text
+Security score · 0/100 (partial)
+Scope: /path/to/repository
+Partial result: subscores describe recognized evidence only; no repository grade is available.
+
+Architecture              0/100  ░░░░░░░░░░  16 candidates
+  HIGH      Constructed SQL passed to a query call
+            JS-SQL · routes/login.ts:34 (+10 more)
+
+Cryptography             59/100  ██████░░░░  1 candidate
+  HIGH      Predictable random value for a named secret
+            JS-RANDOM · lib/insecurity.ts:53
+```
+
+Text output is coloured (severity, score bands) only on an interactive terminal.
+Set `NO_COLOR` to turn colour off; redirected output never contains escape
+sequences. Streams that cannot encode the bar and separator characters get an
+ASCII fallback, lines wrap to the terminal width, and control characters in
+repository-controlled text are replaced with `?`. With `--details`, change
+comparisons group review signals by rule and state each reason once.
+
+Each topic uses the lowest recognized existing area index within it; the overall
+score and detection rules do not change. Authentication is currently **not
+assessed**: the bundled catalog does not inspect login, sessions or access control.
+Architecture summarizes execution, injection and deserialization patterns only;
+recognized frameworks or database libraries are context, not score credit or a
+full architectural review. Other mappings are Repository → repository-host,
+Frontend → output/frontend-policy, Dependencies & CI → supply-chain,
+Cryptography → cryptography, Deployment & transport → hardening/transport.
+A partial result is marked once in the overall line and the header text; missing evidence stays unassessed.
+With no findings, recognized positive checks include their source location.
+One short coverage summary follows the topic blocks.
 
 For a number alone, use `--quiet` (also accepted as `--quite`). Output is, for example, `59` followed by a newline, without progress, calculation, grade, diagnostics, or other text. Quiet mode overrides `--details` and cannot be combined with JSON/YAML, change relevance, or rule-list/example commands. With partial or incomplete evidence, the number is the observed pattern index; the exit status remains 2 or 1 respectively. With no numeric result, stdout and stderr are empty and the exit status indicates failure or undetermined coverage. Do not treat a number alone as successful complete assessment: always check the exit status. Explicit `--help` and `--version` still perform their requested display action.
 
@@ -153,7 +187,7 @@ Change analysis returns `high`, `medium`, `low`, or `unclear` security relevance
 | --- | --- |
 | `repository` | Local directory or supported HTTPS repository URL; defaults to the current directory. |
 | `--repo DIRECTORY` | Alternative to the positional argument for a local directory. |
-| `--detail`, `--details` | Add a category table, grouped findings and one coverage summary to the normal result and progress output. |
+| `--detail`, `--details` | Add topic subscores with up to three concrete findings/reasons directly below each, followed by a short coverage summary; for changes, review signals grouped by rule. Colour on interactive terminals only (`NO_COLOR` disables it). |
 | `--quiet`, `--quite` | Repository scans: output only the numeric index; no progress or diagnostics. Preserve exit status; no output if no index exists. |
 | `--json`, `--yaml` | Output JSON or YAML instead of text; choose one. |
 | `--staged` | Compare HEAD with staged changes. |
@@ -200,7 +234,7 @@ SECURITY_SCORE_LIVE_E2E=1 python3 -B -m unittest test_e2e_juice_shop -v
 This builds a wheel from the current checkout, verifies its source/rules contents,
 installs it into a temporary environment, and runs standard, `--detail` and
 `--quite` scans through the installed entry point. It checks actual HTTPS
-retrieval, numeric evidence, category arithmetic and finding counts, locations,
+retrieval, numeric evidence, topic subscores, bounded examples and finding counts, locations,
 progress versus quiet output, and a 70-second outer deadline per scan. It does
 not run Juice Shop code or install its dependencies. Each scan uses the normal
 60-second budget. The full suite can take about three minutes under slow network

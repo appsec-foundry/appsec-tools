@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 security-score = "score:main"
 
 [tool.setuptools]
-py-modules = ["score", "score_version", "score_update","score_reporting", "score_core", "score_sources", "score_remote", "score_remote_sources", "score_architecture", "score_relevance", "score_calculation"]
+py-modules = ["score", "score_version", "score_update","score_reporting", "score_style","score_core", "score_sources", "score_remote", "score_remote_sources", "score_architecture", "score_relevance", "score_calculation"]
 package-dir = {"" = "scripts"}
 
 [tool.setuptools.data-files]

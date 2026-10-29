@@ -52,8 +52,9 @@ These results include no repository score or grade. Since scoring version 4, `ob
 The default budget is 60 seconds. For repository URLs, downloads stop early
 enough to reserve analysis time. Available sources still produce an observed
 index when download time, entry-count or byte limits prevent a complete scan.
-Detailed text (`--detail` or `--details`) shows category subscores, deductions,
-located findings, files checked and selection limits. Normal text contains only
+Detailed text (`--detail` or `--details`) shows topic subscores with a few located
+findings or reasons directly beneath each, followed by coverage limits. Full
+deductions and every finding remain in JSON/YAML. Normal stdout contains only
 the result line; an incomplete index ends
 with `(partial)` and retains exit status 1. Repositories with no recognized source
 evidence cannot receive a numeric indication.

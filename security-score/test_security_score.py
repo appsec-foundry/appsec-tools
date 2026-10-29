@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import socket
@@ -27,6 +28,14 @@ import score_remote_sources as remote_sources  # noqa: E402
 import score_relevance as relevance  # noqa: E402
 import score_update  # noqa: E402
 import score_version  # noqa: E402
+import score_reporting as reporting  # noqa: E402
+import score_style as style  # noqa: E402
+
+
+def topic_block(details, title):
+    """The heading line and everything beneath it up to the next blank line."""
+    match = re.search(rf"(?ms)^{re.escape(title)}\s.*?(?:\n\n|\Z)", details)
+    return match.group(0) if match else ""
 
 
 class ScoreTests(unittest.TestCase):
@@ -142,8 +151,26 @@ class ScoreTests(unittest.TestCase):
             progress.stop = mock.Mock()
             progress.stop.is_set.side_effect = [False, False, True]
             progress.animate()
-        self.assertIn("\r| Security checks", output.getvalue())
-        self.assertIn("\r/ Security checks", output.getvalue())
+        self.assertIn("\r\033[K| Security checks", output.getvalue())
+        self.assertIn("\r\033[K/ Security checks", output.getvalue())
+
+    def test_terminal_progress_keeps_one_status_line_and_clears_it(self):
+        class Terminal(io.StringIO):
+            def isatty(self):
+                return True
+
+        output = Terminal()
+        with (
+            contextlib.redirect_stderr(output),
+            mock.patch.dict(os.environ, {"TERM": "xterm"}),
+        ):
+            with cli.Progress() as progress:
+                progress.step("Reading selected sources...")
+                progress.step("Checking source patterns...")
+        text = output.getvalue()
+        self.assertNotIn("\n", text)
+        self.assertIn("Checking source patterns...", text)
+        self.assertTrue(text.endswith("\r\033[K"))
 
     def test_partial_evidence_has_an_index_without_a_repository_grade(self):
         self.write("app.py", "eval(payload)\nsubprocess.run(command, shell=setting)\n")
@@ -195,7 +222,7 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(len(result["source_errors"]), 1)
         self.assertGreater(len(result["source_errors"][0]["affected_rules"]), 1)
         output = cli.render(result, details=True)
-        self.assertEqual(output.count("Source processing issue: bad.py"), 1)
+        self.assertEqual(output.count("1 file could not be parsed: bad.py"), 1)
         self.assertNotIn("Unclear application check:", output)
         self.assertEqual(result["observed_score"], 59)
         self.assertIsNone(result["grade"])
@@ -565,12 +592,10 @@ class ScoreTests(unittest.TestCase):
             ["PY-EXEC", "PY-SHELL"],
         )
         details = cli.render(result, details=True)
-        self.assertRegex(details, r"Execution\s+50/100\s+2\s+50\s+59")
-        self.assertRegex(details, r"Transport\s+59/100\s+1\s+25\s+59")
-        self.assertIn("1 x 25 = 25 points", details)
-        self.assertIn(
-            "Overall: lowest assessed category = min(50, 100, 59) = 50", details
-        )
+        self.assertRegex(details, r"(?m)^Architecture\s+50/100")
+        self.assertRegex(details, r"(?m)^Deployment & transport\s+59/100")
+        self.assertIn("PY-EXEC", details)
+        self.assertNotIn("Deduction", details)
         self.assertEqual(cli.render(result), "50/100 (E)")
 
     def test_req07_mixed_severities_and_critical_cap_worked_examples(self):
@@ -770,9 +795,7 @@ class ScoreTests(unittest.TestCase):
         self.assertIsNone(result["score"])
         self.assertEqual(cli.render(result), "59/100 (partial)")
         self.assertIn("large.js", cli.render(result, details=True))
-        self.assertIn(
-            "exceeds the 512 KiB file limit", cli.render(result, details=True)
-        )
+        self.assertIn("1 file over the 512 KiB limit", cli.render(result, details=True))
         self.assertIsNone(result["grade"])
 
     def test_incomplete_without_evidence_does_not_invent_a_pattern_index(self):
@@ -1065,25 +1088,28 @@ class ScoreTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(command.call_count, 2)
 
-    def test_default_has_progress_and_detail_aliases_add_a_category_table(
+    def test_default_has_progress_and_detail_aliases_add_topic_blocks(
         self,
     ):
         self.write("app.py", "eval(payload)\n")
         for args, expected in (
             ([], "59/100 (E)\n"),
-            (["--detail"], "Categories"),
-            (["--details"], "Categories"),
+            (["--detail"], r"(?m)^Architecture\s+59/100"),
+            (["--details"], r"(?m)^Architecture\s+59/100"),
         ):
             output, errors = io.StringIO(), io.StringIO()
             with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
                 status = cli.main([str(self.repo), *args])
             self.assertEqual(status, 0)
             if args:
-                self.assertIn(expected, output.getvalue())
-                self.assertRegex(output.getvalue(), r"Execution\s+59/100\s+1\s+25\s+59")
+                self.assertRegex(output.getvalue(), expected)
+                self.assertRegex(
+                    output.getvalue(), r"(?m)^Authentication\s+not assessed"
+                )
                 self.assertIn("PY-EXEC", output.getvalue())
                 self.assertIn("app.py:1", output.getvalue())
-                self.assertIn("1 x 25 = 25 points", output.getvalue())
+                self.assertIn("1 candidate", output.getvalue())
+                self.assertNotIn("\033", output.getvalue())
                 self.assertIn("Reading selected sources...", errors.getvalue())
             else:
                 self.assertEqual(output.getvalue(), expected)
@@ -1100,19 +1126,158 @@ class ScoreTests(unittest.TestCase):
         status, result, _ = self.invoke()
         self.assertEqual(status, 2)
         details = cli.render(result, details=True)
-        candidates = details.split("\nFindings\n", 1)[1]
-        execution = candidates.split("\nTransport\n", 1)[0]
-        transport = candidates.split("\nTransport\n", 1)[1].split("\nCoverage\n", 1)[0]
+        execution = topic_block(details, "Architecture")
+        transport = topic_block(details, "Deployment & transport")
+        self.assertRegex(execution, r"^Architecture\s+59/100")
+        self.assertRegex(transport, r"^Deployment & transport\s+59/100")
+        self.assertEqual(details.count("(partial)"), 1)
         self.assertIn("PY-EXEC", execution)
         self.assertIn("app.py:1", execution)
         self.assertNotIn("PY-TLS", execution)
         self.assertIn("PY-TLS", transport)
         self.assertIn("app.py:2", transport)
         self.assertNotIn("PY-EXEC", transport)
-        self.assertRegex(details, r"Coverage\s+unknown\s+0\s+-\s+-")
+        self.assertRegex(details, r"(?m)^Authentication\s+not assessed")
         self.assertIn("no repository grade is available", details)
         self.assertNotIn("score=withheld", details)
         self.assertNotIn("observed=None", details)
+
+    def test_topic_subscores_use_area_minima_and_do_not_pool_deductions(self):
+        self.write(
+            "app.py", "eval(payload)\neval(other)\ncursor.execute('SELECT ' + value)\n"
+        )
+        self.write("safe.js", "element.textContent = payload;\n")
+        self.write("Dockerfile", "USER app\n")
+        _, result, _ = self.invoke()
+        topics = {topic["id"]: topic for topic in reporting.subcategories(result)}
+        self.assertEqual(topics["architecture"]["index"], 50)
+        self.assertEqual(topics["frontend"]["index"], 100)
+        self.assertEqual(topics["deployment"]["index"], 100)
+        self.assertIsNone(topics["authentication"]["index"])
+        self.assertEqual(
+            min(
+                topic["index"]
+                for topic in topics.values()
+                if topic["index"] is not None
+            ),
+            result["observed_score"],
+        )
+        self.assertEqual(
+            sum(len(topic["findings"]) for topic in topics.values()),
+            len(result["findings"]),
+        )
+
+    def test_topic_examples_are_bounded_without_dropping_findings(self):
+        self.write(
+            "app.py",
+            "eval(payload)\nsubprocess.run(cmd, shell=True)\ncursor.execute('SELECT ' + value)\n",
+        )
+        self.write("script.js", "eval(payload);\n")
+        _, result, _ = self.invoke()
+        original = json.dumps(result, sort_keys=True)
+        details = cli.render(result, details=True)
+        architecture = topic_block(details, "Architecture")
+        self.assertEqual(
+            len(re.findall(r"(?m)^  (?:CRITICAL|HIGH|MEDIUM|LOW)\s", architecture)), 3
+        )
+        self.assertIn("+1 more finding types", architecture)
+        self.assertEqual(len(result["findings"]), 4)
+        self.assertEqual(json.dumps(result, sort_keys=True), original)
+        self.assertNotIn("\nFindings\n", details)
+        self.assertNotIn("Deduction", details)
+
+    def test_technology_context_does_not_manufacture_authentication_or_architecture_scores(
+        self,
+    ):
+        self.write(
+            "package.json",
+            '{"dependencies":{"@angular/core":"1.0.0","sequelize":"1.0.0"}}',
+        )
+        _, result, _ = self.invoke()
+        details = cli.render(result, details=True)
+        self.assertRegex(details, r"(?m)^Authentication\s+not assessed")
+        self.assertRegex(details, r"(?m)^Architecture\s+not assessed")
+        self.assertIn("@angular/core, sequelize", details)
+        self.assertIn("technology presence adds no score credit", details)
+
+    def test_colour_only_on_a_capable_terminal_and_never_with_no_color(self):
+        class Terminal(io.StringIO):
+            def isatty(self):
+                return True
+
+        self.write("app.py", "eval(payload)\n")
+        _, result, _ = self.invoke()
+        plain = cli.render(result, details=True)
+        self.assertNotIn("\033", plain)
+        with mock.patch.dict(os.environ, {"TERM": "xterm"}, clear=False):
+            os.environ.pop("NO_COLOR", None)
+            coloured = cli.render(result, True, style.Style.detect(Terminal()))
+            self.assertIn("\033[31mHIGH", coloured)
+            self.assertIn(
+                "\033[", cli.render(result, False, style.Style.detect(Terminal()))
+            )
+            os.environ["NO_COLOR"] = "1"
+            self.assertEqual(
+                cli.render(result, True, style.Style.detect(Terminal())), plain
+            )
+        with mock.patch.dict(os.environ, {"TERM": "dumb"}):
+            self.assertFalse(style.Style.detect(Terminal()).color)
+        self.assertFalse(style.Style.detect(io.StringIO()).color)
+        self.assertEqual(re.sub(r"\033\[[0-9;]*m", "", coloured), plain)
+
+    def test_ascii_fallback_when_the_stream_cannot_encode_glyphs(self):
+        class Latin(io.StringIO):
+            encoding = "ascii"
+
+        fallback = style.Style.detect(Latin())
+        self.assertFalse(fallback.unicode)
+        self.write("app.py", "eval(payload)\n")
+        _, result, _ = self.invoke()
+        text = cli.render(result, True, fallback)
+        self.assertTrue(text.isascii())
+        self.assertIn("[######----]", text)
+
+    def test_control_characters_in_repository_paths_never_reach_the_terminal(self):
+        self.write("app.py", "eval(payload)\n")
+        _, result, _ = self.invoke()
+        for row in (*result["findings"], *result["checks"]):
+            if row["file"] == "app.py":
+                row["file"] = "evil\x1b]0;owned\x07\x9b2Jname.py"
+        details = cli.render(result, details=True)
+        self.assertNotRegex(details, r"[\x00-\x09\x0b-\x1f\x7f-\x9f]")
+        self.assertIn("evil?]0;owned??2Jname.py:1", details)
+
+    def test_topic_headers_align_scores_and_bars(self):
+        self.write("app.py", "eval(payload)\n")
+        _, result, _ = self.invoke()
+        headers = re.findall(
+            r"(?m)^(\S.*?)\s+(\d+/100)\s+([█░]{10})\s", cli.render(result, True)
+        )
+        self.assertEqual(len(headers), 1)
+        self.assertEqual(headers[0][2], "██████░░░░")
+
+    def test_change_details_group_signals_by_rule_without_repeating_reasons(self):
+        self.init("def view(user):\n    return user.name\n")
+        self.write("a.py", "token = supplied\n")
+        self.write("b.py", "secret = supplied\n")
+        self.write("c.md", "# Notes\n")
+        _, result, _ = self.invoke("--worktree")
+        details = cli.render(result, details=True)
+        for rule in {row["rule"] for row in result["signals"]}:
+            reason = next(
+                row["reason"] for row in result["signals"] if row["rule"] == rule
+            )
+            self.assertEqual(" ".join(details.split()).count(reason), 1)
+        self.assertNotIn('"changed_files"', details)
+        self.assertRegex(details, r"(?m)^(HIGH|MEDIUM|LOW)\s+\S")
+        self.assertIn("--json", details)
+
+    def test_unmapped_future_areas_remain_visible_in_topic_scores(self):
+        self.write("app.py", "eval(payload)\n")
+        _, result, _ = self.invoke()
+        result["areas"].append({"area": "future-boundary", "score": 39})
+        topics = {topic["id"]: topic for topic in reporting.subcategories(result)}
+        self.assertEqual(topics["future-boundary"]["index"], 39)
 
     def test_default_partial_result_has_progress_without_calculations_and_limits(self):
         self.write("app.py", "eval(payload)\n")
@@ -1946,8 +2111,9 @@ class RemoteTests(unittest.TestCase):
                         self.assertEqual(errors.getvalue(), "")
                     elif flags == ["--detail"]:
                         self.assertRegex(
-                            output.getvalue(), r"Execution\s+59/100\s+1\s+25\s+59"
+                            output.getvalue(), r"(?m)^Architecture\s+59/100"
                         )
+                        self.assertIn("59/100 (partial)", output.getvalue())
                         self.assertIn(reason, output.getvalue())
                     else:
                         self.assertEqual(output.getvalue(), "59/100 (partial)\n")

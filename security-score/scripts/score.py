@@ -49,7 +49,13 @@ except (
         )
     raise SystemExit(1) from None
 from score_sources import Budget, SourceError, command, excluded, fingerprint, select
-from score_reporting import explain as explain_observations, render_repository
+from score_reporting import (
+    explain as explain_observations,
+    plural,
+    render_repository,
+    wrapped,
+)
+from score_style import Style, safe
 from score_architecture import describe
 from score_relevance import VERSION as RELEVANCE_VERSION, analyze as analyze_relevance
 from score_remote import (
@@ -71,12 +77,17 @@ class Progress:
         self.lock = threading.Lock()
         self.stream = sys.stderr
         self.terminal = self.stream.isatty() and os.environ.get("TERM") != "dumb"
+        self.message = "Security checks are running..."
 
     def step(self, message):
+        """A terminal keeps one status line that __exit__ clears; other streams log lines."""
         if self.enabled:
             with self.lock:
-                prefix = "\r\033[K" if self.terminal else ""
-                print(prefix + message, file=self.stream, flush=True)
+                self.message = message
+                if self.terminal:
+                    print("\r\033[K" + message, end="", file=self.stream, flush=True)
+                else:
+                    print(message, file=self.stream, flush=True)
 
     def animate(self):
         if not self.terminal:
@@ -87,7 +98,7 @@ class Progress:
         while not self.stop.is_set():
             with self.lock:
                 print(
-                    f"\r{frames[index % 4]} Security checks are running...",
+                    f"\r\033[K{frames[index % 4]} {self.message}",
                     end="",
                     file=self.stream,
                     flush=True,
@@ -157,7 +168,10 @@ def parser():
         help="Show the rule catalog without scanning",
     )
     result.add_argument(
-        "--engine", choices=("internal", "analyzer"), default="internal"
+        "--engine",
+        choices=("internal", "analyzer"),
+        default="internal",
+        help="Scoring engine; the optional Analyzer must be installed separately (default: internal)",
     )
     result.add_argument(
         "--analyzer", help="Trusted operator-selected absolute Analyzer executable"
@@ -171,8 +185,12 @@ def parser():
     )
     selection.add_argument("--base", help="Base revision for a local Git comparison")
     selection.add_argument("--commit", help="Compare a commit with its first parent")
-    selection.add_argument("--staged", action="store_true")
-    selection.add_argument("--unstaged", action="store_true")
+    selection.add_argument(
+        "--staged", action="store_true", help="HEAD versus staged changes"
+    )
+    selection.add_argument(
+        "--unstaged", action="store_true", help="Index versus unstaged working files"
+    )
     selection.add_argument(
         "--worktree",
         action="store_true",
@@ -266,65 +284,188 @@ def yaml_text(value, indent=0):
     return space + json.dumps(value, ensure_ascii=True, allow_nan=False)
 
 
-def render(result, details=False):
+def render(result, details=False, style=None):
+    style = style or Style()
     if result.get("analysis") == "change-relevance":
-        return render_change(result, details)
-    if not details:
-        if result["score"] is None and result.get("observed_score") is not None:
-            return f"{result['observed_score']}/100 (partial)"
-        return (
-            f"{result['score']}/100 ({result['grade']})"
-            if result["score"] is not None
-            else result["verdict"]
+        return render_change(result, details, style)
+    if result["score"] is None and result.get("observed_score") is not None:
+        summary, shade = (
+            f"{result['observed_score']}/100 (partial)",
+            result["observed_score"],
         )
-    lines = [
-        f"Security score · {result['engine']} · version {result['scoring_version']}",
-        render(result),
-        "Limited scanner indication; no security approval or verified exploitability.",
-    ]
+    elif result["score"] is not None:
+        summary, shade = f"{result['score']}/100 ({result['grade']})", result["score"]
+    else:
+        summary, shade = result["verdict"], None
+    if not details:
+        return style.paint(summary, style.band(shade), "bold")
     if result["engine"] == "analyzer":
+        lines = [
+            f"Security score {style.dot} {result['engine']} {style.dot} version {result['scoring_version']}",
+            style.paint(summary, style.band(shade), "bold"),
+            "Limited scanner indication; no security approval or verified exploitability.",
+        ]
         for entry in result.get("host_settings", []):
             lines.append(
-                f"Host {entry['setting']}: {entry['status']} · {entry['reason']}"
+                f"Host {entry['setting']}: {entry['status']} {style.dot} {entry['reason']}"
             )
         lines += [
             "Analyzer result (separate scoring policy):",
             json.dumps(result["analyzer_result"], indent=2, ensure_ascii=True),
         ]
         return "\n".join(lines)
-    return render_repository(result, render(result))
+    return render_repository(result, summary, style)
 
 
-def render_change(result, details=False):
+def signal_groups(signals):
+    """One block per rule: the reason is stated once, locations are listed per file."""
+    groups = {}
+    for signal in signals:
+        groups.setdefault(signal["rule"], []).append(signal)
+    order = {"high": 0, "medium": 1, "low": 2}
+    return sorted(
+        groups.items(),
+        key=lambda pair: (order.get(pair[1][0]["level"], 3), -len(pair[1]), pair[0]),
+    )
+
+
+def file_locations(signals, limit=4):
+    """Baseline and proposed signals on one line are one location; line 0 is a whole file."""
+    files = {}
+    for signal in signals:
+        files.setdefault(signal["file"], set()).add(signal["line"])
+    rows = []
+    for path, numbers in sorted(files.items()):
+        numbers = sorted(number for number in numbers if number)
+        shown = ", ".join(str(number) for number in numbers[:limit])
+        more = f" (+{len(numbers) - limit} more)" if len(numbers) > limit else ""
+        rows.append(safe(path) + (f":{shown}{more}" if numbers else ""))
+    return rows
+
+
+def location_count(signals):
+    return len({(signal["file"], signal["line"]) for signal in signals})
+
+
+def render_change(result, details=False, style=None):
+    style = style or Style()
     counts = result["finding_changes"]
-    status = "incomplete · " if result["verdict"] == "incomplete" else ""
-    summary = f"{status}Security relevance: {result['relevance']} · {counts.get('introduced', 0)} introduced, {counts.get('worsened', 0)} worsened findings"
+    status = f"incomplete {style.dot} " if result["verdict"] == "incomplete" else ""
+    level = result["relevance"]
+    summary = (
+        f"{status}Security relevance: {style.severity(level, level)} {style.dot} "
+        f"{counts.get('introduced', 0)} introduced, {counts.get('worsened', 0)} worsened findings"
+    )
     if not details:
         return summary
     scope = result["scope"]
+    indent = " " * 10
     lines = [
         summary,
-        f"Rule version: {result['rule_version']} · relevance version: {result['relevance_version']}",
-        f"Scope: {scope['selection']} · {scope['repository']}",
-        "Security relevance identifies review needs; finding severity is reported separately.",
+        f"Scope: {scope['selection']} {style.dot} {safe(scope['repository'])}",
     ]
     if "base" in scope:
-        lines.append(f"Comparison: {scope['base']} -> {scope['head']}")
+        lines.append(
+            f"Comparison: {safe(scope['base'])[:12]} {style.arrow} {safe(scope['head'])[:12]}"
+        )
     if "remote_selection" in scope:
-        lines.append(f"PR/MR: {scope['remote_selection']}")
-        lines.append(f"Context: {scope['remote_validation']}")
-    for signal in result["signals"]:
-        lines.append(
-            f"{signal['level'].upper()} · {signal['rule']} · {signal['file']}:{signal['line']} ({signal['side']}, {signal['relation']})\n  {signal['reason']}"
+        lines.append(f"PR/MR: {safe(scope['remote_selection'])}")
+        lines.append(f"Context: {safe(scope['remote_validation'])}")
+    lines += [
+        style.paint(line, "dim")
+        for line in wrapped(
+            "Security relevance identifies review needs; finding severity is reported separately. "
+            "It rates changed security behavior, not detected weaknesses.",
+            style.width,
+            "",
         )
-    for finding in result["findings"]:
-        lines.append(
-            f"{finding['severity'].upper()} · {finding['change']} · {finding['rule']} · {finding['file']}:{finding['line']}\n  {finding['title']}\n  Next: {finding['next_action']}"
-        )
+    ]
+    signals = result["signals"]
+    if signals:
+        files = len({signal["file"] for signal in signals})
+        lines += [
+            "",
+            style.paint(
+                f"Review signals ({plural(location_count(signals), 'location')} in {plural(files, 'file')})",
+                "bold",
+            ),
+        ]
+        for rule, group in signal_groups(signals):
+            first = group[0]
+            lines.append(
+                f"{style.tag(first['level'])}  "
+                f"{first['aspect'][:1].upper() + first['aspect'][1:]} "
+                + style.paint(
+                    f"({rule}, {plural(location_count(group), 'location')})", "dim"
+                )
+            )
+            lines += [
+                indent + line for line in wrapped(first["reason"], style.width - 10, "")
+            ]
+            rows = file_locations(group)
+            lines += [style.paint(indent + row, "dim") for row in rows[:5]]
+            if len(rows) > 5:
+                lines.append(style.paint(f"{indent}+{len(rows) - 5} more files", "dim"))
+    if result["findings"]:
+        lines += ["", style.paint(f"Findings ({len(result['findings'])})", "bold")]
+        for finding in result["findings"]:
+            lines.append(
+                f"{style.tag(finding['severity'])}  "
+                f"{safe(finding['title'])} "
+                + style.paint(f"({finding['change']}, {finding['rule']})", "dim")
+            )
+            lines.append(
+                style.paint(f"{indent}{safe(finding['file'])}:{finding['line']}", "dim")
+            )
+            lines += [
+                indent + line
+                for line in wrapped(
+                    f"Next: {finding['next_action']}", style.width - 10, ""
+                )
+            ]
+    coverage = result["coverage"]
+    outcomes = coverage.get("check_outcomes", {})
+    lines += ["", style.paint("Coverage", "bold")]
     lines.append(
-        "Coverage: " + json.dumps(result["coverage"], ensure_ascii=True, sort_keys=True)
+        f"  {plural(len(coverage.get('changed_files', [])), 'file')} changed"
+        + (
+            f" {style.dot} {len(coverage['nonfunctional_or_documentation'])} documentation"
+            if coverage.get("nonfunctional_or_documentation")
+            else ""
+        )
+        + (
+            f" {style.dot} {len(coverage['unclassified_files'])} not classified"
+            if coverage.get("unclassified_files")
+            else ""
+        )
     )
-    lines.extend("Limit: " + warning for warning in result["warnings"])
+    if outcomes:
+        lines.append(
+            "  Checks: "
+            + f" {style.dot} ".join(
+                f"{count} {name.replace('_', ' ')}" for name, count in outcomes.items()
+            )
+        )
+    if coverage.get("signals_truncated"):
+        lines.append("  Signal list truncated; --json has the retained evidence.")
+    if coverage.get("context_limited_files"):
+        lines.append(
+            "  Limited context: "
+            + ", ".join(safe(name) for name in coverage["context_limited_files"])
+        )
+    lines.append("")
+    for warning in result["warnings"]:
+        lines += [
+            style.paint(line, "dim")
+            for line in wrapped(safe(warning), style.width, "  ")
+        ]
+    lines.append(
+        style.paint(
+            f"  Rule version {result['rule_version']} {style.dot} relevance version {result['relevance_version']}"
+            f" {style.dot} per-signal side, relation and coverage basis: --json",
+            "dim",
+        )
+    )
     return "\n".join(lines)
 
 
@@ -802,7 +943,7 @@ def execute(argv):
                 for rule in relevance_rules
             )
         else:
-            output = render(result, options.details)
+            output = render(result, options.details, Style.detect(sys.stdout))
         print(output)
         return status
     except KeyboardInterrupt:
