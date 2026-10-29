@@ -15,7 +15,7 @@ import threading
 from urllib.parse import quote, urlsplit
 
 from score_core import RULES
-from score_sources import SourceError
+from score_sources import RemoteError, SourceError
 from score_remote_sources import select_files
 
 
@@ -76,13 +76,24 @@ def public_addresses(host, budget):
             complete.set()
 
     threading.Thread(target=lookup, daemon=True).start()
-    if not complete.wait(timeout=budget.remaining()) or not result:
+    if not complete.wait(timeout=min(5, budget.remaining())) or not result:
+        budget.check()
         raise SourceError(
             "Cannot resolve the selected public Git host within the time limit."
         )
     if any(not ipaddress.ip_address(row[4][0]).is_global for row in result):
         raise SourceError("Git host resolved to a non-public network destination.")
     return result
+
+
+def interrupt_socket(sock, expired=None):
+    """Interrupt header/body reads even when a peer keeps trickling bytes."""
+    if expired is not None:
+        expired.set()
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
 
 
 def get(
@@ -106,21 +117,38 @@ def get(
     ):
         raise SourceError("Rejected repository metadata or source destination.")
     connection = connections.get(host) if connections is not None else None
-    raw_socket, reusable = None, False
+    raw_socket, reusable, deadline = None, False, None
+    expired = threading.Event()
     try:
         if connection is None or connection.sock is None:
             addresses = public_addresses(host, budget)
-            address = addresses[0]
-            connection = http.client.HTTPSConnection(
-                host, timeout=min(5, budget.remaining()), context=tls_context()
-            )
-            raw_socket = socket.socket(address[0], socket.SOCK_STREAM)
-            raw_socket.settimeout(min(5, budget.remaining()))
-            raw_socket.connect(address[4])
-            connection.sock = connection._context.wrap_socket(
-                raw_socket, server_hostname=host
-            )
+            if connection is not None:
+                connection.close()
+            for address in addresses:
+                connection = http.client.HTTPSConnection(
+                    host, timeout=min(5, budget.remaining()), context=tls_context()
+                )
+                raw_socket = socket.socket(address[0], socket.SOCK_STREAM)
+                try:
+                    raw_socket.settimeout(min(5, budget.remaining()))
+                    raw_socket.connect(address[4])
+                    raw_socket.settimeout(min(5, budget.remaining()))
+                    connection.sock = connection._context.wrap_socket(
+                        raw_socket, server_hostname=host
+                    )
+                    break
+                except OSError:
+                    raw_socket.close()
+                    connection.close()
+            else:
+                budget.check()
+                return None, 0
         connection.sock.settimeout(min(5, budget.remaining()))
+        deadline = threading.Timer(
+            min(5, budget.remaining()), interrupt_socket, (connection.sock, expired)
+        )
+        deadline.daemon = True
+        deadline.start()
         headers = {
             "User-Agent": "appsec-skills-security-score/1",
             "Accept": accept,
@@ -141,7 +169,13 @@ def get(
         if response.status != 200:
             return None, response.status
         length = response.getheader("Content-Length")
-        if length and (not length.isdigit() or int(length) > limit):
+        if length is not None and (
+            not length
+            or len(length) > 16
+            or not length.isascii()
+            or not length.isdecimal()
+            or int(length) > limit
+        ):
             raise SourceError(
                 f"Remote response exceeds the {limit:,}-byte download limit; no score is available."
             )
@@ -158,6 +192,14 @@ def get(
                     f"Remote response exceeds the {limit:,}-byte download limit; no score is available."
                 )
             data.extend(chunk)
+        deadline.cancel()
+        deadline.join()
+        deadline = None
+        budget.check()
+        if expired.is_set():
+            return None, 0
+        if length is not None and len(data) != int(length):
+            raise SourceError("Remote response ended before its declared length.")
         reusable = connections is not None and connection.sock is not None
         if reusable:
             connections[host] = connection
@@ -166,6 +208,9 @@ def get(
         budget.check()
         return None, 0
     finally:
+        if deadline is not None:
+            deadline.cancel()
+            deadline.join()
         if not reusable:
             if connection is not None:
                 connection.close()
@@ -219,11 +264,17 @@ def source_error(status, subject):
         reason = "connection failed; check network access and retry"
     else:
         reason = f"host returned HTTP {status}; retry later or check host availability"
-    return SourceError(f"{subject}: {reason}. No score is available.")
+    return RemoteError(f"{subject}: {reason}. No score is available.", status)
 
 
 def json_get(url, budget, token, token_host, expected=dict, *, required=False):
-    data, status = get(url, budget, token=token, token_host=token_host)
+    try:
+        request_budget = budget if required else budget.portion(0.1)
+        data, status = get(url, request_budget, token=token, token_host=token_host)
+    except SourceError:
+        if required:
+            raise
+        return {}, "optional host metadata unavailable or timed out"
     if data is None:
         if required:
             raise source_error(status, "Repository source")
@@ -240,7 +291,7 @@ def json_get(url, budget, token, token_host, expected=dict, *, required=False):
                 )
             return {}, "invalid API response"
         return document, None
-    except (ValueError, UnicodeError):
+    except (ValueError, UnicodeError, RecursionError):
         if required:
             raise SourceError(
                 "Repository source metadata has an invalid API response; no score is available."
@@ -356,7 +407,9 @@ def host_settings(host, project, budget, token=None, *, require_source=False):
             settings.append(
                 setting(
                     field,
-                    status == "enabled" if status in {"enabled", "disabled"} else None,
+                    status == "enabled"
+                    if isinstance(status, str) and status in {"enabled", "disabled"}
+                    else None,
                     error,
                 )
             )
@@ -454,12 +507,26 @@ def select_remote(options, budget):
         raise SourceError(
             "Repository has no readable default-branch commit (empty repository or inaccessible branch); no score is available."
         )
+    if not isinstance(revision, str) or not re.fullmatch(
+        r"[0-9a-f]{40}(?:[0-9a-f]{24})?", revision
+    ):
+        raise SourceError(
+            "Repository host returned an invalid commit ID; no score is available."
+        )
     token_host = "api.github.com" if host == "github.com" else "gitlab.com"
 
-    read = SourceReader(budget, token, token_host)
+    # Stop network selection before the overall deadline, leaving time to scan
+    # the sources already available and publish their observed pattern index.
+    source_budget = budget.portion(0.7)
+    read = SourceReader(source_budget, token, token_host)
     try:
         files, exclusions = select_files(
-            host, project, revision, budget, read, authenticated=token is not None
+            host,
+            project,
+            revision,
+            source_budget,
+            read,
+            authenticated=token is not None,
         )
     finally:
         read.close()

@@ -8,7 +8,7 @@
 
 - **REQ-04 — Report limits honestly.** Distinguish supported controls, detected weaknesses, unknowns, and exclusions. Technology presence alone does not prove effective protection. Withhold score and grade when coverage is insufficient or required checks fail; retain available findings. A high score does not establish safety. For changes, missing findings or context do not establish low security relevance.
 
-- **REQ-05 — Stay fast and bounded.** Focus on the selected scope within documented execution limits. Show progress during longer runs and clearly report incomplete, failed, or cancelled work.
+- **REQ-05 — Stay fast and bounded.** Aim for a repository indication within a default budget of about 60 seconds. For URL scans, reserve analysis time and retain downloaded sources when time, entry-count or byte limits prevent a complete scan. Report an observed index when recognized source evidence exists, with explicit coverage limits and no repository grade for incomplete work. Keep processing bounded, show progress during longer runs and clearly report incomplete, failed, or cancelled work.
 
 - **REQ-06 — Keep Analyzer optional.** Select AppSec Analyzer only through an explicit parameter. Internal scoring remains the default, including when Analyzer is installed. Explain its prerequisites, supported scope, and separate scoring policy.
 

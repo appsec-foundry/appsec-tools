@@ -8,8 +8,10 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import socket
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -27,6 +29,58 @@ import score_version  # noqa: E402
 
 
 class ScoreTests(unittest.TestCase):
+    def test_deep_python_parser_failure_keeps_other_files_and_reports_location(self):
+        self.write("a.py", "eval(payload)\n")
+        self.write("deep.py", "x = " + "+".join(["a"] * 1200) + "\neval(payload)\n")
+        status, result, errors = self.invoke()
+        self.assertEqual(status, 1)
+        self.assertEqual(result["observed_score"], 59)
+        self.assertIsNone(result["grade"])
+        self.assertTrue(any(row["file"] == "a.py" for row in result["findings"]))
+        self.assertTrue(
+            any(row["file"] == "deep.py" for row in result["source_errors"])
+        )
+        self.assertNotIn("Traceback", errors)
+
+    def test_malformed_lockfile_version_does_not_discard_other_findings(self):
+        self.write("app.py", "eval(payload)\n")
+        self.write("package.json", '{"dependencies":{"example":"1.0.0"}}')
+        self.write("package-lock.json", '{"lockfileVersion":[],"packages":{}}')
+        status, result, _ = self.invoke()
+        self.assertEqual(status, 2)
+        self.assertEqual(result["observed_score"], 59)
+        self.assertTrue(any(row["rule"] == "PY-EXEC" for row in result["findings"]))
+
+    def test_unexpected_boundary_errors_are_sanitized_without_tracebacks(self):
+        for failure in (AttributeError, IndexError, OverflowError, RuntimeError):
+            with (
+                self.subTest(failure=failure),
+                mock.patch.object(
+                    cli, "run", side_effect=failure("SYNTHETIC_PRIVATE_DIAGNOSTIC")
+                ),
+            ):
+                status, result, errors = self.invoke()
+                self.assertEqual(status, 1)
+                self.assertIsNone(result)
+                self.assertNotIn("SYNTHETIC_PRIVATE_DIAGNOSTIC", errors)
+                self.assertNotIn("Traceback", errors)
+
+    def test_unavailable_current_directory_is_reported_without_traceback(self):
+        with (
+            mock.patch.object(
+                cli.os,
+                "getcwd",
+                side_effect=FileNotFoundError("SYNTHETIC_PRIVATE_DIAGNOSTIC"),
+            ),
+            contextlib.redirect_stdout(io.StringIO()) as output,
+            contextlib.redirect_stderr(io.StringIO()) as errors,
+        ):
+            status = cli.main(["--json"])
+        self.assertEqual(status, 1)
+        self.assertEqual(output.getvalue(), "")
+        self.assertNotIn("Traceback", errors.getvalue())
+        self.assertNotIn("SYNTHETIC_PRIVATE_DIAGNOSTIC", errors.getvalue())
+
     def test_quiet_cli_has_only_the_number_and_no_progress(self):
         self.write("app.py", "eval(payload)\n" * 4)
         self.write("large.js", "x" * (sources.MAX_FILE + 1))
@@ -425,7 +479,7 @@ class ScoreTests(unittest.TestCase):
                 self.write("remaining.py", "eval(payload)\n" * (count - 1))
                 status, result, _ = self.invoke()
                 self.assertEqual(status, 0)
-                self.assertEqual(result["scoring_version"], 4)
+                self.assertEqual(result["scoring_version"], 5)
                 self.assertEqual(result["score"], expected)
                 area = next(
                     row for row in result["areas"] if row["area"] == "execution"
@@ -622,7 +676,7 @@ class ScoreTests(unittest.TestCase):
             self.assertEqual(output.getvalue(), "")
             self.assertNotIn("Local source directory", errors.getvalue())
 
-    def test_remote_source_failure_never_publishes_a_partial_score(self):
+    def test_remote_source_failure_without_evidence_has_no_numeric_score(self):
         output, errors = io.StringIO(), io.StringIO()
         listing = json.dumps(
             {
@@ -646,9 +700,14 @@ class ScoreTests(unittest.TestCase):
         ):
             status = cli.main(["https://github.com/example/project", "--json"])
         self.assertEqual(status, 1)
-        self.assertEqual(output.getvalue(), "")
-        self.assertIn("Cannot read selected source app.py", errors.getvalue())
-        self.assertIn("No score", errors.getvalue())
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["verdict"], "incomplete")
+        self.assertIsNone(result["score"])
+        self.assertIsNone(result["observed_score"])
+        self.assertIsNone(result["grade"])
+        self.assertEqual(
+            result["coverage"]["selection_limits"], {"source download failed": 1}
+        )
 
     def test_oversized_source_has_an_actionable_compact_result(self):
         self.write("app.py", "eval(payload)\n")
@@ -1509,9 +1568,363 @@ class ScoreTests(unittest.TestCase):
 
 
 class RemoteTests(unittest.TestCase):
+    def test_slow_headers_and_bodies_cannot_outlive_the_request_budget(self):
+        for slow_part in ("headers", "body"):
+            with self.subTest(slow_part=slow_part):
+                client, server = socket.socketpair()
+                connection = remote.http.client.HTTPConnection("api.github.com")
+                connection.sock = client
+                stop = threading.Event()
+
+                def trickle():
+                    try:
+                        initial = (
+                            b"HTTP/1.1 200 OK\r\nX-Test: "
+                            if slow_part == "headers"
+                            else b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n"
+                        )
+                        server.sendall(initial)
+                        while not stop.wait(0.005):
+                            server.sendall(b"x")
+                    except OSError:
+                        pass
+
+                sender = threading.Thread(target=trickle, daemon=True)
+                sender.start()
+                started = time.monotonic()
+                try:
+                    with self.assertRaises(sources.BudgetExceeded):
+                        remote.get(
+                            "https://api.github.com/repos/example/project",
+                            sources.Budget(0.15),
+                            connections={"api.github.com": connection},
+                        )
+                    self.assertLess(time.monotonic() - started, 2)
+                finally:
+                    stop.set()
+                    connection.close()
+                    server.close()
+                    sender.join(timeout=1)
+                self.assertFalse(sender.is_alive())
+
+    def test_unreachable_first_address_falls_back_to_another_checked_address(self):
+        bad, good, connection = mock.Mock(), mock.Mock(), mock.Mock()
+        bad.connect.side_effect = OSError("SYNTHETIC_PRIVATE_DIAGNOSTIC")
+        response = mock.Mock(status=200)
+        response.getheader.return_value = "2"
+        response.read.side_effect = [b"{}", b""]
+        connection.getresponse.return_value = response
+        with (
+            mock.patch.object(
+                remote,
+                "public_addresses",
+                return_value=[
+                    (socket.AF_INET6, 1, 6, "", ("2001:4860:4860::8888", 443, 0, 0)),
+                    (socket.AF_INET, 1, 6, "", ("8.8.8.8", 443)),
+                ],
+            ),
+            mock.patch.object(remote.socket, "socket", side_effect=[bad, good]),
+            mock.patch.object(
+                remote.http.client, "HTTPSConnection", return_value=connection
+            ),
+        ):
+            self.assertEqual(
+                remote.get(
+                    "https://api.github.com/repos/example/project", sources.Budget()
+                ),
+                (b"{}", 200),
+            )
+        bad.close.assert_called()
+        good.connect.assert_called_once_with(("8.8.8.8", 443))
+
+    def test_optional_metadata_failures_remain_unknown_without_blocking_sources(self):
+        for failure in (sources.BudgetExceeded, sources.SourceError):
+            with (
+                self.subTest(failure=failure),
+                mock.patch.object(
+                    remote, "get", side_effect=failure("SYNTHETIC_PRIVATE_DIAGNOSTIC")
+                ),
+            ):
+                document, reason = remote.json_get(
+                    "https://api.github.com/repos/example/project",
+                    sources.Budget(),
+                    None,
+                    "api.github.com",
+                )
+                self.assertEqual(document, {})
+                self.assertNotIn("SYNTHETIC_PRIVATE_DIAGNOSTIC", reason)
+                with self.assertRaises(failure):
+                    remote.json_get(
+                        "https://api.github.com/repos/example/project",
+                        sources.Budget(),
+                        None,
+                        "api.github.com",
+                        required=True,
+                    )
+
+    def test_optional_deep_json_and_wrong_setting_types_remain_unknown(self):
+        with mock.patch.object(
+            remote, "get", return_value=(b"[" * 1200 + b"]" * 1200, 200)
+        ):
+            self.assertEqual(
+                remote.json_get(
+                    "https://api.github.com/repos/example/project",
+                    sources.Budget(),
+                    None,
+                    "api.github.com",
+                ),
+                ({}, "invalid API response"),
+            )
+        with mock.patch.object(
+            remote,
+            "json_get",
+            side_effect=[
+                ({"security_and_analysis": {"secret_scanning": {"status": []}}}, None),
+            ],
+        ):
+            settings, _ = remote.host_settings(
+                "github.com", "example/project", sources.Budget()
+            )
+        self.assertTrue(all(row["status"] == "unknown" for row in settings))
+
+    def test_invalid_commit_ids_are_rejected_before_source_requests(self):
+        for revision in ([], "../main", "a" * 41, "a" * 40 + "?path=other", 123):
+            with (
+                self.subTest(revision=revision),
+                mock.patch.object(remote, "host_settings", return_value=([], revision)),
+                mock.patch.object(remote, "get") as get,
+                contextlib.redirect_stdout(io.StringIO()) as output,
+                contextlib.redirect_stderr(io.StringIO()) as errors,
+            ):
+                status = cli.main(["https://github.com/example/project", "--json"])
+            self.assertEqual(status, 1)
+            self.assertEqual(output.getvalue(), "")
+            self.assertIn("invalid commit ID", errors.getvalue())
+            get.assert_not_called()
+
+    def test_unknown_source_sizes_stop_downloads_at_the_aggregate_limit(self):
+        entries = [
+            {"path": f"app-{i}.py", "id": "b" * 40, "type": "blob", "mode": "100644"}
+            for i in range(10)
+        ]
+        read = mock.Mock(side_effect=[json.dumps(entries).encode(), b"abc"])
+        with (
+            mock.patch.object(remote_sources, "MAX_BYTES", 3),
+            mock.patch.object(remote_sources, "MAX_PARALLEL", 1),
+        ):
+            files, exclusions = remote_sources.select_files(
+                "gitlab.com", "group/project", "a" * 40, sources.Budget(), read
+            )
+        self.assertEqual(list(files), ["app-0.py"])
+        self.assertEqual(read.call_count, 2)
+        self.assertEqual(len(exclusions), 9)
+        self.assertTrue(all(row["reason"] == "source byte limit" for row in exclusions))
+
+    def test_download_http_status_is_available_in_details_without_response_bodies(self):
+        source = b"eval(payload)\n"
+        for status_code in (401, 403, 404, 429, 500):
+            with (
+                self.subTest(status_code=status_code),
+                mock.patch.object(remote_sources, "MAX_PARALLEL", 1),
+                mock.patch.object(remote, "host_settings", return_value=([], "a" * 40)),
+                mock.patch.object(
+                    remote,
+                    "get",
+                    side_effect=[
+                        (
+                            self.listing(
+                                [
+                                    self.entry(size=len(source)),
+                                    self.entry("z.py", size=1),
+                                ]
+                            ),
+                            200,
+                        ),
+                        (source, 200),
+                        (None, status_code),
+                    ],
+                ),
+                contextlib.redirect_stdout(io.StringIO()) as output,
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                status = cli.main(["https://github.com/example/project", "--details"])
+            self.assertEqual(status, 1)
+            self.assertIn(
+                f"z.py · source download failed (HTTP {status_code})", output.getvalue()
+            )
+            self.assertIn("Observed pattern index: 59", output.getvalue())
+
+    def test_default_budget_and_download_reserve_leave_analysis_time(self):
+        self.assertEqual(cli.parser().parse_args([]).timeout, 60)
+        with mock.patch.object(sources.time, "monotonic", return_value=100) as clock:
+            overall = sources.Budget()
+            downloads = overall.portion(0.7)
+            clock.return_value = 143
+            with self.assertRaises(sources.BudgetExceeded):
+                downloads.check()
+            overall.check()
+            self.assertEqual(overall.remaining(), 17)
+
+    def test_deadline_retains_completed_requests_and_marks_unfetched_files(self):
+        budget = sources.Budget()
+        entries = [self.entry(f"app-{i}.py", size=1) for i in range(3)]
+        read = mock.Mock(side_effect=[self.listing(entries), b"x", b"x"])
+
+        def expire(pending, **kwargs):
+            for future in pending:
+                future.result(timeout=2)
+            budget.deadline = 0
+            return set(), set(pending)
+
+        with (
+            mock.patch.object(remote_sources, "MAX_PARALLEL", 2),
+            mock.patch.object(remote_sources, "wait", side_effect=expire),
+        ):
+            files, exclusions = remote_sources.select_files(
+                "github.com", "example/project", "a" * 40, budget, read
+            )
+        self.assertEqual(list(files), ["app-0.py", "app-1.py"])
+        self.assertEqual(
+            exclusions, [{"file": "app-2.py", "reason": "source time budget"}]
+        )
+        self.assertEqual(read.call_count, 3)
+
+    def test_remote_time_and_download_failures_preserve_cli_indication(self):
+        source = b"eval(payload)\n"
+        entries = [self.entry(size=len(source)), self.entry("z.py", size=1)]
+        for failure in (sources.BudgetExceeded, sources.SourceError):
+            for flags in (["--json"], ["--quiet"], []):
+                with self.subTest(failure=failure, flags=flags):
+                    output, errors = io.StringIO(), io.StringIO()
+
+                    def fetch(url, budget, **kwargs):
+                        if "/git/trees/" in url:
+                            return self.listing(entries), 200
+                        if url.endswith("/app.py"):
+                            return source, 200
+                        if failure is sources.BudgetExceeded:
+                            budget.deadline = 0
+                        raise failure("SYNTHETIC_PRIVATE_DIAGNOSTIC")
+
+                    with (
+                        mock.patch.object(
+                            remote, "host_settings", return_value=([], "a" * 40)
+                        ),
+                        mock.patch.object(remote, "get", side_effect=fetch),
+                        mock.patch.object(remote_sources, "MAX_PARALLEL", 1),
+                        contextlib.redirect_stdout(output),
+                        contextlib.redirect_stderr(errors),
+                    ):
+                        status = cli.main(
+                            ["https://github.com/example/project", *flags]
+                        )
+                    self.assertEqual(status, 1)
+                    self.assertNotIn(
+                        "SYNTHETIC_PRIVATE_DIAGNOSTIC",
+                        output.getvalue() + errors.getvalue(),
+                    )
+                    reason = (
+                        "source time budget"
+                        if failure is sources.BudgetExceeded
+                        else "source download failed"
+                    )
+                    if flags == ["--json"]:
+                        result = json.loads(output.getvalue())
+                        self.assertEqual(result["observed_score"], 59)
+                        self.assertEqual(result["verdict"], "incomplete")
+                        self.assertIsNone(result["score"])
+                        self.assertIsNone(result["grade"])
+                        self.assertEqual(result["coverage"]["files_downloaded"], 1)
+                        self.assertEqual(result["coverage"]["files_checked"], 1)
+                        self.assertEqual(
+                            result["coverage"]["selection_limits"], {reason: 1}
+                        )
+                    elif flags:
+                        self.assertEqual(output.getvalue(), "59\n")
+                        self.assertEqual(errors.getvalue(), "")
+                    else:
+                        self.assertTrue(
+                            output.getvalue().endswith("59/100 (partial)\n")
+                        )
+                        self.assertIn(reason, output.getvalue())
+
+    def test_truncated_tree_yields_an_explicitly_incomplete_indication(self):
+        source = b"eval(payload)\n"
+        with (
+            mock.patch.object(remote, "host_settings", return_value=([], "a" * 40)),
+            mock.patch.object(
+                remote,
+                "get",
+                side_effect=[
+                    (self.listing([self.entry(size=len(source))], truncated=True), 200),
+                    (source, 200),
+                ],
+            ),
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            status = cli.main(["https://github.com/example/project", "--json"])
+        result = json.loads(output.getvalue())
+        self.assertEqual(status, 1)
+        self.assertEqual(result["observed_score"], 59)
+        self.assertIsNone(result["grade"])
+        self.assertEqual(
+            result["coverage"]["selection_limits"], {"truncated repository listing": 1}
+        )
+
+    def test_gitlab_pagination_leaves_time_to_download_retained_sources(self):
+        budget, listing_budget = sources.Budget(), sources.Budget()
+        rows = [
+            {"path": "app.py", "type": "blob", "mode": "100644", "id": "b" * 40},
+            *[
+                {"path": f"asset-{i}.bin", "type": "blob", "mode": "100644"}
+                for i in range(99)
+            ],
+        ]
+
+        def read(url, **kwargs):
+            if "/repository/tree" in url:
+                listing_budget.deadline = 0
+                return json.dumps(rows).encode()
+            return b"eval(payload)\n"
+
+        with mock.patch.object(budget, "portion", return_value=listing_budget):
+            files, exclusions = remote_sources.select_files(
+                "gitlab.com", "group/project", "a" * 40, budget, read
+            )
+        self.assertEqual(list(files), ["app.py"])
+        self.assertIn(
+            {"file": "repository-tree", "reason": "source time budget"}, exclusions
+        )
+        self.assertGreater(budget.remaining(), 0)
+
+    def test_download_priority_keeps_other_sources_eligible(self):
+        paths = ["assets/a.js", "tests/a.py", "app.py", "package.json"]
+        read = mock.Mock(
+            side_effect=[
+                self.listing([self.entry(path, size=1) for path in paths]),
+                *([b"x"] * 4),
+            ]
+        )
+        with mock.patch.object(remote_sources, "MAX_PARALLEL", 1):
+            files, exclusions = remote_sources.select_files(
+                "github.com", "example/project", "a" * 40, sources.Budget(), read
+            )
+        requested = [
+            call.args[0].split("/" + "a" * 40 + "/")[1]
+            for call in read.call_args_list[1:]
+        ]
+        self.assertEqual(
+            requested, ["package.json", "app.py", "tests/a.py", "assets/a.js"]
+        )
+        self.assertEqual(set(files), set(paths))
+        self.assertEqual(exclusions, [])
+
     def test_source_http_limits_bound_headers_and_streamed_data(self):
         for length, chunks, succeeds in (
             ("6", [], False),
+            ("²", [], False),
+            ("", [], False),
+            ("9" * 5000, [], False),
             (None, [b"123456"], False),
             ("5", [b"12345", b""], True),
         ):
@@ -1551,6 +1964,47 @@ class RemoteTests(unittest.TestCase):
                             limit=5,
                         )
                 connection.close.assert_called_once()
+
+    def test_truncated_http_body_is_rejected_instead_of_scanned(self):
+        connection = mock.Mock()
+        response = mock.Mock(status=200)
+        response.getheader.return_value = "5"
+        response.read.side_effect = [b"12", b""]
+        connection.getresponse.return_value = response
+        cache = {"api.github.com": connection}
+        with self.assertRaisesRegex(sources.SourceError, "before its declared length"):
+            remote.get(
+                "https://api.github.com/repos/example/project",
+                sources.Budget(),
+                connections=cache,
+            )
+        self.assertEqual(cache, {})
+        connection.close.assert_called_once()
+
+    def test_interrupted_request_never_returns_partial_bytes_or_reuses_its_socket(self):
+        connection = mock.Mock()
+        response = mock.Mock(status=200)
+        response.getheader.return_value = None
+        response.read.side_effect = [b"partial", b""]
+        connection.getresponse.return_value = response
+        cache = {"api.github.com": connection}
+        with mock.patch.object(remote.threading, "Timer") as timer:
+
+            def expire():
+                _, callback, args = timer.call_args.args
+                callback(*args)
+
+            timer.return_value.start.side_effect = expire
+            self.assertEqual(
+                remote.get(
+                    "https://api.github.com/repos/example/project",
+                    sources.Budget(),
+                    connections=cache,
+                ),
+                (None, 0),
+            )
+        self.assertEqual(cache, {})
+        connection.close.assert_called_once()
 
     def test_connection_reuse_preserves_checked_destination_and_closes_on_failure(self):
         connection = mock.Mock()
@@ -1909,7 +2363,9 @@ class RemoteTests(unittest.TestCase):
         ):
             status = cli.main(["https://github.com/example/project", "--json"])
         self.assertEqual(status, 2)
-        self.assertIsNone(json.loads(output.getvalue())["grade"])
+        result = json.loads(output.getvalue())
+        self.assertIsNone(result["grade"])
+        self.assertIsNone(result["observed_score"])
         self.assertEqual(fetch.call_count, 1)
 
     def test_selective_download_skips_large_assets_and_oversized_sources(self):
@@ -1932,9 +2388,9 @@ class RemoteTests(unittest.TestCase):
             "oversized",
         )
 
-    def test_remote_listing_rejects_unsafe_ambiguous_and_incomplete_input(self):
+    def test_remote_listing_rejects_unsafe_ambiguous_and_invalid_input(self):
         cases = [
-            self.listing([], truncated=True),
+            b'{"tree": [], "truncated": "false"}',
             self.listing([self.entry("../outside.py")]),
             self.listing([self.entry("/outside.py")]),
             self.listing([self.entry("C:\\outside.py")]),
@@ -1942,7 +2398,9 @@ class RemoteTests(unittest.TestCase):
             self.listing([self.entry(oid="../../outside")]),
             self.listing([self.entry(size=-1)]),
             self.listing([self.entry(mode="unknown")]),
+            self.listing([self.entry(mode=[])]),
             self.listing([self.entry(kind="unknown")]),
+            self.listing([self.entry(kind={})]),
             self.listing([None]),
             b"[]",
             b"invalid JSON",
@@ -1978,25 +2436,32 @@ class RemoteTests(unittest.TestCase):
         )
         self.assertEqual(read.call_count, 1)
 
-    def test_remote_file_count_and_byte_limits_precede_source_downloads(self):
-        for limit, value, entries in (
-            ("MAX_FILES", 1, [self.entry(), self.entry("other.py")]),
-            ("MAX_BYTES", 10, [self.entry(size=11)]),
+    def test_remote_limits_retain_a_bounded_sample_before_downloading(self):
+        for limit, value, entries, reason in (
+            (
+                "MAX_FILES",
+                1,
+                [self.entry(size=1), self.entry("other.py", size=1)],
+                "repository entry limit",
+            ),
+            (
+                "MAX_BYTES",
+                1,
+                [self.entry(size=1), self.entry("other.py", size=1)],
+                "source byte limit",
+            ),
         ):
             with (
                 self.subTest(limit=limit),
                 mock.patch.object(remote_sources, limit, value),
             ):
-                read = mock.Mock(return_value=self.listing(entries))
-                with self.assertRaises(sources.SourceError):
-                    remote_sources.select_files(
-                        "github.com",
-                        "example/project",
-                        "a" * 40,
-                        sources.Budget(),
-                        read,
-                    )
-                self.assertEqual(read.call_count, 1)
+                read = mock.Mock(side_effect=[self.listing(entries), b"x"])
+                files, exclusions = remote_sources.select_files(
+                    "github.com", "example/project", "a" * 40, sources.Budget(), read
+                )
+                self.assertEqual(list(files), ["app.py"])
+                self.assertEqual([row["reason"] for row in exclusions], [reason])
+                self.assertEqual(read.call_count, 2)
 
     def test_selected_source_size_mismatch_fails_without_a_score(self):
         read = mock.Mock(side_effect=[self.listing([self.entry(size=1)]), b"too large"])

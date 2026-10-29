@@ -2,6 +2,13 @@
 
 Assess a repository with a score from 0 to 100 (A–F), or classify the security relevance of changes. See [Security Score explained](<security score.md>) for how to read the results and how the score is calculated.
 
+Repository scans use a **60-second budget** by default. URL scans reserve time to
+analyze downloaded sources. When the whole repository cannot be processed, the
+tool still prints an observed index such as `59/100 (partial)` if it recognized
+source evidence. This is a quick indication; coverage and selection limits show
+how much of the repository contributed. No recognized evidence means no
+numeric indication.
+
 ## Interpreting the scale
 
 **Higher is better.** The number describes the static patterns recognized by this scanner. Each assessed area starts at 100; findings deduct points, severity can cap the result, and the lowest area result determines the overall index.
@@ -77,7 +84,7 @@ For a number alone, use `--quiet` (also accepted as `--quite`). Output is, for e
 
 With uncertain coverage, the tool reports `partial` and an observed pattern index without a repository score or grade. `--details` groups static candidates by path hints (`source`, `tests`, `examples`, `assets`, `build`, and `repository-host`) and summarizes repeated locations and parser issues. These hints do not prove production use or third-party ownership and do not remove candidates from the assessment. JSON/YAML retain every candidate and location.
 
-Processing limits, coverage explanations, and source locations belong to `--details`; JSON/YAML retain structured diagnostics and the actual verdict without progress messages. Normal text ends with `59/100 (E)` for a scored result or `59/100 (partial)` for an observed index with uncertain coverage. A `(partial)` index never substitutes for the withheld repository score or grade. Exit status remains 1 for incomplete processing and 2 for partial/undetermined assessments, including quiet mode.
+Normal text includes the number of files checked and a summary of selection limits; `--details` adds coverage explanations and source locations. JSON/YAML retain structured diagnostics and the actual verdict without progress messages. Normal text ends with `59/100 (E)` for a scored result or `59/100 (partial)` for an observed index with uncertain coverage. A `(partial)` index never substitutes for the withheld repository score or grade. Exit status remains 1 for incomplete processing and 2 for partial/undetermined assessments, including quiet mode.
 
 ### Repository URL
 
@@ -96,9 +103,19 @@ security-score https://github.com/example/private-project --token-env GITHUB_REA
 
 Set `GITHUB_READ_TOKEN` in your environment before running this command.
 
-Remote scans first read the file listing at an identified commit, then download only supported files outside the excluded paths. They do not clone the repository or download a repository archive. Up to eight source requests run in parallel and reuse HTTPS connections. Private GitHub sources use the authenticated API; public GitHub sources use the public raw-content host without forwarding API credentials.
+Remote scans first read the file listing at an identified commit, then download only supported files outside the excluded paths. They do not clone the repository or download a repository archive. Up to eight source requests run in parallel and reuse HTTPS connections. Declarations such as package manifests, lockfiles and Dockerfiles come first, followed by application sources and build configuration, then tests, examples and assets. This ordering only affects sampling when limits are reached; all supported sources remain eligible. Private GitHub sources use the authenticated API; public GitHub sources use the public raw-content host without forwarding API credentials.
 
-Missing or inaccessible repositories, authentication failures, API rate limits, and invalid file listings produce distinct errors and no score. A host may return the same 404 for a missing repository and an inaccessible private repository, so those cases cannot always be distinguished. Large repositories can still exceed the time, file-count, or selected-source limits; an incomplete scan does not produce a grade. Use `--details` to inspect excluded files and limits, or `--timeout 60` when more execution time is needed.
+Missing or inaccessible repositories, authentication failures, API rate limits during repository discovery, and invalid file listings produce distinct errors and no score. A host may return the same 404 for a missing repository and an inaccessible private repository, so those cases cannot always be distinguished. URL scans use 70% of the remaining budget after host discovery for source selection and downloads, reserving the rest for analysis and reporting. Time, entry-count and source-byte limits, truncated listings, or individual source download failures retain the available sources and produce an incomplete indication when evidence exists. Per-file size mismatches still fail without a result. Incomplete scans do not receive a grade. Use `--details` to inspect excluded files and limits, or `--timeout 120` for a larger sample. Active network requests may need a few seconds to settle; the budget is checked between bounded operations rather than enforced by a hard process kill.
+
+HTTP header/body reads have a five-second request deadline as well as socket
+timeouts, so a connection that trickles bytes cannot occupy the rest of the scan.
+If one resolved public address is unreachable, the client tries the remaining
+checked addresses within the budget. Truncated responses are rejected. Optional
+host-setting requests have a smaller budget and remain unknown on failure.
+`--details` and JSON/YAML include the HTTP status for individual download failures.
+Source parser limitations are recorded with the affected file, preserving findings
+from other sources and withholding a repository grade. Host settings alone never
+produce a numeric application indication.
 
 ### Changes in a local Git repository
 
@@ -132,7 +149,7 @@ Change analysis returns `high`, `medium`, `low`, or `unclear` security relevance
 | `--analyzer PATH` | Trusted absolute Analyzer executable path; requires `--engine analyzer`. Otherwise the executable is selected from `PATH`. |
 | `--list-rules` | Display the bundled rule catalog without scanning. |
 | `--verify-rules` | Run bundled rule examples without scanning. |
-| `--timeout SECONDS` | Total execution budget: 0.1–120 seconds; default 15. |
+| `--timeout SECONDS` | Total execution budget: 0.1–120 seconds; default 60. URL scans reserve time for analysis and retain available evidence when source selection reaches a limit. |
 | `-h`, `--help` | Show CLI help. |
 | `--version` | Show package version and embedded source commit, then exit without scanning. |
 

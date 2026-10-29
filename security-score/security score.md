@@ -49,6 +49,13 @@ These examples assume no other area scores lower. Fixing a finding may leave the
 
 These results include no repository score or grade. Since scoring version 4, `observed_score` and origin-group indices preserve recognized patterns for partial and incomplete results. They do not establish application safety. Detailed text groups repeated candidates and reports parser issues once per file; JSON/YAML retain individual locations. Path hints separate source, tests, examples, assets, build files, and host settings without assuming which files run in production or silently excluding them. Compare indices only for the same engine, compatible scoring and rule versions, and similar scan coverage.
 
+The default budget is 60 seconds. For repository URLs, downloads stop early
+enough to reserve analysis time. Available sources still produce an observed
+index when download time, entry-count or byte limits prevent a complete scan.
+Normal text shows files checked and selection limits; an incomplete index ends
+with `(partial)` and retains exit status 1. Repositories with no recognized source
+evidence cannot receive a numeric indication.
+
 ## Changes use relevance instead of points
 
 For selected changes, the tool reports **high**, **medium**, **low**, or **unclear** security relevance. It asks which security-related behavior the change touches, rather than assigning a repository score.

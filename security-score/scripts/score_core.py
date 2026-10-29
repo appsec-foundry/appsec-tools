@@ -9,6 +9,7 @@ import hashlib
 from pathlib import Path
 import re
 import textwrap
+from score_reporting import source_priority
 
 from score_calculation import (
     CATALOG_BYTES,
@@ -560,9 +561,21 @@ def applies(rule, path):
 def scan(files, budget, findings=None, checks=None):
     findings = [] if findings is None else findings
     checks = [] if checks is None else checks
-    for path, original in sorted(files.items()):
+    for path in sorted(files, key=source_priority):
+        original = files[path]
         for source in original.get("fragments", [original]):
-            scan_source(path, source, budget, findings, checks, files)
+            try:
+                scan_source(path, source, budget, findings, checks, files)
+            except (RecursionError, TypeError, IndexError, OverflowError):
+                checks.append(
+                    {
+                        "rule": "SOURCE-PROCESSING",
+                        "area": "coverage",
+                        "file": path,
+                        "status": "unclear",
+                        "error": "Source structure exceeds this scanner's parser capabilities.",
+                    }
+                )
     return findings, checks
 
 

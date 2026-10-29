@@ -135,6 +135,8 @@ def calculate(findings, checks, *, complete=True, require_source=False):
     observed = min(
         (row["score"] for row in rows if row["score"] is not None), default=None
     )
+    if require_source and not known:
+        observed = None
     verdict = (
         "incomplete"
         if not complete

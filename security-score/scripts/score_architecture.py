@@ -149,7 +149,8 @@ def npm_observations(kind, path, text, files):
             lock = document(source["text"])
             if (
                 lock
-                and lock.get("lockfileVersion") in {2, 3}
+                and type(lock.get("lockfileVersion")) is int
+                and lock["lockfileVersion"] in {2, 3}
                 and isinstance(lock.get("packages"), dict)
             ):
                 root = lock["packages"].get("")

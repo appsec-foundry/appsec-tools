@@ -41,6 +41,22 @@ def origin(path):
     return "source"
 
 
+def source_priority(path):
+    """Read declarations and application sources before tests and static assets.
+
+    These hints affect order only: every supported source remains eligible.
+    """
+    name = PurePosixPath(path).name
+    declaration = name in {
+        "package.json",
+        "package-lock.json",
+        "npm-shrinkwrap.json",
+        "Dockerfile",
+    } or name.startswith("requirements")
+    group = {"source": 0, "build": 1, "tests": 2, "examples": 3, "assets": 4}
+    return (0 if declaration else 1, group.get(origin(path), 0), path)
+
+
 def explain(result, findings, checks):
     for row in [*findings, *checks]:
         row["origin"] = origin(row.get("file", ""))

@@ -117,11 +117,11 @@ Run the test command from the `security-score` directory. Catalog and implementa
 
 ## Limits
 
-The default total time budget is 15 seconds; `--timeout` accepts 0.1–120 seconds. The scanner checks the budget between bounded operations, so a large repository may finish incomplete.
+The default total time budget is 60 seconds; `--timeout` accepts 0.1–120 seconds. URL scans give source selection and downloads 70% of the remaining time after host discovery, reserving the rest to analyze available sources and publish a result. The scanner checks the budget between bounded operations; active network requests can take a few seconds to settle. This is an approximate execution budget, not a hard process deadline.
 
 | Limit | Value |
 | --- | ---: |
-| Inventory or remote tree entries | 3,000 |
+| Local inventory entries / retained remote tree entries | 3,000 |
 | Remote file-listing metadata, including all pages | 8 MiB |
 | Parallel selected-source requests | 8 |
 | Selected source file | 512 KiB |
@@ -131,7 +131,24 @@ The default total time budget is 15 seconds; `--timeout` accepts 0.1–120 secon
 | Observations per side | 5,000 |
 | Retained relevance signals | 1,000 |
 
-Remote scans list files at the resolved commit and fetch only supported, non-excluded sources; no repository archive is downloaded or expanded. Requests reuse checked HTTPS connections within each worker. Public GitHub sources use `raw.githubusercontent.com` without API credentials; authenticated GitHub and GitLab sources use their respective APIs. GitHub tree truncation and incomplete GitLab pagination fail without a score. File-count, source-byte, per-file, metadata, and total-time limits still apply. Authenticated API requests may also hit host rate limits.
+Remote scans list files at the resolved commit and fetch only supported, non-excluded sources; no repository archive is downloaded or expanded. Requests reuse checked HTTPS connections within each worker. Public GitHub sources use `raw.githubusercontent.com` without API credentials; authenticated GitHub and GitLab sources use their respective APIs. Source selection and scanning prioritize package manifests, lockfiles and Dockerfiles, then application sources and build configuration, followed by tests, examples and assets. Ordering does not remove candidates from a complete scan.
+
+Remote entry-count and source-byte limits retain a bounded sample. A truncated tree or GitLab pagination stopped by the time/entry limit is recorded as incomplete coverage. Download timeouts and individual request failures retain other successful sources, including requests completed while workers settle at the selection deadline. Metadata size/format errors, unsafe paths, invalid object IDs and source size mismatches still fail without a result. These changes do not raise the file, byte, request-concurrency or metadata bounds. Authenticated API requests may also hit host rate limits. `coverage.files_downloaded`, `coverage.files_checked` and `coverage.selection_limits` identify the available sample; checked files are those with at least one rule outcome. Sampling under a time limit depends on network performance, so incomplete indices are not reproducible whole-repository assessments.
+
+Every HTTP header/body exchange has a five-second wall-clock deadline, capped by
+the available budget; DNS, connection and TLS operations also use bounded waits.
+Interrupted or truncated bodies never become selected sources. All resolved
+addresses are checked before connection attempts; fallback keeps TLS hostname
+verification and credential-origin checks. Optional host metadata uses 10% of the
+remaining budget per request and becomes unknown on failure. Download exclusions
+retain bounded HTTP-status diagnostics without response bodies or raw exceptions.
+Parser recursion/structure errors are recorded as `SOURCE-PROCESSING` issues on
+the affected file and do not erase observations from other files. Numeric
+application indices require recognized source evidence, including for incomplete
+results; repository-host observations alone remain insufficient. Scoring version
+5 makes this requirement explicit for `observed_score`; version 4 could expose a
+host-only observed index. Arithmetic and grade bands are unchanged. The source
+policy is `bounded-static-v3` for the prioritized, budgeted selection.
 
 Excluded or unreadable files, malformed patches, and sources that change during a run can prevent a complete result. Normal console mode shows work steps and a calculation; `--details` explains processing limits and affected paths. `--quiet` (alias `--quite`) emits only the numeric repository or observed pattern index, or nothing when unavailable, and suppresses progress and diagnostic text. Partial/incomplete results retain their nonzero exit status even when a number is printed. JSON/YAML retain the verdict and all bounded diagnostics without progress output. Missing repositories and inaccessible private repositories may both return HTTP 404; errors do not claim to distinguish those cases. Output reports locations and explanations, without raw source snippets or credential literals.
 

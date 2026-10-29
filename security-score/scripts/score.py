@@ -194,8 +194,8 @@ def parser():
     result.add_argument(
         "--timeout",
         type=float,
-        default=15,
-        help="Total execution budget in seconds, 0.1–120 (default: 15)",
+        default=60,
+        help="Total execution budget in seconds, 0.1–120 (default: 60)",
     )
     result.add_argument(
         "--verify-rules",
@@ -259,6 +259,15 @@ def yaml_text(value, indent=0):
 
 def calculation_lines(result):
     lines = []
+    coverage = result.get("coverage", {})
+    if "files_checked" in coverage:
+        lines.append(f"Source coverage: {coverage['files_checked']} file(s) checked.")
+        limits = coverage.get("selection_limits", {})
+        if limits:
+            lines.append(
+                "Selection limits: "
+                + "; ".join(f"{reason}: {count}" for reason, count in limits.items())
+            )
     for area in result["areas"]:
         lines.append(f"Calculation {area['area']}:")
         for entry in area["breakdown"]:
@@ -372,12 +381,14 @@ def render(result, details=False):
             f"Unknown evidence: {origin} · {rule} · {count} file(s); see JSON/YAML for paths"
         )
     for entry in result["exclusions"]:
-        if entry["reason"] in {"oversized", "link or submodule", "binary or non-UTF-8"}:
+        if entry["reason"] != "excluded or unsupported":
             reason = (
                 "exceeds the 512 KiB file limit"
                 if entry["reason"] == "oversized"
                 else entry["reason"]
             )
+            if entry.get("detail"):
+                reason += " (" + entry["detail"] + ")"
             lines.append(f"Unexamined source: {entry['file']} · {reason}")
     lines.append(
         f"Excluded or unsupported entries: {len(result['exclusions'])}; see JSON/YAML for paths and reasons."
@@ -641,10 +652,7 @@ def run(options):
     complete = (
         scan_error is None
         and not any(row.get("error") for row in checks)
-        and not any(
-            row["reason"] in {"oversized", "link or submodule", "binary or non-UTF-8"}
-            for row in exclusions
-        )
+        and not any(row["reason"] != "excluded or unsupported" for row in exclusions)
     )
     host_findings, host_checks = settings_checks(settings)
     findings.extend(host_findings)
@@ -777,7 +785,7 @@ def run(options):
                 "coverage_fingerprint": hashlib.sha256(
                     json.dumps(coverage_identity).encode()
                 ).hexdigest(),
-                "source_policy": "skill-bounded-static-v2",
+                "source_policy": "bounded-static-v3",
                 "subject_kind": scope["kind"],
                 "host_settings_fingerprint": hashlib.sha256(
                     json.dumps(settings, sort_keys=True).encode()
@@ -794,6 +802,24 @@ def run(options):
     )
     if not change:
         result["findings"] = findings
+        if scope["selection"] == "git-url":
+            result["coverage"]["files_downloaded"] = len(after)
+        result["coverage"]["files_checked"] = len(
+            {
+                row["file"]
+                for row in checks
+                if row["area"] != "repository-host" and row["rule"] != "SOURCE-COVERAGE"
+            }
+        )
+        result["coverage"]["selection_limits"] = dict(
+            sorted(
+                Counter(
+                    row["reason"]
+                    for row in exclusions
+                    if row["reason"] != "excluded or unsupported"
+                ).items()
+            )
+        )
     if change:
         result["warnings"].append(
             "Relevance and finding severity are independent. Signals are deterministic indicators, not a full semantic review. Unrecognized behavior remains unclear; low relevance is not security approval."
@@ -825,7 +851,7 @@ def execute(argv):
     options = arguments.parse_args(argv)
     if options.repository and options.repo:
         arguments.error("Choose a positional repository or --repo, not both.")
-    options.repo = options.repo or options.repository or os.getcwd()
+    options.repo = options.repo or options.repository or "."
     if not 0.1 <= options.timeout <= 120:
         arguments.error("--timeout must be between 0.1 and 120 seconds.")
     if options.head and not options.base:
@@ -892,7 +918,17 @@ def execute(argv):
         return 1
     except BrokenPipeError:
         return 1
-    except (OSError, ValueError, KeyError, TypeError, RecursionError):
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        RecursionError,
+        AttributeError,
+        IndexError,
+        OverflowError,
+        RuntimeError,
+    ):
         print(
             "Security score could not complete. Check the selected sources and runtime installation.",
             file=sys.stderr,

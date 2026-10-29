@@ -52,19 +52,37 @@ class SourceError(ValueError):
     pass
 
 
+class BudgetExceeded(SourceError):
+    pass
+
+
+class RemoteError(SourceError):
+    def __init__(self, message, status):
+        super().__init__(message)
+        self.status = status
+
+
 class Budget:
-    def __init__(self, seconds=15):
+    def __init__(self, seconds=60):
         self.deadline = time.monotonic() + seconds
 
     def check(self):
         if time.monotonic() >= self.deadline:
-            raise SourceError(
+            raise BudgetExceeded(
                 "Execution time limit reached; no complete score is available."
             )
 
     def remaining(self):
         self.check()
         return max(0.01, self.deadline - time.monotonic())
+
+    def portion(self, fraction):
+        """Share the remaining budget, reserving time for later work."""
+        self.check()
+        now = time.monotonic()
+        child = Budget(0)
+        child.deadline = now + max(0, self.deadline - now) * fraction
+        return child
 
 
 def label(value):
