@@ -78,13 +78,22 @@ security-score /path/to/repository --details
 security-score /path/to/repository --quiet
 ```
 
-Without a path, `security-score` scans the current directory. Normal text mode shows the work steps on stderr and the calculation and result on stdout. Interactive terminals show a spinner for longer operations; redirected output uses plain lines without animation. `--details` adds candidates, origin groups, file locations, and coverage explanations.
+Without a path, `security-score` scans the current directory. Normal text mode
+prints exactly one score line, for example `59/100 (E)` or `59/100 (partial)`,
+without progress, calculations or diagnostics when a result is available.
+`--detail` (alias `--details`) shows category subscores, their deductions and
+severity caps, and the actual scanner findings grouped under each category with
+rules, severity, file/line locations and review suggestions. Unassessed categories
+remain explicit; observed subscores are marked `(partial)` when a repository grade
+is withheld. Detailed mode also shows origin groups and coverage explanations.
+Only detailed text mode emits work steps on stderr, with a spinner on interactive
+terminals and plain lines when redirected.
 
 For a number alone, use `--quiet` (also accepted as `--quite`). Output is, for example, `59` followed by a newline, without progress, calculation, grade, diagnostics, or other text. Quiet mode overrides `--details` and cannot be combined with JSON/YAML, change relevance, or rule-list/example commands. With partial or incomplete evidence, the number is the observed pattern index; the exit status remains 2 or 1 respectively. With no numeric result, stdout and stderr are empty and the exit status indicates failure or undetermined coverage. Do not treat a number alone as successful complete assessment: always check the exit status. Explicit `--help` and `--version` still perform their requested display action.
 
 With uncertain coverage, the tool reports `partial` and an observed pattern index without a repository score or grade. `--details` groups static candidates by path hints (`source`, `tests`, `examples`, `assets`, `build`, and `repository-host`) and summarizes repeated locations and parser issues. These hints do not prove production use or third-party ownership and do not remove candidates from the assessment. JSON/YAML retain every candidate and location.
 
-Normal text includes the number of files checked and a summary of selection limits; `--details` adds coverage explanations and source locations. JSON/YAML retain structured diagnostics and the actual verdict without progress messages. Normal text ends with `59/100 (E)` for a scored result or `59/100 (partial)` for an observed index with uncertain coverage. A `(partial)` index never substitutes for the withheld repository score or grade. Exit status remains 1 for incomplete processing and 2 for partial/undetermined assessments, including quiet mode.
+Detailed text includes the number of files checked, selection limits, coverage explanations and source locations. JSON/YAML retain structured diagnostics and the actual verdict without progress messages. A `(partial)` index never substitutes for the withheld repository score or grade. Exit status remains 1 for incomplete processing and 2 for partial/undetermined assessments, including quiet mode. With no numeric result, normal text prints the verdict; failures without a result report an error on stderr, while quiet mode stays silent.
 
 ### Repository URL
 
@@ -133,7 +142,7 @@ Change analysis returns `high`, `medium`, `low`, or `unclear` security relevance
 | --- | --- |
 | `repository` | Local directory or supported HTTPS repository URL; defaults to the current directory. |
 | `--repo DIRECTORY` | Alternative to the positional argument for a local directory. |
-| `--details` | Show findings, locations, coverage, architecture observations, and the calculation. |
+| `--detail`, `--details` | Show category subscores with deductions and located findings, coverage, architecture observations, and progress. |
 | `--quiet`, `--quite` | Repository scans: output only the numeric index; no progress or diagnostics. Preserve exit status; no output if no index exists. |
 | `--json`, `--yaml` | Output JSON or YAML instead of text; choose one. |
 | `--staged` | Compare HEAD with staged changes. |

@@ -41,10 +41,11 @@ except (
     RecursionError,
     re.error,
 ):
-    print(
-        "Invalid bundled rule catalog. Check rules.json and the scoring policy before running again.",
-        file=sys.stderr,
-    )
+    if not any(flag in sys.argv[1:] for flag in ("--quiet", "--quite")):
+        print(
+            "Invalid bundled rule catalog. Check rules.json and the scoring policy before running again.",
+            file=sys.stderr,
+        )
     raise SystemExit(1) from None
 from score_sources import Budget, SourceError, command, excluded, fingerprint, select
 from score_reporting import explain as explain_observations
@@ -134,7 +135,9 @@ def parser():
     )
     result.add_argument("--repo", help="Alternative local repository selection")
     result.add_argument(
+        "--detail",
         "--details",
+        dest="details",
         action="store_true",
         help="Explain findings, coverage, architecture and relevance or score calculation",
     )
@@ -269,6 +272,16 @@ def calculation_lines(result):
                 + "; ".join(f"{reason}: {count}" for reason, count in limits.items())
             )
     for area in result["areas"]:
+        value = area["score"]
+        partial = value is None
+        if partial:
+            value = area.get("observed_score")
+        subscore = (
+            f"{value}/100" + (" (partial)" if partial else "")
+            if value is not None
+            else "not assessed (no recognized evidence)"
+        )
+        lines.append(f"Category {area['area']}: {subscore}")
         lines.append(f"Calculation {area['area']}:")
         for entry in area["breakdown"]:
             lines.append(
@@ -281,6 +294,14 @@ def calculation_lines(result):
             f"score={area['score'] if area['score'] is not None else 'withheld'}; "
             f"observed={area.get('observed_score', area['score'])}"
         )
+        findings = [
+            row for row in result.get("findings", []) if row["area"] == area["area"]
+        ]
+        lines.extend(
+            finding_lines(findings)
+            if findings
+            else ["  No finding candidates in this category."]
+        )
     if result["score"] is not None:
         scores = ", ".join(
             str(area["score"]) for area in result["areas"] if area["score"] is not None
@@ -288,6 +309,38 @@ def calculation_lines(result):
         lines.append(
             f"Overall: lowest assessed area = min({scores}) = {result['score']}"
         )
+    elif result.get("observed_score") is not None:
+        scores = ", ".join(
+            str(area["observed_score"])
+            for area in result["areas"]
+            if area.get("observed_score") is not None
+        )
+        lines.append(
+            f"Overall observed index: lowest recognized category = min({scores}) = {result['observed_score']} (partial)"
+        )
+    return lines
+
+
+def finding_lines(findings):
+    """Keep located candidates next to the category deductions they explain."""
+    lines, candidates = [], {}
+    for finding in findings:
+        key = (finding.get("origin", "source"), finding["rule"])
+        candidates.setdefault(key, []).append(finding)
+    for (origin, rule), occurrences in sorted(candidates.items()):
+        first = occurrences[0]
+        lines += [
+            f"{origin} · {first['severity'].upper()} · {rule} · {len(occurrences)} candidate(s)",
+            f"  {first['title']} (static pattern; exploitability unverified)",
+            f"  Review: {first['next_action']}",
+        ]
+        by_file = {}
+        for finding in occurrences:
+            by_file.setdefault(finding["file"], []).append(finding["line"])
+        for path, locations in sorted(by_file.items()):
+            shown = ", ".join(str(line) for line in locations[:5])
+            extra = f" (+{len(locations) - 5} more)" if len(locations) > 5 else ""
+            lines.append(f"    {path}:{shown}{extra}")
     return lines
 
 
@@ -304,9 +357,7 @@ def render(result, details=False):
         )
     lines = [
         f"Security score · {result['engine']} · version {result['scoring_version']}",
-        f"{result['score']} / 100 · grade {result['grade']}"
-        if result["score"] is not None
-        else result["verdict"],
+        render(result),
         "Limited scanner indication; no security approval or verified exploitability.",
     ]
     if result["engine"] == "analyzer":
@@ -327,33 +378,11 @@ def render(result, details=False):
         f"Static pattern candidates: {result['coverage']['scored_findings']}",
         f"Observed pattern index: {result.get('observed_score')} / 100 (recognized evidence only)",
     ]
-    for area in result["areas"]:
-        lines.append(
-            f"  {area['area']}: {area['score'] if area['score'] is not None else 'unscored'}"
-        )
     lines.append("Candidate groups (path hints; runtime use unverified):")
     for group in result.get("origin_groups", []):
         lines.append(
             f"  {group['origin']}: {group['findings']} patterns; observed index={group['observed_score']}"
         )
-    candidates = {}
-    for finding in result["findings"]:
-        key = (finding.get("origin", "source"), finding["rule"])
-        candidates.setdefault(key, []).append(finding)
-    for (origin, rule), occurrences in sorted(candidates.items()):
-        first = occurrences[0]
-        lines += [
-            f"{origin} · {first['severity'].upper()} · {rule} · {len(occurrences)} candidate(s)",
-            f"  {first['title']} (static pattern; exploitability unverified)",
-            f"  Review: {first['next_action']}",
-        ]
-        by_file = {}
-        for finding in occurrences:
-            by_file.setdefault(finding["file"], []).append(finding["line"])
-        for path, locations in sorted(by_file.items()):
-            shown = ", ".join(str(line) for line in locations[:5])
-            extra = f" (+{len(locations) - 5} more)" if len(locations) > 5 else ""
-            lines.append(f"    {path}:{shown}{extra}")
     lines.extend(calculation_lines(result))
     architecture = result.get("architecture", {})
     for key in ("frontend", "persistence"):
@@ -869,7 +898,10 @@ def execute(argv):
         arguments.error("--quiet/--quite supports repository scores only.")
     try:
         with Progress(
-            enabled=not options.quiet and not options.json and not options.yaml
+            enabled=options.details
+            and not options.quiet
+            and not options.json
+            and not options.yaml
         ) as progress:
             options.step = progress.step
             result, status = run(options)
@@ -904,8 +936,6 @@ def execute(argv):
             )
         else:
             output = render(result, options.details)
-            if not options.details and result.get("analysis") == "repository-score":
-                output = "\n".join(calculation_lines(result) + [output])
         print(output)
         return status
     except KeyboardInterrupt:

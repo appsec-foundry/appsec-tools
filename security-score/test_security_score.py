@@ -98,7 +98,7 @@ class ScoreTests(unittest.TestCase):
 
     def test_quite_alias_and_quiet_details_both_remain_silent(self):
         self.write("app.py", "eval(payload)\n")
-        for args in (["--quite"], ["--quiet", "--details"]):
+        for args in (["--quite"], ["--quiet", "--details"], ["--quite", "--detail"]):
             output, errors = io.StringIO(), io.StringIO()
             with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
                 status = cli.main([str(self.repo), *args])
@@ -1012,10 +1012,13 @@ class ScoreTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(command.call_count, 2)
 
-    def test_default_output_shows_steps_and_calculation_and_details_add_findings(self):
+    def test_default_output_is_one_score_line_and_detail_aliases_explain_categories(
+        self,
+    ):
         self.write("app.py", "eval(payload)\n")
         for args, expected in (
             ([], "59/100 (E)\n"),
+            (["--detail"], "Calculation execution:"),
             (["--details"], "Calculation execution:"),
         ):
             output, errors = io.StringIO(), io.StringIO()
@@ -1024,13 +1027,47 @@ class ScoreTests(unittest.TestCase):
             self.assertEqual(status, 0)
             if args:
                 self.assertIn(expected, output.getvalue())
+                self.assertIn("Category execution: 59/100", output.getvalue())
                 self.assertIn("PY-EXEC", output.getvalue())
-            else:
-                self.assertTrue(output.getvalue().endswith(expected))
-                self.assertIn("Calculation execution:", output.getvalue())
+                self.assertIn("app.py:1", output.getvalue())
+                self.assertIn("1 x 25 = 25 points", output.getvalue())
                 self.assertIn("Reading selected sources...", errors.getvalue())
-                self.assertIn("Checking source patterns...", errors.getvalue())
-                self.assertIn("Calculating deductions", errors.getvalue())
+            else:
+                self.assertEqual(output.getvalue(), expected)
+                self.assertEqual(errors.getvalue(), "")
+
+    def test_partial_category_subscores_and_findings_are_grouped_under_their_category(
+        self,
+    ):
+        self.write("app.py", "eval(payload)\nrequests.get(url, verify=False)\n")
+        self.write("unknown.js", "custom.exec(payload);\n")
+        self.write("Unsupported.java", "class Unsupported {}\n")
+        status, result, _ = self.invoke()
+        self.assertEqual(status, 2)
+        details = cli.render(result, details=True)
+        execution = details.split("Category execution: 59/100 (partial)", 1)[1].split(
+            "Category ", 1
+        )[0]
+        transport = details.split("Category transport: 59/100 (partial)", 1)[1].split(
+            "Architecture ", 1
+        )[0]
+        self.assertIn("PY-EXEC", execution)
+        self.assertIn("app.py:1", execution)
+        self.assertNotIn("PY-TLS", execution)
+        self.assertIn("PY-TLS", transport)
+        self.assertIn("app.py:2", transport)
+        self.assertNotIn("PY-EXEC", transport)
+        self.assertIn("not assessed (no recognized evidence)", details)
+
+    def test_default_partial_result_suppresses_progress_calculations_and_limits(self):
+        self.write("app.py", "eval(payload)\n")
+        self.write("large.js", "x" * (sources.MAX_FILE + 1))
+        output, errors = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            status = cli.main([str(self.repo)])
+        self.assertEqual(status, 1)
+        self.assertEqual(output.getvalue(), "59/100 (partial)\n")
+        self.assertEqual(errors.getvalue(), "")
 
     def test_yaml_preserves_structured_result(self):
         # PyYAML is used only by this test if available, never by the runtime.
@@ -1129,8 +1166,8 @@ class ScoreTests(unittest.TestCase):
             timeout=5,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(result.stdout.endswith("59/100 (E)\n"))
-        self.assertIn("Calculation execution:", result.stdout)
+        self.assertEqual(result.stdout, "59/100 (E)\n")
+        self.assertEqual(result.stderr, "")
 
     def test_malformed_human_edited_catalog_fails_without_traceback(self):
         import shutil
@@ -1152,6 +1189,15 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("Invalid bundled rule catalog", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
+        quiet = subprocess.run(
+            [sys.executable, "-B", str(installed / "scripts/score.py"), "--quite"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        self.assertEqual(quiet.returncode, 1)
+        self.assertEqual(quiet.stdout, "")
+        self.assertEqual(quiet.stderr, "")
 
     def test_parse_failure_keeps_other_findings_without_a_grade(self):
         self.write("app.py", "eval(payload)\n")
@@ -1793,7 +1839,7 @@ class RemoteTests(unittest.TestCase):
         source = b"eval(payload)\n"
         entries = [self.entry(size=len(source)), self.entry("z.py", size=1)]
         for failure in (sources.BudgetExceeded, sources.SourceError):
-            for flags in (["--json"], ["--quiet"], []):
+            for flags in (["--json"], ["--quiet"], ["--detail"], []):
                 with self.subTest(failure=failure, flags=flags):
                     output, errors = io.StringIO(), io.StringIO()
 
@@ -1839,14 +1885,17 @@ class RemoteTests(unittest.TestCase):
                         self.assertEqual(
                             result["coverage"]["selection_limits"], {reason: 1}
                         )
-                    elif flags:
+                    elif flags == ["--quiet"]:
                         self.assertEqual(output.getvalue(), "59\n")
                         self.assertEqual(errors.getvalue(), "")
-                    else:
-                        self.assertTrue(
-                            output.getvalue().endswith("59/100 (partial)\n")
+                    elif flags == ["--detail"]:
+                        self.assertIn(
+                            "Category execution: 59/100 (partial)", output.getvalue()
                         )
                         self.assertIn(reason, output.getvalue())
+                    else:
+                        self.assertEqual(output.getvalue(), "59/100 (partial)\n")
+                        self.assertEqual(errors.getvalue(), "")
 
     def test_truncated_tree_yields_an_explicitly_incomplete_indication(self):
         source = b"eval(payload)\n"
