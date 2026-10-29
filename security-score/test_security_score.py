@@ -205,7 +205,7 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(len(result["findings"]), 12)
         self.assertEqual(
             cli.render(result, details=True).count(
-                "static pattern; exploitability unverified"
+                "Static pattern candidates; exploitability unverified."
             ),
             1,
         )
@@ -515,9 +515,12 @@ class ScoreTests(unittest.TestCase):
             ["PY-EXEC", "PY-SHELL"],
         )
         details = cli.render(result, details=True)
-        self.assertIn("PY-EXEC (high): 1 x 25 = 25 points", details)
-        self.assertIn("100 - 50 = 50; cap=59; floor=0; score=50", details)
-        self.assertIn("Overall: lowest assessed area = min(50, 100, 59) = 50", details)
+        self.assertRegex(details, r"Execution\s+50/100\s+2\s+50\s+59")
+        self.assertRegex(details, r"Transport\s+59/100\s+1\s+25\s+59")
+        self.assertIn("1 x 25 = 25 points", details)
+        self.assertIn(
+            "Overall: lowest assessed category = min(50, 100, 59) = 50", details
+        )
         self.assertEqual(cli.render(result), "50/100 (E)")
 
     def test_req07_mixed_severities_and_critical_cap_worked_examples(self):
@@ -1012,14 +1015,14 @@ class ScoreTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(command.call_count, 2)
 
-    def test_default_output_is_one_score_line_and_detail_aliases_explain_categories(
+    def test_default_has_progress_and_detail_aliases_add_a_category_table(
         self,
     ):
         self.write("app.py", "eval(payload)\n")
         for args, expected in (
             ([], "59/100 (E)\n"),
-            (["--detail"], "Calculation execution:"),
-            (["--details"], "Calculation execution:"),
+            (["--detail"], "Categories"),
+            (["--details"], "Categories"),
         ):
             output, errors = io.StringIO(), io.StringIO()
             with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
@@ -1027,14 +1030,16 @@ class ScoreTests(unittest.TestCase):
             self.assertEqual(status, 0)
             if args:
                 self.assertIn(expected, output.getvalue())
-                self.assertIn("Category execution: 59/100", output.getvalue())
+                self.assertRegex(output.getvalue(), r"Execution\s+59/100\s+1\s+25\s+59")
                 self.assertIn("PY-EXEC", output.getvalue())
                 self.assertIn("app.py:1", output.getvalue())
                 self.assertIn("1 x 25 = 25 points", output.getvalue())
                 self.assertIn("Reading selected sources...", errors.getvalue())
             else:
                 self.assertEqual(output.getvalue(), expected)
-                self.assertEqual(errors.getvalue(), "")
+                self.assertIn("Reading selected sources...", errors.getvalue())
+                self.assertNotIn("Categories", output.getvalue())
+                self.assertNotIn("Findings", output.getvalue())
 
     def test_partial_category_subscores_and_findings_are_grouped_under_their_category(
         self,
@@ -1045,21 +1050,21 @@ class ScoreTests(unittest.TestCase):
         status, result, _ = self.invoke()
         self.assertEqual(status, 2)
         details = cli.render(result, details=True)
-        execution = details.split("Category execution: 59/100 (partial)", 1)[1].split(
-            "Category ", 1
-        )[0]
-        transport = details.split("Category transport: 59/100 (partial)", 1)[1].split(
-            "Architecture ", 1
-        )[0]
+        candidates = details.split("\nFindings\n", 1)[1]
+        execution = candidates.split("\nTransport\n", 1)[0]
+        transport = candidates.split("\nTransport\n", 1)[1].split("\nCoverage\n", 1)[0]
         self.assertIn("PY-EXEC", execution)
         self.assertIn("app.py:1", execution)
         self.assertNotIn("PY-TLS", execution)
         self.assertIn("PY-TLS", transport)
         self.assertIn("app.py:2", transport)
         self.assertNotIn("PY-EXEC", transport)
-        self.assertIn("not assessed (no recognized evidence)", details)
+        self.assertRegex(details, r"Coverage\s+unknown\s+0\s+-\s+-")
+        self.assertIn("no repository grade is available", details)
+        self.assertNotIn("score=withheld", details)
+        self.assertNotIn("observed=None", details)
 
-    def test_default_partial_result_suppresses_progress_calculations_and_limits(self):
+    def test_default_partial_result_has_progress_without_calculations_and_limits(self):
         self.write("app.py", "eval(payload)\n")
         self.write("large.js", "x" * (sources.MAX_FILE + 1))
         output, errors = io.StringIO(), io.StringIO()
@@ -1067,7 +1072,8 @@ class ScoreTests(unittest.TestCase):
             status = cli.main([str(self.repo)])
         self.assertEqual(status, 1)
         self.assertEqual(output.getvalue(), "59/100 (partial)\n")
-        self.assertEqual(errors.getvalue(), "")
+        self.assertIn("Reading selected sources...", errors.getvalue())
+        self.assertNotIn("Source coverage:", output.getvalue())
 
     def test_yaml_preserves_structured_result(self):
         # PyYAML is used only by this test if available, never by the runtime.
@@ -1167,7 +1173,7 @@ class ScoreTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "59/100 (E)\n")
-        self.assertEqual(result.stderr, "")
+        self.assertIn("Reading selected sources...", result.stderr)
 
     def test_malformed_human_edited_catalog_fails_without_traceback(self):
         import shutil
@@ -1796,9 +1802,9 @@ class RemoteTests(unittest.TestCase):
                 status = cli.main(["https://github.com/example/project", "--details"])
             self.assertEqual(status, 1)
             self.assertIn(
-                f"z.py · source download failed (HTTP {status_code})", output.getvalue()
+                f"source download failed (HTTP {status_code}): z.py", output.getvalue()
             )
-            self.assertIn("Observed pattern index: 59", output.getvalue())
+            self.assertIn("59/100 (partial)", output.getvalue())
 
     def test_default_budget_and_download_reserve_leave_analysis_time(self):
         self.assertEqual(cli.parser().parse_args([]).timeout, 60)
@@ -1889,13 +1895,13 @@ class RemoteTests(unittest.TestCase):
                         self.assertEqual(output.getvalue(), "59\n")
                         self.assertEqual(errors.getvalue(), "")
                     elif flags == ["--detail"]:
-                        self.assertIn(
-                            "Category execution: 59/100 (partial)", output.getvalue()
+                        self.assertRegex(
+                            output.getvalue(), r"Execution\s+59/100\s+1\s+25\s+59"
                         )
                         self.assertIn(reason, output.getvalue())
                     else:
                         self.assertEqual(output.getvalue(), "59/100 (partial)\n")
-                        self.assertEqual(errors.getvalue(), "")
+                        self.assertIn("Reading selected sources...", errors.getvalue())
 
     def test_truncated_tree_yields_an_explicitly_incomplete_indication(self):
         source = b"eval(payload)\n"

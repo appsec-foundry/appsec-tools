@@ -48,8 +48,7 @@ except (
         )
     raise SystemExit(1) from None
 from score_sources import Budget, SourceError, command, excluded, fingerprint, select
-from score_reporting import explain as explain_observations
-from score_calculation import has_unknown
+from score_reporting import explain as explain_observations, render_repository
 from score_architecture import describe
 from score_relevance import VERSION as RELEVANCE_VERSION, analyze as analyze_relevance
 from score_remote import (
@@ -139,7 +138,7 @@ def parser():
         "--details",
         dest="details",
         action="store_true",
-        help="Explain findings, coverage, architecture and relevance or score calculation",
+        help="Show category subscores, grouped findings, coverage and change relevance",
     )
     result.add_argument(
         "--token-env",
@@ -260,90 +259,6 @@ def yaml_text(value, indent=0):
     return space + json.dumps(value, ensure_ascii=True, allow_nan=False)
 
 
-def calculation_lines(result):
-    lines = []
-    coverage = result.get("coverage", {})
-    if "files_checked" in coverage:
-        lines.append(f"Source coverage: {coverage['files_checked']} file(s) checked.")
-        limits = coverage.get("selection_limits", {})
-        if limits:
-            lines.append(
-                "Selection limits: "
-                + "; ".join(f"{reason}: {count}" for reason, count in limits.items())
-            )
-    for area in result["areas"]:
-        value = area["score"]
-        partial = value is None
-        if partial:
-            value = area.get("observed_score")
-        subscore = (
-            f"{value}/100" + (" (partial)" if partial else "")
-            if value is not None
-            else "not assessed (no recognized evidence)"
-        )
-        lines.append(f"Category {area['area']}: {subscore}")
-        lines.append(f"Calculation {area['area']}:")
-        for entry in area["breakdown"]:
-            lines.append(
-                f"  {entry['rule']} ({entry['severity']}): "
-                f"{entry['instances']} x {entry['points_per_instance']} = {entry['deduction']} points"
-            )
-        lines.append(
-            f"  100 - {area['deduction']} = {100 - area['deduction']}; "
-            f"cap={area['severity_cap']}; floor=0; "
-            f"score={area['score'] if area['score'] is not None else 'withheld'}; "
-            f"observed={area.get('observed_score', area['score'])}"
-        )
-        findings = [
-            row for row in result.get("findings", []) if row["area"] == area["area"]
-        ]
-        lines.extend(
-            finding_lines(findings)
-            if findings
-            else ["  No finding candidates in this category."]
-        )
-    if result["score"] is not None:
-        scores = ", ".join(
-            str(area["score"]) for area in result["areas"] if area["score"] is not None
-        )
-        lines.append(
-            f"Overall: lowest assessed area = min({scores}) = {result['score']}"
-        )
-    elif result.get("observed_score") is not None:
-        scores = ", ".join(
-            str(area["observed_score"])
-            for area in result["areas"]
-            if area.get("observed_score") is not None
-        )
-        lines.append(
-            f"Overall observed index: lowest recognized category = min({scores}) = {result['observed_score']} (partial)"
-        )
-    return lines
-
-
-def finding_lines(findings):
-    """Keep located candidates next to the category deductions they explain."""
-    lines, candidates = [], {}
-    for finding in findings:
-        key = (finding.get("origin", "source"), finding["rule"])
-        candidates.setdefault(key, []).append(finding)
-    for (origin, rule), occurrences in sorted(candidates.items()):
-        first = occurrences[0]
-        lines += [
-            f"{origin} · {first['severity'].upper()} · {rule} · {len(occurrences)} candidate(s)",
-            f"  {first['title']} (static pattern; exploitability unverified)",
-            f"  Review: {first['next_action']}",
-        ]
-        by_file = {}
-        for finding in occurrences:
-            by_file.setdefault(finding["file"], []).append(finding["line"])
-        for path, locations in sorted(by_file.items()):
-            shown = ", ".join(str(line) for line in locations[:5])
-            extra = f" (+{len(locations) - 5} more)" if len(locations) > 5 else ""
-            lines.append(f"    {path}:{shown}{extra}")
-    return lines
-
-
 def render(result, details=False):
     if result.get("analysis") == "change-relevance":
         return render_change(result, details)
@@ -370,59 +285,7 @@ def render(result, details=False):
             json.dumps(result["analyzer_result"], indent=2, ensure_ascii=True),
         ]
         return "\n".join(lines)
-    scope = result["scope"]
-    lines += [
-        f"Scope: {scope['kind']} · {scope['selection']} · {scope['repository']}",
-        "Check outcomes: "
-        + json.dumps(result["coverage"]["check_outcomes"], sort_keys=True),
-        f"Static pattern candidates: {result['coverage']['scored_findings']}",
-        f"Observed pattern index: {result.get('observed_score')} / 100 (recognized evidence only)",
-    ]
-    lines.append("Candidate groups (path hints; runtime use unverified):")
-    for group in result.get("origin_groups", []):
-        lines.append(
-            f"  {group['origin']}: {group['findings']} patterns; observed index={group['observed_score']}"
-        )
-    lines.extend(calculation_lines(result))
-    architecture = result.get("architecture", {})
-    for key in ("frontend", "persistence"):
-        names = sorted({entry["technology"] for entry in architecture.get(key, [])})
-        lines.append(
-            f"Architecture {key}: {', '.join(names) if names else 'not established'}"
-        )
-    for entry in result.get("host_settings", []):
-        lines.append(f"Host {entry['setting']}: {entry['status']} · {entry['reason']}")
-    for warning in result["warnings"]:
-        lines.append("Limit: " + warning)
-    for error in result.get("source_errors", []):
-        lines.append(
-            f"Source processing issue: {error['file']} · {error['reason']} ({len(error['affected_rules'])} checks unavailable)"
-        )
-    unclear_groups = Counter(
-        (row.get("origin", "source"), row["rule"])
-        for row in result["checks"]
-        if has_unknown(row)
-        and not row.get("error")
-        and row["area"] != "repository-host"
-    )
-    for (origin, rule), count in sorted(unclear_groups.items()):
-        lines.append(
-            f"Unknown evidence: {origin} · {rule} · {count} file(s); see JSON/YAML for paths"
-        )
-    for entry in result["exclusions"]:
-        if entry["reason"] != "excluded or unsupported":
-            reason = (
-                "exceeds the 512 KiB file limit"
-                if entry["reason"] == "oversized"
-                else entry["reason"]
-            )
-            if entry.get("detail"):
-                reason += " (" + entry["detail"] + ")"
-            lines.append(f"Unexamined source: {entry['file']} · {reason}")
-    lines.append(
-        f"Excluded or unsupported entries: {len(result['exclusions'])}; see JSON/YAML for paths and reasons."
-    )
-    return "\n".join(lines)
+    return render_repository(result, render(result))
 
 
 def render_change(result, details=False):
@@ -780,7 +643,7 @@ def run(options):
                         "status": "unclear",
                     }
                 )
-        announce(options, "Calculating deductions, severity caps and area scores...")
+        announce(options, "Calculating security score...")
         result = calculate(findings, checks, complete=complete, require_source=True)
         result["analysis"] = "repository-score"
         explain_observations(result, findings, checks)
@@ -898,10 +761,7 @@ def execute(argv):
         arguments.error("--quiet/--quite supports repository scores only.")
     try:
         with Progress(
-            enabled=options.details
-            and not options.quiet
-            and not options.json
-            and not options.yaml
+            enabled=not options.quiet and not options.json and not options.yaml
         ) as progress:
             options.step = progress.step
             result, status = run(options)

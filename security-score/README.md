@@ -79,19 +79,24 @@ security-score /path/to/repository --quiet
 ```
 
 Without a path, `security-score` scans the current directory. Normal text mode
-prints exactly one score line, for example `59/100 (E)` or `59/100 (partial)`,
-without progress, calculations or diagnostics when a result is available.
-`--detail` (alias `--details`) shows category subscores, their deductions and
-severity caps, and the actual scanner findings grouped under each category with
-rules, severity, file/line locations and review suggestions. Unassessed categories
-remain explicit; observed subscores are marked `(partial)` when a repository grade
-is withheld. Detailed mode also shows origin groups and coverage explanations.
-Only detailed text mode emits work steps on stderr, with a spinner on interactive
-terminals and plain lines when redirected.
+prints exactly one score line on stdout, for example `59/100 (E)` or
+`59/100 (partial)`, and shows work steps on stderr. Interactive terminals get a
+spinner; redirected progress uses plain lines. Category breakdowns, calculations
+and findings appear only with `--detail` (alias `--details`). Quiet mode alone
+suppresses progress.
+
+Detailed output has three parts: a category table (subscore, finding count,
+deduction and severity cap), findings grouped by category/rule with locations and
+review suggestions, and one coverage summary. The score formula appears once.
+Partial category values are explicitly described as observed indices; unknown
+categories stay unknown. Repeated findings are grouped across path hints, with up
+to three files and five lines per file per rule; omitted counts point to `--json`
+for every location. Location labels such as `[tests]` or `[assets]` are path hints,
+not proof of runtime use or ownership.
 
 For a number alone, use `--quiet` (also accepted as `--quite`). Output is, for example, `59` followed by a newline, without progress, calculation, grade, diagnostics, or other text. Quiet mode overrides `--details` and cannot be combined with JSON/YAML, change relevance, or rule-list/example commands. With partial or incomplete evidence, the number is the observed pattern index; the exit status remains 2 or 1 respectively. With no numeric result, stdout and stderr are empty and the exit status indicates failure or undetermined coverage. Do not treat a number alone as successful complete assessment: always check the exit status. Explicit `--help` and `--version` still perform their requested display action.
 
-With uncertain coverage, the tool reports `partial` and an observed pattern index without a repository score or grade. `--details` groups static candidates by path hints (`source`, `tests`, `examples`, `assets`, `build`, and `repository-host`) and summarizes repeated locations and parser issues. These hints do not prove production use or third-party ownership and do not remove candidates from the assessment. JSON/YAML retain every candidate and location.
+With uncertain coverage, the tool reports `partial` and an observed pattern index without a repository score or grade. Detailed output summarizes repeated locations and parser issues; JSON/YAML retain every candidate, origin group and location. Path hints do not remove candidates from the assessment.
 
 Detailed text includes the number of files checked, selection limits, coverage explanations and source locations. JSON/YAML retain structured diagnostics and the actual verdict without progress messages. A `(partial)` index never substitutes for the withheld repository score or grade. Exit status remains 1 for incomplete processing and 2 for partial/undetermined assessments, including quiet mode. With no numeric result, normal text prints the verdict; failures without a result report an error on stderr, while quiet mode stays silent.
 
@@ -142,7 +147,7 @@ Change analysis returns `high`, `medium`, `low`, or `unclear` security relevance
 | --- | --- |
 | `repository` | Local directory or supported HTTPS repository URL; defaults to the current directory. |
 | `--repo DIRECTORY` | Alternative to the positional argument for a local directory. |
-| `--detail`, `--details` | Show category subscores with deductions and located findings, coverage, architecture observations, and progress. |
+| `--detail`, `--details` | Add a category table, grouped findings and one coverage summary to the normal result and progress output. |
 | `--quiet`, `--quite` | Repository scans: output only the numeric index; no progress or diagnostics. Preserve exit status; no output if no index exists. |
 | `--json`, `--yaml` | Output JSON or YAML instead of text; choose one. |
 | `--staged` | Compare HEAD with staged changes. |
@@ -163,3 +168,45 @@ Change analysis returns `high`, `medium`, `low`, or `unclear` security relevance
 | `--version` | Show package version and embedded source commit, then exit without scanning. |
 
 Choose one change selector: `--staged`, `--unstaged`, `--worktree`, `--base`, `--commit`, or `--patch`/`--diff`. These operate on local sources; repository URLs select a repository scan.
+
+## End-to-end verification
+
+Run offline checks from `security-score/`:
+
+```sh
+python3 -B -m unittest test_security_score -v
+python3 -B -m unittest test_packaging -v
+```
+
+The packaging check and default live test need the declared build tools
+(`setuptools>=61`, `wheel`) and pip with `--python` support in the test interpreter.
+They build and install without downloading packages. The scanner itself still
+has no additional Python runtime dependencies.
+
+Before qualifying changes to URL scanning or console output, run the real CLI
+against the public Juice Shop repository:
+
+```sh
+SECURITY_SCORE_LIVE_E2E=1 python3 -B -m unittest test_e2e_juice_shop -v
+```
+
+This builds a wheel from the current checkout, verifies its source/rules contents,
+installs it into a temporary environment, and runs standard, `--detail` and
+`--quite` scans through the installed entry point. It checks actual HTTPS
+retrieval, numeric evidence, category arithmetic and finding counts, locations,
+progress versus quiet output, and a 70-second outer deadline per scan. It does
+not run Juice Shop code or install its dependencies. Each scan uses the normal
+60-second budget. The full suite can take about three minutes under slow network
+conditions.
+
+`out/juice-shop-e2e/` retains the tested wheel, installation/source hashes,
+stdout/stderr transcripts, exit statuses and elapsed times. The wheel built from
+the temporary source copy may report `commit unknown`; the verified file hashes
+identify the tested contents. These artifacts are ignored by Git. The live tests
+are skipped unless explicitly enabled; after opt-in, unavailable repository
+discovery and absent evidence fail the test rather than being skipped. A partial indication with a
+nonzero exit status is valid only if the expected evidence and output are present.
+The evolving repository has no hard-coded score or finding-count expectation.
+
+To reproduce a failure in an existing installation instead of building the current
+checkout, set `SECURITY_SCORE_E2E_EXECUTABLE` to that CLI's absolute path as well.
