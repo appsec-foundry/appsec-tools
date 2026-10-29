@@ -1,6 +1,7 @@
 # Requirement Harvester
 
-Reads requirements from configured websites and wikis and writes an OSCAL YAML catalog. Requires Python 3.10+ on Linux or macOS.
+Reads requirements from configured websites and wikis and writes an OSCAL YAML
+catalog. Requires Python 3.10+ on Linux or macOS.
 
 ## Installation
 
@@ -16,11 +17,10 @@ No local clone is needed. From an existing clone, you can instead run
 ## Run
 
 Save an [example configuration](examples/lists.yaml) as `my-config.yaml` and
-adjust its URLs and selectors. For public source examples, use
-[TSS-WEB](examples/tss-web.yaml) or the
-[OWASP Cheat Sheet Series](examples/owasp-cheatsheets.yaml). Configuration
-examples are separate files; `pipx` does not install them in your working
-directory.
+adjust its URLs and selectors. For public sources, see the examples for
+[TSS-WEB](examples/tss-web.yaml) and the
+[OWASP Cheat Sheet Series](examples/owasp-cheatsheets.yaml). `pipx` does not
+install the example files; copy them from the repository.
 
 ```sh
 requirement-harvester validate --config my-config.yaml
@@ -34,20 +34,21 @@ replaces the output files.
 
 ### OWASP Cheat Sheet Series
 
-`examples/owasp-cheatsheets.yaml` starts at the alphabetical index of
-`cheatsheetseries.owasp.org` and writes each `h2` section of every cheat sheet
-as one entry. The cheat sheets are best-practice guidance rather than
-normative requirements, so entries carry no obligation level. They are
-published under CC BY-SA; keep the source URL provenance when you redistribute
-the catalog. The configuration passes `validate`, and extraction was checked
-against saved sample pages; a complete crawl of all pages has not been run yet.
+`examples/owasp-cheatsheets.yaml` reads all cheat sheets from
+`cheatsheetseries.owasp.org` and creates one entry per section. Cheat sheets
+are recommendations, so the entries have no obligation level. The content is
+licensed under CC BY-SA; keep the source URLs when you pass the catalog on.
+A full crawl has not been tested yet.
 
 ## CI and reference
 
-The [GitLab and GitHub templates](ci/README.md) use a local virtual environment and locked dependencies. Put credentials in protected CI variables.
+The [GitLab and GitHub templates](ci/README.md) use a local virtual
+environment and locked dependencies. Put credentials in protected CI
+variables.
 
 - [Configuration, authentication, and exit codes](docs/reference.md)
 - [Configuration schema](harvester/schemas/config.schema.json)
 - [Requirements](requirements.md)
 
-Supports static HTML, API tokens, HTTP Basic, and Entra bearer tokens. JavaScript rendering, PDFs, and form logins are not supported.
+Supports static HTML, API tokens, HTTP Basic, and Entra bearer tokens.
+JavaScript rendering, PDFs, and form logins are not supported.
