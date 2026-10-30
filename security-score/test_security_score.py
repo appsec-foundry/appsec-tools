@@ -1821,6 +1821,159 @@ class ScoreTests(unittest.TestCase):
             any(row["status"] == "satisfied" for row in self.invoke()[1]["checks"])
         )
 
+    def test_csp_assertions_are_not_declarations(self):
+        strict = "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+        for path, text, expected in (
+            (
+                "headers.test.js",
+                "assert.equal(res.headers['Content-Security-Policy'], \"script-src 'unsafe-inline'\")\n"
+                "if (headers['Content-Security-Policy'] == \"script-src *\") {}\n",
+                [],
+            ),
+            (
+                "headers.js",
+                "res.setHeader('Content-Security-Policy', \"script-src 'unsafe-inline'\");\n"
+                "const list = new Headers([['Content-Security-Policy', \"script-src *\"]]);\n"
+                "headers['Content-Security-Policy'] = \"default-src 'self'\";\n"
+                f"res.set({{'Content-Security-Policy': \"{strict}\"}});\n",
+                [(1, "violated"), (2, "violated"), (3, "unclear"), (4, "satisfied")],
+            ),
+        ):
+            with self.subTest(path=path):
+                code = core.javascript_code(text)
+                self.assertEqual(
+                    architecture.csp_observations(path, text, code), expected
+                )
+
+    def test_security_headers_count_only_accepted_literal_values(self):
+        nosniff, frame = "X-Content-Type-Options", "X-Frame-Options"
+        hsts, referrer = "Strict-Transport-Security", "Referrer-Policy"
+        for path, text, expected in (
+            (
+                "server.js",
+                "import helmet from 'helmet';\napp.use(helmet());\n",
+                {(2, nosniff), (2, frame), (2, hsts), (2, referrer)},
+            ),
+            (
+                "server.js",
+                "const guard = require('helmet');\n"
+                "app.use(guard({ hsts: false, 'frameguard': { action: 'deny' } }));\n",
+                {(2, nosniff), (2, referrer)},
+            ),
+            (
+                "server.ts",
+                "import helmet from 'helmet'\napp.use(helmet.noSniff())\n"
+                "app.use(helmet.frameguard())\n// app.use(helmet.hsts())\n",
+                {(2, nosniff), (3, frame)},
+            ),
+            (
+                "server.js",
+                "import helmet from 'helmet';\napp.use(helmet({ ...defaults }));\n"
+                "app.use(helmet(options));\napp.use(helmet.frameguard({ action: 'deny' }));\n"
+                "const text = 'helmet()';\n",
+                set(),
+            ),
+            ("server.js", "app.use(helmet());\n", set()),
+            (
+                "app.js",
+                "res.set('x-frame-options', 'SAMEORIGIN');\n"
+                "res.setHeader('Referrer-Policy', 'origin, strict-origin-when-cross-origin');\n"
+                "res.set({'X-Content-Type-Options': 'nosniff'});\n",
+                {(1, frame), (2, referrer), (3, nosniff)},
+            ),
+            (
+                "app.js",
+                "res.set('X-Frame-Options', 'ALLOW-FROM https://example.test');\n"
+                "res.set('Referrer-Policy', 'no-referrer, unsafe-url');\n"
+                "res.set('Strict-Transport-Security', 'max-age=0; includeSubDomains');\n"
+                "res.set('X-Content-Type-Options', value);\n"
+                "const doc = \"res.set('X-Frame-Options', 'DENY')\";\n",
+                set(),
+            ),
+            (
+                "http.test.ts",
+                "assert.equal(res.headers['x-frame-options'], 'SAMEORIGIN')\n"
+                "if (res.headers['X-Content-Type-Options'] === 'nosniff') {}\n",
+                set(),
+            ),
+            (
+                "headers.py",
+                "response.headers['Strict-Transport-Security'] = 'includeSubDomains; max-age=63072000'\n"
+                "response.set_header('X-Content-Type-Options', 'nosniff')\n"
+                "response.headers['X-Frame-Options'] = frame_option\n",
+                {(1, hsts), (2, nosniff)},
+            ),
+            (
+                "site.conf",
+                "add_header X-Frame-Options DENY;\n"
+                'add_header X-Content-Type-Options "nosniff" always;\n'
+                "# add_header Referrer-Policy no-referrer;\n",
+                {(1, frame), (2, nosniff)},
+            ),
+        ):
+            with self.subTest(path=path, text=text):
+                code = (
+                    core.javascript_code(text)
+                    if Path(path).suffix in core.JS_EXTENSIONS
+                    else text
+                )
+                rows = architecture.header_observations(path, text, code)
+                self.assertEqual({(line, header) for line, _, header in rows}, expected)
+                self.assertTrue(all(status == "satisfied" for _, status, _ in rows))
+
+    def test_nested_helmet_calls_are_processed_in_bounded_time(self):
+        text = "import helmet from 'helmet';\n" + "helmet(" * 40000 + ")" * 40000
+        started = time.monotonic()
+        rows = architecture.header_observations(
+            "x.js", text, core.javascript_code(text)
+        )
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertEqual(len(rows), 4)  # Only the innermost call has no arguments.
+
+    def test_security_headers_never_deduct_or_withhold_a_score(self):
+        self.write("app.py", "eval(payload)\n")
+        status, result, _ = self.invoke()
+        self.assertEqual((status, result["score"]), (0, 59))
+        self.write(
+            "server.js",
+            "import helmet from 'helmet';\napp.use(helmet.noSniff());\n"
+            "app.use(helmet.frameguard());\nres.set('X-Frame-Options', config.frame);\n",
+        )
+        status, result, _ = self.invoke()
+        self.assertEqual(
+            (status, result["verdict"], result["score"]), (0, "scored", 59)
+        )
+        row = next(
+            row
+            for row in result["checks"]
+            if row["rule"] == "WEB-HEADERS" and row["file"] == "server.js"
+        )
+        self.assertEqual(row["status"], "satisfied")
+        self.assertEqual(
+            [(item["line"], item["header"]) for item in row["locations"]],
+            [(2, "X-Content-Type-Options"), (3, "X-Frame-Options")],
+        )
+        self.assertFalse(any(f["rule"] == "WEB-HEADERS" for f in result["findings"]))
+        frontend = topic_block(cli.render(result, details=True), "Frontend")
+        self.assertRegex(frontend, r"^Frontend\s+100/100")
+        self.assertRegex(
+            frontend,
+            r"(?m)^  OK\s+Security headers declared:\s+X-Content-Type-Options,\s+"
+            r"X-Frame-Options\n.*WEB-HEADERS . server\.js:2 \(\+1 more\)$",
+        )
+
+    def test_security_header_change_is_high_relevance_without_a_finding(self):
+        self.init()
+        self.write("app.py", "response.headers['X-Frame-Options'] = 'DENY'\n")
+        status, result, _ = self.invoke("--worktree")
+        self.assertEqual(status, 0)
+        self.assertEqual(result["relevance"], "high")
+        self.assertEqual(result["findings"], [])
+        self.assertIn(
+            "REL-CONTROL-FRONTEND-POLICY",
+            {signal["rule"] for signal in result["signals"]},
+        )
+
     def test_supply_chain_declarations_and_stale_locks(self):
         lock = (
             '{"lockfileVersion":3,"packages":{"":{"dependencies":{"example":"1.0.0"}}}}'
@@ -2039,7 +2192,7 @@ class ScoreTests(unittest.TestCase):
         self.write("app.py", source.replace("return actor == owner", "return True"))
         status, result, _ = self.invoke("--worktree")
         self.assertEqual(status, 0)
-        self.assertEqual(result["relevance_version"], 5)
+        self.assertEqual(result["relevance_version"], 6)
         self.assertEqual(result["relevance"], "high")
         self.assertEqual(result["findings"], [])
         self.assertTrue(

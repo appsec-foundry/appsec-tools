@@ -921,6 +921,66 @@
       ]
     },
     {
+      "id": "WEB-HEADERS",
+      "kind": "headers",
+      "area": "frontend-policy",
+      "severity": "low",
+      "title": "Browser security header declaration",
+      "criteria": "Positive evidence only. Recognize literal X-Content-Type-Options nosniff, X-Frame-Options DENY or SAMEORIGIN, Strict-Transport-Security with a positive max-age and a restrictive Referrer-Policy, and helmet() or its header middlewares for an imported helmet binding. helmet() counts all four headers unless an option names one; middleware options are not evaluated. A missing, weak or dynamic value is no evidence either way, because a proxy or platform outside the repository may set the header. Delivery on every response remains unverified.",
+      "next_action": "Verify that the headers are delivered on every response, including through proxies.",
+      "examples": [
+        {
+          "file": "server.js",
+          "source": "import helmet from 'helmet';\napp.use(helmet());\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "server.ts",
+          "source": "const helmet = require('helmet');\napp.use(helmet.noSniff());\n// app.use(helmet.hsts());\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "headers.py",
+          "source": "response.headers['X-Frame-Options'] = 'DENY'\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "nginx.conf",
+          "source": "add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains\" always;\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "app.js",
+          "source": "res.setHeader('X-Frame-Options', 'ALLOWALL');\nres.set('Referrer-Policy', 'unsafe-url');\nres.set('Strict-Transport-Security', 'max-age=0');\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "app.js",
+          "source": "import helmet from 'helmet';\napp.use(helmet(options));\nres.set('X-Content-Type-Options', config.noSniff);\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "app.js",
+          "source": "app.use(helmet());\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
       "id": "NPM-SOURCES",
       "kind": "npm-sources",
       "area": "supply-chain",
@@ -1340,9 +1400,9 @@
       ]
     }
   ],
-  "rule_version": 6,
+  "rule_version": 7,
   "change_relevance": {
-    "version": 5,
+    "version": 6,
     "documentation_extensions": [
       ".md",
       ".rst",

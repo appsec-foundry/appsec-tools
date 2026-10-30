@@ -254,6 +254,8 @@ class JuiceShopE2ETests(unittest.TestCase):
             output,
             r"(?m)^ {12}[A-Z][A-Z0-9-]+ . (?:lib|routes|frontend|scripts)/\S+:\d+",
         )
+        # helmet.noSniff() and helmet.frameguard() in server.ts are positive evidence.
+        self.assertRegex(output, r"(?m)^ {12}WEB-HEADERS . server\.ts:\d+")
         counts = re.findall(r"(?m)^[A-Z].*?(\d+) candidates?$", output)
         total = re.search(r"\d+ files? checked . (\d+) candidates?", output)
         self.assertIsNotNone(total)

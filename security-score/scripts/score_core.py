@@ -54,6 +54,7 @@ def validate_policy():
         "js-sql",
         "frontend",
         "csp",
+        "headers",
         "npm-sources",
         "npm-lock",
         "npm-install",
@@ -847,7 +848,7 @@ def applies(rule, path):
         return suffix in JS_EXTENSIONS
     if kind == "frontend":
         return suffix in JS_EXTENSIONS or path.endswith(".component.html")
-    if kind == "csp":
+    if kind in {"csp", "headers"}:
         return suffix in JS_EXTENSIONS | {".py", ".json", ".conf", ".config"}
     if kind == "host":
         return False
@@ -932,6 +933,7 @@ def scan_source(path, source, budget, findings, checks, files):
             "js-sql",
             "frontend",
             "csp",
+            "headers",
             "npm-sources",
             "npm-lock",
             "npm-install",
@@ -947,7 +949,7 @@ def scan_source(path, source, budget, findings, checks, files):
             observed = observations(rule, path, text, code, files)
         else:
             observed = other_observations(rule, text, code)[0]
-        states = Counter(status for _, status in observed)
+        states = Counter(row[1] for row in observed)
         status = (
             "violated"
             if states["violated"]
@@ -964,14 +966,19 @@ def scan_source(path, source, budget, findings, checks, files):
                 "file": path,
                 "status": status,
                 "locations": [
-                    {"line": source.get("lines", {}).get(line, line), "status": outcome}
-                    for line, outcome in observed
+                    {
+                        "line": source.get("lines", {}).get(row[0], row[0]),
+                        "status": row[1],
+                        # Header observations also name the recognized header.
+                        **({"header": row[2]} if len(row) > 2 else {}),
+                    }
+                    for row in observed
                 ],
             }
         )
         if parse_error:
             checks[-1]["error"] = parse_reason
-        for line, outcome in observed:
+        for line, outcome, *_ in observed:
             if outcome != "violated":
                 continue
             if len(findings) >= 5000:

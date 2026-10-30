@@ -93,11 +93,29 @@ def csp_status(policy):
     return "satisfied"
 
 
+def literal_declarations(names, text, code, flags=0):
+    """(line, name, value) for literal header declarations outside Python.
+
+    Object literals, subscript assignments, setter calls and [name, value] pairs
+    count; reading a header, as in a test assertion, does not. The separator must
+    be outside a JS string/comment, so quoted documentation is no declaration.
+    """
+    value = r"""\s*(?P<quote>["'])(?P<value>[^\n]*?)(?P=quote)"""
+    rows = []
+    for pattern in (
+        rf"""["'](?P<name>{names})["']\s*(?P<separator>:|\]\s*=(?!=))""",
+        rf"""\b(?:set|setHeader|header|append)\s*\(\s*["'](?P<name>{names})["']\s*(?P<separator>,)""",
+        rf"""\[\s*["'](?P<name>{names})["']\s*(?P<separator>,)""",
+    ):
+        for match in re.finditer(pattern + value, text, flags):
+            if not code[match.start("separator")].isspace():
+                line = text.count("\n", 0, match.start()) + 1
+                rows.append((line, match["name"], match["value"]))
+    return sorted(rows)
+
+
 def csp_observations(path, text, code):
     observations = []
-    # The assignment separator must be outside a JS string/comment, so quoted
-    # documentation does not become an actual configured header.
-    pattern = r"""["']Content-Security-Policy["']\s*(?:\]\s*)?(?P<separator>[:,=])\s*(?P<quote>["'])(?P<policy>[^\n]*?)(?P=quote)"""
     if Path(path).suffix == ".py":
         try:
             tree = ast.parse(text)
@@ -136,12 +154,8 @@ def csp_observations(path, text, code):
                     )
                 )
         return observations
-    for match in re.finditer(pattern, text):
-        if code[match.start("separator")].isspace():
-            continue
-        observations.append(
-            (text.count("\n", 0, match.start()) + 1, csp_status(match["policy"]))
-        )
+    for line, _, policy in literal_declarations("Content-Security-Policy", text, code):
+        observations.append((line, csp_status(policy)))
     for match in re.finditer(
         r"""(?im)^\s*add_header\s+Content-Security-Policy\s+(["'])(.*?)\1""", text
     ):
@@ -150,6 +164,163 @@ def csp_observations(path, text, code):
         )
     # A report-only policy is deliberately not recognized as enforcement.
     return observations
+
+
+# Browser security headers other than CSP. They are positive evidence only: a
+# proxy or platform outside the repository may set them, so a missing, weak or
+# dynamic value is neither a finding nor an unclear check.
+SECURITY_HEADERS = {
+    name.lower(): name
+    for name in (
+        "X-Content-Type-Options",
+        "X-Frame-Options",
+        "Strict-Transport-Security",
+        "Referrer-Policy",
+    )
+}
+# helmet() sends all four by default. An option naming a header is not evaluated.
+HELMET_OPTIONS = {
+    "noSniff": "X-Content-Type-Options",
+    "xContentTypeOptions": "X-Content-Type-Options",
+    "frameguard": "X-Frame-Options",
+    "xFrameOptions": "X-Frame-Options",
+    "hsts": "Strict-Transport-Security",
+    "strictTransportSecurity": "Strict-Transport-Security",
+    "referrerPolicy": "Referrer-Policy",
+}
+
+
+def header_accepted(name, value):
+    value = value.strip().lower()
+    if name == "X-Content-Type-Options":
+        return value == "nosniff"
+    if name == "X-Frame-Options":
+        return value in {"deny", "sameorigin"}
+    if name == "Strict-Transport-Security":
+        match = re.search(r"(?:^|;)\s*max-age\s*=\s*\"?(\d+)", value)
+        return bool(match) and int(match[1]) > 0
+    # Browsers apply the last listed value they support; only the last is read.
+    return value.split(",")[-1].strip() in {
+        "no-referrer",
+        "same-origin",
+        "strict-origin",
+        "strict-origin-when-cross-origin",
+    }
+
+
+HELMET_OPTION = re.compile(r"(?<![\w$])(?:" + "|".join(HELMET_OPTIONS) + r")(?![\w$])")
+
+
+def bracket_pairs(code):
+    """Opening bracket offset -> closing offset, in one linear pass."""
+    pairs, stack = {}, []
+    for index, char in enumerate(code):
+        if char in "([{":
+            stack.append(index)
+        elif char in ")]}" and stack:
+            pairs[stack.pop()] = index
+    return pairs
+
+
+def helmet_headers(text, code):
+    """Headers from helmet() and its middlewares, for a recognized helmet import."""
+    names = set()
+    for match in re.finditer(
+        r"\bimport\s+(?:\*\s+as\s+)?([A-Za-z_$][\w$]*)\s*(?:,\s*\{[^{}\n]*\}\s*)?from\s+['\"]helmet['\"]"
+        r"|\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\s*\(\s*['\"]helmet['\"]\s*\)",
+        text,
+    ):
+        if not code[match.start()].isspace():
+            names.add(match[1] or match[2])
+    if not names:
+        return []
+    breaks = [match.start() for match in re.finditer("\n", code)]
+    pairs = bracket_pairs(code)
+    rows = []
+    for name in sorted(names):
+        for match in re.finditer(
+            rf"(?<![\w$.]){re.escape(name)}\s*(?:\.\s*([A-Za-z_$][\w$]*)\s*)?\(", code
+        ):
+            end = pairs.get(match.end() - 1)
+            # Unclosed or long argument lists are not evaluated, which bounds the work.
+            if end is None or code[end] != ")" or end - match.end() > 4000:
+                continue
+            arguments = code[match.end() : end].strip()
+            if match[1]:
+                headers = (
+                    [HELMET_OPTIONS[match[1]]] if match[1] in HELMET_OPTIONS else []
+                )
+                if arguments:
+                    continue  # Middleware options are not evaluated.
+            elif not arguments:
+                headers = SECURITY_HEADERS.values()
+            elif (
+                arguments.startswith("{")
+                and arguments.endswith("}")
+                and "..." not in arguments
+            ):
+                named = {
+                    HELMET_OPTIONS[option]
+                    for option in HELMET_OPTION.findall(text, match.end(), end)
+                }
+                headers = [h for h in SECURITY_HEADERS.values() if h not in named]
+            else:
+                continue
+            line = bisect_right(breaks, match.start()) + 1
+            rows += [(line, "satisfied", header) for header in headers]
+    return rows
+
+
+def header_observations(path, text, code):
+    """(line, 'satisfied', header) for literal declarations with an accepted value."""
+    rows = []
+    if Path(path).suffix == ".py":
+        try:
+            tree = ast.parse(text)
+        except (SyntaxError, ValueError, RecursionError):
+            return []
+        for node in ast.walk(tree):
+            pairs = []
+            if isinstance(node, ast.Assign):
+                pairs = [
+                    (target.slice, node.value)
+                    for target in node.targets
+                    if isinstance(target, ast.Subscript)
+                ]
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr
+                in {"set_header", "setHeader", "header", "setdefault"}
+                and len(node.args) >= 2
+            ):
+                pairs = [(node.args[0], node.args[1])]
+            for key, value in pairs:
+                if (
+                    isinstance(key, ast.Constant)
+                    and isinstance(key.value, str)
+                    and key.value.lower() in SECURITY_HEADERS
+                    and isinstance(value, ast.Constant)
+                    and isinstance(value.value, str)
+                ):
+                    name = SECURITY_HEADERS[key.value.lower()]
+                    if header_accepted(name, value.value):
+                        rows.append((node.lineno, "satisfied", name))
+        return sorted(rows)
+    names = "|".join(re.escape(name) for name in SECURITY_HEADERS.values())
+    for line, name, value in literal_declarations(names, text, code, re.I):
+        name = SECURITY_HEADERS[name.lower()]
+        if header_accepted(name, value):
+            rows.append((line, "satisfied", name))
+    for match in re.finditer(
+        rf"""(?im)^\s*add_header\s+({names})\s+(?:(["'])(.*?)\2|([^\s;"']+))""", text
+    ):
+        name = SECURITY_HEADERS[match[1].lower()]
+        if header_accepted(name, match[3] if match[2] else match[4]):
+            rows.append((text.count("\n", 0, match.start()) + 1, "satisfied", name))
+    if Path(path).suffix.lower() in JS_EXTENSIONS:
+        rows += helmet_headers(text, code)
+    return sorted(rows)
 
 
 def npm_observations(kind, path, text, files):
@@ -416,6 +587,8 @@ def observations(rule, path, text, code, files):
         return npm_observations(kind, path, text, files)
     if kind == "csp":
         return csp_observations(path, text, code)
+    if kind == "headers":
+        return header_observations(path, text, code)
     if kind == "requirements":
         return requirement_observations(text)
     if kind == "workflow-injection":

@@ -146,6 +146,7 @@ POSITIVE_REASONS = {
     "NPM-LOCK": "Manifest matches a recognized dependency lock",
     "CI-PERMISSIONS": "Read-only workflow permissions declared",
     "WEB-CSP": "CSP declaration meets the bundled policy checks",
+    "WEB-HEADERS": "Security headers declared",
     "JS-HTML": "Text assigned through textContent",
     "FRONTEND-BINDING": "Framework text binding recognized",
     "PY-JWT": "Token verification restricted to listed algorithms",
@@ -299,10 +300,21 @@ def topic_examples(style, topic):
             for row in rows
         )
         more = f" (+{count - 1} more)" if count > 1 else ""
+        reason = POSITIVE_REASONS.get(rule, f"Positive evidence recognized by {rule}")
+        headers = sorted(
+            {
+                item["header"]
+                for row in rows
+                for item in row.get("locations", [])
+                if "header" in item
+            }
+        )
+        if headers:
+            reason += ": " + ", ".join(headers)
         lines += entry(
             style,
             style.paint(f"{'OK':<{LABEL_WIDTH}}", "green"),
-            POSITIVE_REASONS.get(rule, f"Positive evidence recognized by {rule}"),
+            reason,
             f"{rule} {style.dot} {location(rows[0])}{more}",
         )
     if not candidates and not positive:

@@ -12,9 +12,9 @@ Tests pin the exact behavior.
 - **REQ-02 — Repositories and changes.** Scan local checkouts and GitHub.com or
   GitLab.com repository URLs, including the repository-host security settings for
   URLs. Analyze changes (staged, unstaged, commits, revision ranges, patches) and
-  state the compared versions. Checks cover data access, frontend output and CSP,
-  token verification, hardening including container privileges, and the
-  dependency, CI workflow and build supply chain.
+  state the compared versions. Checks cover data access, frontend output, CSP and
+  other browser security headers, token verification, hardening including
+  container privileges, and the dependency, CI workflow and build supply chain.
 
 - **REQ-03 — Score, grade, and change relevance.** A repository scan gives a score
   from 0 to 100, where 100 means no deductions, and a grade: A ≥ 90, B ≥ 80, C ≥ 70,
@@ -61,3 +61,8 @@ Tests pin the exact behavior.
   app or server-side templates, persistence, and how SQL query text is built. The
   profile is context only and never changes score or grade; a trait that is not
   recognized is reported as such, not as absent.
+
+- **REQ-11 — Security headers as positive evidence.** Browser security headers
+  other than CSP count only as positive evidence. A missing, disabled, or
+  dynamically set header is neither a finding nor an unclear check, because
+  proxies and platform configuration outside the repository can set it.

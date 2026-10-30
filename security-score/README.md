@@ -134,7 +134,7 @@ own [scoring policy](references/compatibility.md).
 | Repository | Host settings such as branch protection and required reviews (URL scans only) |
 | Authentication | JWT verification options: disabled signature or expiry checks, the `none` algorithm; no rules for login, sessions, or access control |
 | Architecture | Code execution, SQL injection, and unsafe deserialization patterns |
-| Frontend | HTML output sinks, framework bypasses, and Content Security Policy |
+| Frontend | HTML output sinks, framework bypasses, Content Security Policy, and other security headers (positive evidence only) |
 | Dependencies & CI | Package sources and indexes, install scripts, Action and image pinning, CI permissions, workflow script injection, privileged pull request checkouts, downloads in container builds |
 | Cryptography | Weak hashes and predictable random values |
 | Deployment & transport | Debug mode, container host privileges, and TLS verification |
