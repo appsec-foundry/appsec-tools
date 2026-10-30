@@ -1488,6 +1488,29 @@ class ScoreTests(unittest.TestCase):
         self.assertNotIn("\nFindings\n", details)
         self.assertNotIn("Deduction", details)
 
+    def test_topic_examples_show_positive_evidence_beside_findings(self):
+        self.write("bad.js", "element.innerHTML = payload;\n")
+        self.write("safe.js", "a.textContent = one;\nb.textContent = two;\n")
+        self.write("app.py", "eval(payload)\n")
+        self.write("data.js", "const value = JSON.parse(text);\n")
+        _, result, _ = self.invoke()
+        original = json.dumps(result, sort_keys=True)
+        details = cli.render(result, details=True)
+        frontend = topic_block(details, "Frontend")
+        architecture = topic_block(details, "Architecture")
+        self.assertRegex(frontend, r"^Frontend\s+79/100\s.*1 candidate")
+        self.assertRegex(frontend, r"(?m)^  MEDIUM\s+.*\n.*JS-HTML . bad\.js:1$")
+        self.assertRegex(
+            frontend,
+            r"(?m)^  OK\s+Text assigned through textContent\n.*JS-HTML . safe\.js:1 \(\+1 more\)$",
+        )
+        self.assertLess(frontend.index("MEDIUM"), frontend.index("  OK"))
+        self.assertRegex(architecture, r"^Architecture\s+59/100")
+        self.assertIn("Data-only parsing with JSON.parse", architecture)
+        self.assertNotIn("Positive evidence recognized by", details)
+        self.assertNotIn("No recognized control evidence", frontend)
+        self.assertEqual(json.dumps(result, sort_keys=True), original)
+
     def test_technology_context_does_not_manufacture_authentication_or_architecture_scores(
         self,
     ):

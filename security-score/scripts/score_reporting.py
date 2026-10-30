@@ -123,6 +123,23 @@ SUBCATEGORIES = (
 )
 
 POSITIVE_REASONS = {
+    "PY-EXEC": "Data-only parsing with ast.literal_eval",
+    "PY-SHELL": "Process started from an argument list without a shell",
+    "PY-SQL": "Literal SQL text passed to a query call",
+    "PY-YAML": "Safe YAML loader used",
+    "PY-DEBUG": "Debug mode explicitly disabled",
+    "PY-DEPENDENCIES": "Requirement pinned with a sha256 hash",
+    "JS-EVAL": "Data-only parsing with JSON.parse",
+    "JS-SQL": "Literal SQL text passed to a query call",
+    "NPM-SOURCES": "Git dependency pinned to a full commit",
+    "IAC-ACTION": "Action pinned to a full commit or digest",
+    "IAC-IMAGE": "Base image pinned by digest",
+    "HOST-DEFAULT-BRANCH-PROTECTION": "Default branch protection reported enabled",
+    "HOST-REQUIRED-REVIEWS": "Required reviews reported enabled",
+    "HOST-SECRET-SCANNING": "Secret scanning reported enabled",
+    "HOST-DEPENDABOT-SECURITY-UPDATES": "Dependency security updates reported enabled",
+    "HOST-SUCCESSFUL-PIPELINE-BEFORE-MERGE": "Successful pipeline required before merge",
+    "HOST-SECURITY-SCANNING": "Security scanning reported enabled",
     "IAC-USER": "Non-root container user declared",
     "PY-TLS": "Certificate verification explicitly enabled",
     "JS-TLS": "Certificate verification explicitly enabled",
@@ -269,27 +286,26 @@ def topic_examples(style, topic):
                 style,
                 f"+{len(ranked) - 3} more finding types; every occurrence is in --json.",
             )
-        return lines
-    positive = [row for row in topic["checks"] if row["status"] == "satisfied"]
-    seen = set()
+    # Positive evidence follows the findings; it never offsets them in the index.
+    positive = {}
     for row in sorted(
-        positive, key=lambda row: (source_priority(row["file"]), row["rule"])
+        (row for row in topic["checks"] if row["status"] == "satisfied"),
+        key=lambda row: (source_priority(row["file"]), row["rule"]),
     ):
-        if row["rule"] in seen:
-            continue
-        seen.add(row["rule"])
-        reason = POSITIVE_REASONS.get(
-            row["rule"], f"Positive evidence recognized by {row['rule']}"
+        positive.setdefault(row["rule"], []).append(row)
+    for rule, rows in list(positive.items())[:2]:
+        count = sum(
+            sum(item["status"] == "satisfied" for item in row.get("locations", [])) or 1
+            for row in rows
         )
+        more = f" (+{count - 1} more)" if count > 1 else ""
         lines += entry(
             style,
             style.paint(f"{'OK':<{LABEL_WIDTH}}", "green"),
-            reason,
-            f"{row['rule']} {style.dot} {location(row)}",
+            POSITIVE_REASONS.get(rule, f"Positive evidence recognized by {rule}"),
+            f"{rule} {style.dot} {location(rows[0])}{more}",
         )
-        if len(seen) == 2:
-            break
-    if not positive:
+    if not candidates and not positive:
         lines += note(
             style,
             "No token verification recognized; login, sessions and access control are not assessed."

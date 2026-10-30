@@ -241,9 +241,11 @@ class JuiceShopE2ETests(unittest.TestCase):
                 else output.index("\nCoverage\n")
             )
             block = output[heading.end() : end]
-            tags = re.findall(r"(?m)^  (?:CRITICAL|HIGH|MEDIUM|LOW|OK) ", block)
+            tags = re.findall(r"(?m)^  (?:CRITICAL|HIGH|MEDIUM|LOW) ", block)
+            positive = re.findall(r"(?m)^  OK ", block)
             self.assertGreaterEqual(len(re.findall(r"(?m)^  \S", block)), 1, heading[1])
             self.assertLessEqual(len(tags), 3, heading[1])
+            self.assertLessEqual(len(positive), 2, heading[1])
             if heading[2] != "not assessed":
                 scores.append(int(heading[3]))
         self.assertEqual(int(overall[1]), min(scores))

@@ -59,6 +59,12 @@ Architecture              0/100  ░░░░░░░░░░  19 candidates
             JS-SQL · routes/login.ts:34 (+12 more)
   HIGH      JavaScript code evaluation
             JS-EVAL · lib/xml.ts:12 (+4 more)
+  HIGH      JavaScript command execution through exec
+            JS-SHELL · scripts/package.mjs:20
+  OK        Data-only parsing with JSON.parse
+            JS-EVAL · frontend/src/app/Services/basket.service.ts:98 (+44 more)
+  OK        Literal SQL text passed to a query call
+            JS-SQL · data/static/codefixes/loginAdminChallenge_3.ts:15 (+4 more)
   Profile (context only, adds no score credit):
     Authentication  local passwords (password from request), JWT (express-jwt, jsonwebtoken)
     Frontend        single-page app (@angular/core), server-side templates (hbs, pug)
@@ -134,7 +140,10 @@ own [scoring policy](references/compatibility.md).
 | Deployment & transport | Debug mode, container host privileges, and TLS verification |
 
 Each topic shows the lowest area score within it and up to three findings with
-file and line. Architecture also shows a profile: authentication mechanisms,
+file and line. Below them, `OK` lines show up to two kinds of positive evidence,
+such as literal SQL text or pinned Actions, with a location and how often it
+occurs. Positive evidence adds no points and does not offset findings.
+Architecture also shows a profile: authentication mechanisms,
 single-page app or server-side templates, persistence, and whether SQL queries
 are built by concatenation. The profile is context and adds no points.
 `--json` and `--yaml` contain every finding and the full calculation.
