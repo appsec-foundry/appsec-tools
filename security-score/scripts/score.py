@@ -32,6 +32,7 @@ try:
         compare,
         grade,
         scan,
+        scan_paths,
     )
 except (
     OSError,
@@ -48,7 +49,15 @@ except (
             file=sys.stderr,
         )
     raise SystemExit(1) from None
-from score_sources import Budget, SourceError, command, excluded, fingerprint, select
+from score_sources import (
+    Budget,
+    SourceError,
+    command,
+    excluded,
+    fingerprint,
+    repository_paths,
+    select,
+)
 from score_reporting import (
     explain as explain_observations,
     plural,
@@ -568,6 +577,15 @@ def verify_rules():
                 findings, checks = settings_checks(
                     [{**example, "reason": "Isolated example."}]
                 )
+            elif rule["kind"] == "path":
+                findings, checks = scan_paths([example["file"]], [], [])
+                checks.append(
+                    {
+                        "rule": rule["id"],
+                        "area": rule["area"],
+                        "status": "not_applicable",
+                    }
+                )
             else:
                 files = {
                     path: {"text": text}
@@ -662,7 +680,10 @@ def run(options):
     try:
         scan(before, budget, old_findings, old_checks)
         scan(after, budget, findings, checks)
-        architecture = describe(after, budget, checks)
+        paths = repository_paths(after, exclusions)
+        if scope["kind"] == "repository":
+            scan_paths(paths, findings, checks)
+        architecture = describe(after, budget, checks, paths)
     except (SourceError, ScanLimit) as error:
         scan_error = str(error)
     change = scope["kind"] == "change"
@@ -777,7 +798,6 @@ def run(options):
             ".sh",
             ".bash",
             ".ps1",
-            ".tf",
         }
         for exclusion in exclusions:
             if (

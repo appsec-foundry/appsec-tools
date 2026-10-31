@@ -1,8 +1,8 @@
 # Security Score
 
 Gives a repository a quick security score from 0 to 100 with a grade from A to
-F, based on static checks of source code, dependencies, CI and container files,
-and repository settings. For a change, such as a commit or staged files, it
+F, based on static checks of source code, dependencies, CI, container and
+Terraform files, and repository settings. For a change, such as a commit or staged files, it
 rates the security relevance instead: `high`, `medium`, `low`, or `unclear`.
 
 The checks are bundled, deterministic rules. No LLM and no AppSec Analyzer are
@@ -50,6 +50,8 @@ Repository               79/100  ████████░░  2 candidates
             HOST-DEFAULT-BRANCH-PROTECTION · host API
   MEDIUM    Required reviews reported disabled
             HOST-REQUIRED-REVIEWS · host API
+  OK        Security policy present
+            REPO-SECURITY-POLICY · SECURITY.md:1
 
 Authentication          not assessed
   No recognized control evidence from the available checks.
@@ -66,21 +68,32 @@ Architecture              0/100  ░░░░░░░░░░  19 candidates
   OK        Literal SQL text passed to a query call
             JS-SQL · data/static/codefixes/loginAdminChallenge_3.ts:15 (+4 more)
   Profile (context only, adds no score credit):
+    Login           passwords (no SSO recognized)
+    Password hash   none recognized
     Authentication  local passwords (password from request), JWT (express-jwt, jsonwebtoken)
     Frontend        single-page app (@angular/core), server-side templates (hbs, pug)
     Persistence     SQL (sequelize, sqlite3)
     SQL queries     concatenated or interpolated in 13 of 33 query calls, 14 unresolved
                     (routes/login.ts:34)
+    Deployment      AWS, Docker Compose, Terraform
+    Cloud login     none recognized
 ...
+Secrets                   5/100  ░░░░░░░░░░  5 candidates
+  HIGH      Credential in a recognized format
+            SECRET-TOKEN · lib/insecurity.ts:21 (+2 more)
+  MEDIUM    Credential or key file in the repository
+            SECRET-FILE · ctf.key:1 (+1 more)
+
 Cryptography             59/100  ██████░░░░  1 candidate
   HIGH      Predictable random value for a named secret
             JS-RANDOM · lib/insecurity.ts:53
 
 Deployment & transport  not assessed
-  No recognized control evidence from the available checks.
+  OK        Non-root container user declared
+            IAC-USER · Dockerfile:39 (+1 more)
 
 Coverage
-  949 files checked · 65 candidates · scan incomplete
+  965 files checked · 87 candidates · scan incomplete
 ```
 
 This scan hit a limit, so its exit status is `1` and there is no grade.
@@ -106,9 +119,10 @@ file and line.
 
 ## Reading the score
 
-Each area, such as execution or transport, starts at 100 points. Every finding
-deducts points and caps the area score by its severity. The lowest area score
-is the repository score, so a strong area cannot offset a weak one.
+Each area, such as execution or transport, starts at 100 points. A finding
+deducts points and caps the area score by its severity; only the first three
+findings of a rule deduct points. The lowest area score is the repository score,
+so a strong area cannot offset a weak one.
 
 | Severity | Deduction per finding | Area score at most |
 | --- | ---: | ---: |
@@ -117,7 +131,8 @@ is the repository score, so a strong area cannot offset a weak one.
 | Medium | 10 | 79 |
 | Low | 3 | 89 |
 
-One high finding gives 59 (E); two high findings in the same area give 50 (E).
+One high finding gives 59 (E); two high findings in the same area give 50 (E);
+three or more findings of one high rule give 25 (F).
 
 | Score | 90–100 | 80–89 | 70–79 | 60–69 | 50–59 | 0–49 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -131,21 +146,27 @@ own [scoring policy](references/compatibility.md).
 
 | Topic | Checks |
 | --- | --- |
-| Repository | Host settings such as branch protection and required reviews (URL scans only) |
-| Authentication | JWT verification options: disabled signature or expiry checks, the `none` algorithm; no rules for login, sessions, or access control |
+| Repository | Host settings such as branch protection, rulesets, and required reviews (URL scans only); security policy file |
+| Authentication | JWT verification options, password hashing, cookie flags, credentialed CORS, Django and Flask session and host settings; no rules for login flows or access control |
 | Architecture | Code execution, SQL injection, and unsafe deserialization patterns |
 | Frontend | HTML output sinks, framework bypasses, Content Security Policy, and other security headers (positive evidence only) |
-| Dependencies & CI | Package sources and indexes, install scripts, Action and image pinning, CI permissions, workflow script injection, privileged pull request checkouts, downloads in container builds |
+| Dependencies & CI | Package sources and indexes, lockfile sources and integrity, Maven, Gradle, Cargo and `pyproject.toml` sources, install scripts, committed binaries, Action, image, GitLab include and Terraform module pinning, CI permissions, script injection, privileged pull request checkouts, downloads in CI and container builds |
+| Secrets | Credential and key files by name, Terraform state, and credentials in formats with a fixed prefix |
 | Cryptography | Weak hashes and predictable random values |
-| Deployment & transport | Debug mode, container host privileges, and TLS verification |
+| Deployment & transport | Debug mode, container host privileges, TLS verification, and Terraform: open administrative ports, public storage and databases, wildcard IAM |
 
 Each topic shows the lowest area score within it and up to three findings with
 file and line. Below them, `OK` lines show up to two kinds of positive evidence,
 such as literal SQL text or pinned Actions, with a location and how often it
-occurs. Positive evidence adds no points and does not offset findings.
-Architecture also shows a profile: authentication mechanisms,
-single-page app or server-side templates, persistence, and whether SQL queries
-are built by concatenation. The profile is context and adds no points.
+occurs. Positive evidence adds no points and does not offset findings. Some rules
+can only report positive evidence, such as security headers, SBOM or provenance
+steps, or a non-root container user. Their absence is no finding, and they cannot
+make a topic or repository assessable.
+Architecture also shows a profile: SSO, passwords or both, the hash a password
+reaches, authentication mechanisms, single-page app or server-side templates,
+persistence, whether SQL queries are built by concatenation, deployment targets,
+and whether CI logs in to a cloud through OIDC or a stored key. The profile is
+context and adds no points.
 `--json` and `--yaml` contain every finding and the full calculation.
 
 ### Exit status
@@ -240,8 +261,14 @@ From a clone, use `./security-score` instead of the URL.
 
 - The rules recognize static patterns. Findings are candidates, not confirmed
   vulnerabilities.
-- Not checked: login, sessions, access control, business logic, and known
+- Not checked: login flows, access control, business logic, and known
   vulnerabilities in dependencies.
+- Secrets count only with a fixed prefix or a recognized file name; a generic
+  key or password in source code is not found. Credential values never appear in
+  the output, and sensitive files are not read.
+- A password hash is followed only within one file.
+- Application code is read for Python and JavaScript/TypeScript only. A repository
+  in another language gets configuration checks at most.
 - Code, tests, and builds of the scanned project are never run.
 - Time and size limits are listed in the
   [technical reference](references/scoring.md#limits).

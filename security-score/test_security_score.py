@@ -93,7 +93,7 @@ class ScoreTests(unittest.TestCase):
         self.assertNotIn("SYNTHETIC_PRIVATE_DIAGNOSTIC", errors.getvalue())
 
     def test_quiet_cli_has_only_the_number_and_no_progress(self):
-        self.write("app.py", "eval(payload)\n" * 4)
+        self.write("app.py", "eval(payload)\nsubprocess.run(command, shell=True)\n" * 4)
         self.write("large.js", "x" * (sources.MAX_FILE + 1))
         output, errors = io.StringIO(), io.StringIO()
         with (
@@ -203,7 +203,7 @@ class ScoreTests(unittest.TestCase):
         ):
             self.write(path, "eval(payload)\n")
         _, result, _ = self.invoke()
-        self.assertEqual(result["score"], 0)
+        self.assertEqual(result["score"], 25)
         self.assertEqual(len(result["findings"]), 4)
         self.assertEqual(
             {row["origin"] for row in result["findings"]},
@@ -853,17 +853,19 @@ class ScoreTests(unittest.TestCase):
 
     def test_req07_linear_repetition_counts_findings_across_files(self):
         self.write("first.py", "eval(payload)\n")
-        for count, expected in ((1, 59), (2, 50), (3, 25), (4, 0), (5, 0)):
+        for count, expected in ((1, 59), (2, 50), (3, 25), (4, 25), (9, 25)):
             with self.subTest(count=count):
                 self.write("remaining.py", "eval(payload)\n" * (count - 1))
                 status, result, _ = self.invoke()
                 self.assertEqual(status, 0)
-                self.assertEqual(result["scoring_version"], 5)
+                self.assertEqual(result["scoring_version"], 6)
                 self.assertEqual(result["score"], expected)
+                self.assertEqual(len(result["findings"]), count)
                 area = next(
                     row for row in result["areas"] if row["area"] == "execution"
                 )
-                self.assertEqual(area["deduction"], count * 25)
+                counted = min(count, 3)
+                self.assertEqual(area["deduction"], counted * 25)
                 self.assertEqual(
                     area["breakdown"],
                     [
@@ -871,12 +873,25 @@ class ScoreTests(unittest.TestCase):
                             "rule": "PY-EXEC",
                             "severity": "high",
                             "instances": count,
+                            "counted_instances": counted,
                             "points_per_instance": 25,
-                            "deduction": count * 25,
+                            "deduction": counted * 25,
                             "severity_cap": 59,
                         }
                     ],
                 )
+
+    def test_counted_instances_are_per_rule_and_validated(self):
+        import score_calculation as calculation
+
+        self.write("app.py", "eval(payload)\nsubprocess.run(command, shell=True)\n" * 5)
+        result = self.invoke()[1]
+        self.assertEqual(result["score"], 0)  # Two rules deduct 75 points each.
+        for value in (0, "3", True):
+            with self.subTest(value=value):
+                with mock.patch.object(calculation, "COUNTED_INSTANCES", value):
+                    with self.assertRaisesRegex(ValueError, "Counted instances"):
+                        calculation.validate_scoring()
 
     def test_req07_different_rules_add_within_area_but_not_between_areas(self):
         self.write("app.py", "eval(payload)\nsubprocess.run(command, shell=True)\n")
@@ -909,7 +924,7 @@ class ScoreTests(unittest.TestCase):
             (["high", "medium", "medium", "medium"], 55, 59, 45),
             (["medium", "medium", "medium"], 30, 79, 70),
             (["low"], 3, 89, 89),
-            (["low", "low", "low", "low"], 12, 89, 88),
+            (["low", "low", "low", "low"], 9, 89, 89),
         ):
             with self.subTest(severities=severities):
                 result = core.calculate(
@@ -954,12 +969,12 @@ class ScoreTests(unittest.TestCase):
 
         original = run_installed()
         policy["scoring"]["weights"]["high"] = 15
-        policy["scoring_version"] = 5
+        policy["scoring_version"] = 7
         catalog.write_text(json.dumps(policy))
         adjusted = run_installed()
         self.assertEqual(original["score"], 25)
         self.assertEqual((adjusted["score"], adjusted["grade"]), (55, "E"))
-        self.assertEqual(adjusted["scoring_version"], 5)
+        self.assertEqual(adjusted["scoring_version"], 7)
         self.assertNotEqual(
             original["comparability"]["catalog_fingerprint"],
             adjusted["comparability"]["catalog_fingerprint"],
@@ -1109,7 +1124,7 @@ class ScoreTests(unittest.TestCase):
         self.assertNotIn("/100", cli.render(result))
 
     def test_incomplete_zero_pattern_index_is_displayed(self):
-        self.write("app.py", "eval(payload)\n" * 4)
+        self.write("app.py", "eval(payload)\nsubprocess.run(command, shell=True)\n" * 4)
         self.write("large.js", "x" * (sources.MAX_FILE + 1))
         _, result, _ = self.invoke()
         self.assertEqual(cli.render(result), "0/100 (partial)")
@@ -1950,16 +1965,355 @@ class ScoreTests(unittest.TestCase):
         )
         self.assertEqual(row["status"], "satisfied")
         self.assertEqual(
-            [(item["line"], item["header"]) for item in row["locations"]],
+            [(item["line"], item["detail"]) for item in row["locations"]],
             [(2, "X-Content-Type-Options"), (3, "X-Frame-Options")],
         )
         self.assertFalse(any(f["rule"] == "WEB-HEADERS" for f in result["findings"]))
         frontend = topic_block(cli.render(result, details=True), "Frontend")
-        self.assertRegex(frontend, r"^Frontend\s+100/100")
+        self.assertRegex(frontend, r"^Frontend\s+not assessed")
         self.assertRegex(
             frontend,
             r"(?m)^  OK\s+Security headers declared:\s+X-Content-Type-Options,\s+"
             r"X-Frame-Options\n.*WEB-HEADERS . server\.js:2 \(\+1 more\)$",
+        )
+
+    def test_positive_only_evidence_never_establishes_a_score(self):
+        self.write(
+            "server.js", "const helmet = require('helmet');\napp.use(helmet());\n"
+        )
+        self.write("SECURITY.md", "Report issues to the maintainers.\n")
+        self.write("renovate.json", "{}\n")
+        status, result, _ = self.invoke()
+        self.assertEqual(
+            (status, result["verdict"], result["score"], result["observed_score"]),
+            (2, "undetermined", None, None),
+        )
+        details = cli.render(result, details=True)
+        self.assertRegex(topic_block(details, "Frontend"), r"^Frontend\s+not assessed")
+        self.assertIn("Security headers declared", details)
+        self.assertIn("Security policy present", details)
+        self.assertIn("Dependency update configuration present", details)
+        self.write("app.py", "eval(payload)\n")
+        self.assertEqual(self.invoke()[1]["score"], 59)  # Nor offsets a finding.
+
+    def test_final_stage_user_is_positive_evidence_only(self):
+        self.write("app.py", "requests.get(url, verify=True)\n")
+        self.write("Dockerfile", "FROM scratch\nUSER root\n")
+        status, result, _ = self.invoke()
+        self.assertEqual((status, result["score"]), (0, 100))
+        self.assertFalse(any(row["rule"] == "IAC-USER" for row in result["findings"]))
+        self.write("Dockerfile", "FROM scratch\nUSER root\nUSER 65532\n")
+        result = self.invoke()[1]
+        self.assertIn(
+            "Non-root container user declared", cli.render(result, details=True)
+        )
+
+    def test_secret_files_are_named_without_reading_their_content(self):
+        marker = "SYNTHETIC-CONTENT-MARKER"
+        self.write("app.py", "requests.get(url, verify=True)\n")
+        self.write(".env", f"VALUE={marker}\n")
+        self.write("deploy/id_rsa", marker)
+        self.write("infra/prod.tfstate", marker)
+        self.write(".env.example", "VALUE=\n")
+        self.write("certs/fullchain.pem", marker)
+        self.write("node_modules/package/server.key", marker)
+        with mock.patch.object(
+            sources, "regular_read", wraps=sources.regular_read
+        ) as read:
+            status, result, _ = self.invoke()
+        self.assertEqual(status, 0)
+        self.assertEqual(
+            sorted((row["rule"], row["file"]) for row in result["findings"]),
+            [
+                ("SECRET-FILE", ".env"),
+                ("SECRET-FILE", "deploy/id_rsa"),
+                ("TF-STATE", "infra/prod.tfstate"),
+            ],
+        )
+        self.assertEqual(result["score"], 55)  # 10 + 10 + 25 points in one area.
+        self.assertEqual({call.args[1] for call in read.call_args_list}, {"app.py"})
+        self.assertNotIn(marker, json.dumps(result))
+        self.assertRegex(
+            topic_block(cli.render(result, details=True), "Secrets"),
+            r"^Secrets\s+55/100",
+        )
+
+    def test_gitignored_secret_files_are_not_repository_findings(self):
+        self.init()
+        self.write(".gitignore", ".env\n")
+        self.write(".env", "VALUE=1\n")
+        result = self.invoke()[1]
+        self.assertFalse(
+            any(row["rule"] == "SECRET-FILE" for row in result["findings"])
+        )
+
+    def test_secret_values_never_reach_the_result(self):
+        token = "ghp_" + "0123456789abcdefghijABCDEFGHIJ012345"
+        self.write("config.py", f"TOKEN = '{token}'\n")
+        self.write("broken.py", f"def (\nTOKEN = '{token}'\n")  # Unparseable source.
+        self.write("settings.yml", f"token: {token}\n")
+        _, result, _ = self.invoke()
+        self.assertEqual(
+            sorted(
+                (row["file"], row["line"])
+                for row in result["findings"]
+                if row["rule"] == "SECRET-TOKEN"
+            ),
+            [("broken.py", 2), ("config.py", 1), ("settings.yml", 1)],
+        )
+        self.assertNotIn(token, json.dumps(result))
+        self.assertNotIn(token, cli.render(result, details=True))
+        for finding in result["findings"]:
+            self.assertNotIn("_identity", finding)
+
+    def test_secret_change_is_reported_without_the_value(self):
+        token = "glpat-" + "0123456789abcdefghijKLMN"
+        self.init()
+        self.write("app.py", f"TOKEN = '{token}'\n")
+        status, result, _ = self.invoke("--worktree")
+        self.assertEqual(status, 0)
+        self.assertEqual(result["relevance"], "high")
+        self.assertEqual(
+            [(row["rule"], row["change"]) for row in result["findings"]],
+            [("SECRET-TOKEN", "introduced")],
+        )
+        self.assertNotIn(token, json.dumps(result))
+
+    def test_ci_downloads_and_gitlab_pinning_are_findings(self):
+        self.write("app.py", "requests.get(url, verify=True)\n")
+        self.write(
+            ".github/workflows/build.yml",
+            "on: push\njobs:\n  build:\n    steps:\n"
+            "      - uses: example/action@" + "a" * 40 + "\n"
+            "      - run: |\n          curl -sSL https://example.invalid/i.sh | bash\n"
+            "      - run: npm install\n",
+        )
+        self.write(
+            ".gitlab-ci.yml",
+            "image: node:latest\ninclude:\n  - project: group/ci\n    ref: main\n"
+            "build:\n  script:\n    - curl https://example.invalid/i.sh | sh\n"
+            '    - echo "$CI_COMMIT_MESSAGE"\n'
+            "  image:\n    name: $CI_REGISTRY_IMAGE:latest\n",
+        )
+        result = self.invoke()[1]
+        self.assertEqual(
+            sorted(
+                (row["rule"], row["file"], row["line"]) for row in result["findings"]
+            ),
+            [
+                ("CI-FROZEN-INSTALL", ".github/workflows/build.yml", 8),
+                ("CI-GITLAB-IMAGE", ".gitlab-ci.yml", 1),
+                ("CI-GITLAB-INCLUDE", ".gitlab-ci.yml", 3),
+                ("CI-REMOTE-SCRIPT", ".github/workflows/build.yml", 7),
+                ("CI-REMOTE-SCRIPT", ".gitlab-ci.yml", 7),
+            ],
+        )
+
+    def test_gitlab_rules_do_not_read_github_workflows(self):
+        self.write(
+            ".github/workflows/build.yml", "jobs:\n  a:\n    image: node:latest\n"
+        )
+        checks = self.invoke()[1]["checks"]
+        self.assertFalse(any(row["rule"] == "CI-GITLAB-IMAGE" for row in checks))
+
+    def test_gitlab_nested_ci_files_are_read(self):
+        self.write(".gitlab/ci/build.yml", "image: node:latest\n")
+        self.write("docs/.gitlab/ci/build.yml", "image: node:latest\n")
+        result = self.invoke()[1]
+        self.assertEqual(
+            [row["file"] for row in result["findings"]], [".gitlab/ci/build.yml"]
+        )
+
+    def test_lockfile_tolerates_malformed_entries(self):
+        for text in (
+            "{not json",
+            '{"packages":[]}',
+            '{"packages":{"a":{"resolved":17},"b":null,"c":[]}}',
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(architecture.lockfile_observations(text), [])
+        malformed = (
+            '{"packages":{"a":{"resolved":"https://[bad","integrity":"sha512-a"}}}'
+        )
+        self.assertEqual(
+            architecture.lockfile_observations(malformed),
+            [(1, "violated")],
+        )
+
+    def test_large_yarn_lock_does_not_withhold_the_grade(self):
+        self.write("app.py", "requests.get(url, verify=True)\n")
+        self.write("yarn.lock", "x" * (sources.MAX_FILE + 1))
+        status, result, _ = self.invoke()
+        self.assertEqual(
+            (status, result["verdict"], result["score"]), (0, "scored", 100)
+        )
+
+    def test_lockfile_reports_the_foreign_entry_line(self):
+        lock = (
+            '{\n"packages": {\n'
+            '"node_modules/a": {"resolved": "https://registry.npmjs.org/a.tgz", "integrity": "x"},\n'
+            '"node_modules/b": {"resolved": "https://registry.npmjs.org/b.tgz", "integrity": "x"},\n'
+            '"node_modules/c": {"resolved": "https://packages.example.invalid/c.tgz", "integrity": "x"}\n'
+            "}\n}\n"
+        )
+        self.assertEqual(
+            architecture.lockfile_observations(lock),
+            [(5, "violated")],
+        )
+
+    def test_private_registry_lockfile_is_not_a_foreign_host(self):
+        lock = (
+            '{"packages":{"a":{"resolved":"https://npm.corp.example.invalid/a.tgz","integrity":"x"},'
+            '"b":{"resolved":"https://npm.corp.example.invalid/b.tgz","integrity":"x"}}}'
+        )
+        self.assertEqual(
+            architecture.lockfile_observations(lock),
+            [(1, "satisfied")],
+        )
+
+    def test_hostile_infrastructure_files_stay_bounded(self):
+        cases = {
+            "main.tf": 'cidr_blocks = ["0.0.0.0/0"] {\n' * 16000 + "}\n" * 16000,
+            "iam.tf": 'actions = ["*"] {\n' * 20000,
+            "Cargo.toml": 'git = "https://example.invalid/a.git"\n' * 14000,
+            "build.gradle": "url " * 120000,
+            "pom.xml": "<repository>\n" * 40000,
+            ".gitlab-ci.yml": "script:\n  - " + "yarn install " * 40000 + "\n",
+            "package-lock.json": json.dumps(
+                {
+                    "packages": {
+                        str(index): {"resolved": f"http://a.invalid/{index}"}
+                        for index in range(9000)
+                    }
+                }
+            ),
+        }
+        for name, text in cases.items():
+            with self.subTest(name=name):
+                started = time.monotonic()
+                with contextlib.suppress(core.ScanLimit):
+                    core.scan({name: {"text": text}}, sources.Budget())
+                self.assertLess(time.monotonic() - started, 10)
+
+    def test_password_hash_follows_the_value_through_a_local_helper(self):
+        self.write(
+            "login.js",
+            "// const stale = crypto.createHash('md5').update(password);\n"
+            "function digest(value) {\n"
+            "  return crypto.createHash('sha1').update(value).digest('hex');\n"
+            "}\n"
+            "const stored = digest(req.body.password);\n"
+            "const other = digest(req.body.email);\n"
+            "const remote = security.digest(req.body.password);\n",
+        )
+        result = self.invoke()[1]
+        self.assertEqual(
+            [
+                (row["line"], row["rule"])
+                for row in result["findings"]
+                if row["rule"] == "PASSWORD-HASH"
+            ],
+            [(5, "PASSWORD-HASH")],
+        )
+        self.assertEqual(
+            [
+                (row["technology"], row["status"], row["line"])
+                for row in result["architecture"]["password_hashing"]
+            ],
+            [("SHA-1", "violated", 5)],
+        )
+
+    def test_profile_reports_login_hash_deployment_and_cloud_login(self):
+        self.write(
+            "package.json",
+            '{"dependencies":{"openid-client":"1","passport-saml":"1","bcrypt":"1"}}',
+        )
+        self.write(
+            "login.js",
+            "const digest = (value) => crypto.createHash('md5').update(value).digest('hex');\n"
+            "const stored = digest(req.body.password);\n",
+        )
+        self.write("infra/main.tf", 'provider "aws" {}\n')
+        self.write("Procfile", "web: node app.js\n")
+        self.write("deployment.yaml", "kind: Deployment\n")
+        self.write(
+            ".github/workflows/deploy.yml",
+            "jobs:\n  deploy:\n    steps:\n"
+            "      - uses: google-github-actions/auth@" + "a" * 40 + "\n"
+            "        with:\n          credentials_json: ${{ secrets.GCP }}\n"
+            "      - uses: aws-actions/configure-aws-credentials@" + "a" * 40 + "\n"
+            "        with:\n          role-to-assume: arn:example\n",
+        )
+        result = self.invoke()[1]
+        profile = result["architecture"]
+        self.assertEqual(profile["login"], "both")
+        self.assertEqual(
+            {row["technology"] for row in profile["deployment"]},
+            {"AWS", "GCP", "Heroku", "Kubernetes", "Terraform"},
+        )
+        self.assertEqual(
+            sorted(
+                (row["technology"], row["method"]) for row in profile["cloud_login"]
+            ),
+            [("AWS", "oidc"), ("GCP", "stored-key")],
+        )
+        details = " ".join(cli.render(result, details=True).split())
+        self.assertIn("SSO and passwords", details)
+        self.assertIn("MD5 (login.js:2)", details)
+        self.assertIn("SSO (OIDC/OAuth) (openid-client)", details)
+        self.assertIn("SSO (SAML) (passport-saml)", details)
+        self.assertIn("AWS: OIDC, GCP: stored key", details)
+        self.assertIn("Cloud login through OIDC without a stored key: AWS", details)
+        for text in ("kind: Deployment", "credentials_json"):
+            self.assertNotIn(text, details)
+
+    def test_login_configuration_without_a_package_is_recognized(self):
+        self.write(
+            "application.yml", "spring:\n  issuer-uri: https://id.example.invalid\n"
+        )
+        self.write("settings.py", "SOCIALACCOUNT_PROVIDERS = {}\n")
+        self.write("auth.ts", "providers: [CredentialsProvider({})]\n")
+        profile = self.invoke()[1]["architecture"]
+        self.assertEqual(profile["login"], "both")
+        self.assertEqual(
+            sorted(
+                (row["mechanism"], row["technology"])
+                for row in profile["authentication"]
+            ),
+            [
+                ("federated", "Spring OAuth2 client"),
+                ("federated", "django-allauth"),
+                ("local-password", "next-auth credentials"),
+            ],
+        )
+
+    def test_repository_paths_skip_generated_directories(self):
+        self.assertEqual(
+            sources.repository_paths(
+                {"app.py": {"text": ""}},
+                [
+                    {"file": "vendor/lib.jar", "reason": "excluded or unsupported"},
+                    {"file": "lib/tool.jar", "reason": "excluded or unsupported"},
+                ],
+            ),
+            ["app.py", "lib/tool.jar"],
+        )
+
+    def test_terraform_is_scanned_instead_of_reported_as_unsupported(self):
+        self.write(
+            "infra/main.tf",
+            'resource "aws_db_instance" "db" {\n  publicly_accessible = true\n}\n',
+        )
+        status, result, _ = self.invoke()
+        self.assertEqual(
+            (status, result["verdict"], result["score"]), (0, "scored", 59)
+        )
+        self.assertFalse(
+            any(row["rule"] == "SOURCE-COVERAGE" for row in result["checks"])
+        )
+        self.assertRegex(
+            topic_block(cli.render(result, details=True), "Deployment & transport"),
+            r"^Deployment & transport\s+59/100",
         )
 
     def test_security_header_change_is_high_relevance_without_a_finding(self):
@@ -2006,7 +2360,7 @@ class ScoreTests(unittest.TestCase):
             for rule in core.POLICY["rules"]
             if rule.get("enabled", True) is False
         }
-        self.assertEqual(disabled, {"IAC-USER", "NPM-LOCK"})
+        self.assertEqual(disabled, {"NPM-LOCK"})
         self.assertFalse(disabled & {rule["id"] for rule in core.RULES})
         self.write("Dockerfile", "FROM scratch\nUSER root\n")
         self.write("package.json", '{"dependencies":{"example":"1.0.0"}}')
@@ -2192,7 +2546,7 @@ class ScoreTests(unittest.TestCase):
         self.write("app.py", source.replace("return actor == owner", "return True"))
         status, result, _ = self.invoke("--worktree")
         self.assertEqual(status, 0)
-        self.assertEqual(result["relevance_version"], 6)
+        self.assertEqual(result["relevance_version"], 7)
         self.assertEqual(result["relevance"], "high")
         self.assertEqual(result["findings"], [])
         self.assertTrue(
@@ -3164,6 +3518,7 @@ class RemoteTests(unittest.TestCase):
                 },
                 None,
             ),
+            ([], None),
         ]
         with mock.patch.object(remote, "json_get", side_effect=responses):
             settings, revision = remote.host_settings(
@@ -3171,6 +3526,87 @@ class RemoteTests(unittest.TestCase):
             )
         self.assertEqual([row["status"] for row in settings[:2]], ["set", "set"])
         self.assertEqual(revision, "a" * 40)
+
+    def github_settings(self, branch, protection, rules):
+        responses = [
+            ({"default_branch": "release/1"}, None),
+            (branch, None),
+            *([protection] if branch.get("protected") is True else []),
+            *([rules] if branch.get("protected") is True else []),
+        ]
+        with mock.patch.object(remote, "json_get", side_effect=responses) as get:
+            settings, _ = remote.host_settings(
+                "github.com", "example/project", sources.Budget()
+            )
+        return {row["setting"]: row["status"] for row in settings}, get
+
+    def test_rulesets_establish_reviews_checks_and_signatures_without_admin_rights(
+        self,
+    ):
+        branch = {"protected": True, "commit": {"sha": "a" * 40}}
+        rules = [
+            {
+                "type": "pull_request",
+                "parameters": {"required_approving_review_count": 1},
+            },
+            {"type": "required_status_checks", "parameters": {}},
+            {"type": "required_signatures"},
+            {"type": 7},
+            "unexpected",
+        ]
+        settings, get = self.github_settings(
+            branch, ({}, "not readable (HTTP 404)"), (rules, None)
+        )
+        self.assertEqual(settings["required_reviews"], "set")
+        self.assertEqual(settings["successful_pipeline_before_merge"], "set")
+        self.assertEqual(settings["signed_commits"], "set")
+        url = get.call_args_list[-1].args[0]
+        self.assertTrue(
+            url.startswith(
+                "https://api.github.com/repos/example/project/rules/branches/release%2F1"
+            )
+        )
+
+    def test_ruleset_without_a_review_count_leaves_reviews_unknown(self):
+        branch = {"protected": True, "commit": {"sha": "a" * 40}}
+        for rules in (
+            [{"type": "deletion"}],
+            [
+                {
+                    "type": "pull_request",
+                    "parameters": {"required_approving_review_count": 0},
+                }
+            ],
+            [{"type": "pull_request", "parameters": "unexpected"}],
+        ):
+            with self.subTest(rules=rules):
+                settings, _ = self.github_settings(
+                    branch, ({}, "not readable (HTTP 404)"), (rules, None)
+                )
+                self.assertEqual(settings["required_reviews"], "unknown")
+                self.assertEqual(settings["signed_commits"], "unknown")
+
+    def test_failed_ruleset_request_stays_unknown(self):
+        branch = {"protected": True, "commit": {"sha": "a" * 40}}
+        settings, _ = self.github_settings(
+            branch, ({}, "not readable (HTTP 404)"), ({}, "not readable (HTTP 403)")
+        )
+        self.assertEqual(settings["default_branch_protection"], "set")
+        self.assertEqual(settings["required_reviews"], "unknown")
+
+    def test_unprotected_branch_skips_the_ruleset_request(self):
+        settings, get = self.github_settings(
+            {"protected": False, "commit": {"sha": "a" * 40}}, None, None
+        )
+        self.assertEqual(settings["required_reviews"], "not_set")
+        self.assertEqual(get.call_count, 2)
+
+    def test_signed_commits_are_never_a_finding(self):
+        findings, checks = remote.settings_checks(
+            [{"setting": "signed_commits", "status": "unknown", "reason": "x"}]
+        )
+        self.assertEqual(findings, [])
+        self.assertEqual(checks[0]["status"], "unclear")
 
     def test_gitlab_only_credits_reviews_for_the_selected_branch(self):
         project = {

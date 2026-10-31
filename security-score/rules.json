@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "scoring_version": 5,
+  "scoring_version": 6,
   "scoring": {
     "weights": {
       "critical": 50,
@@ -41,9 +41,10 @@
       ]
     ],
     "aggregation": "weakest assessed area",
-    "repetitions": "weight * instances"
+    "repetitions": "weight * min(instances, counted_instances)",
+    "counted_instances": 3
   },
-  "description": "Compact independent static checks for selected Python, JavaScript/TypeScript, GitHub Actions, Dockerfile and container YAML mechanisms. No Analyzer parity or runtime verification claim.",
+  "description": "Compact independent static checks for selected Python, JavaScript/TypeScript, GitHub Actions, GitLab CI, Dockerfile, container YAML, Terraform and dependency declaration mechanisms. No Analyzer parity or runtime verification claim.",
   "rules": [
     {
       "id": "PY-EXEC",
@@ -690,32 +691,39 @@
     },
     {
       "id": "IAC-USER",
-      "enabled": false,
+      "positive_only": true,
       "kind": "user",
       "area": "hardening",
       "severity": "low",
-      "title": "Container stage explicitly selects root",
-      "criteria": "Recognize explicit USER root/0 and literal non-root identities. Builder stages may intentionally need root.",
-      "next_action": "Use a non-root identity for the runtime stage and review the affected stage's purpose.",
+      "title": "Final container stage selects a non-root user",
+      "criteria": "Positive evidence only. The last USER of the final stage is a literal non-root identity. Root, a variable or a missing USER is no evidence either way, because the base image or the platform can set the runtime user.",
+      "next_action": "Keep a non-root identity for the runtime stage.",
       "examples": [
         {
           "file": "Dockerfile",
-          "source": "USER root\n",
-          "outcome": "violated",
-          "expected_score": 89,
-          "expected_grade": "B"
-        },
-        {
-          "file": "Dockerfile",
-          "source": "USER 1001\n",
+          "source": "FROM example\nUSER 1001\n",
           "outcome": "satisfied",
-          "expected_score": 100,
-          "expected_grade": "A"
+          "expected_score": null,
+          "expected_grade": null
         },
         {
           "file": "Dockerfile",
-          "source": "USER ${APP_USER}\n",
-          "outcome": "unclear",
+          "source": "FROM builder\nUSER app\nFROM example\nUSER root\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "Dockerfile",
+          "source": "FROM builder\nUSER app\nFROM example\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "Dockerfile",
+          "source": "FROM example\nUSER ${APP_USER}\n",
+          "outcome": "not_applicable",
           "expected_score": null,
           "expected_grade": null
         }
@@ -922,6 +930,7 @@
     },
     {
       "id": "WEB-HEADERS",
+      "positive_only": true,
       "kind": "headers",
       "area": "frontend-policy",
       "severity": "low",
@@ -933,29 +942,29 @@
           "file": "server.js",
           "source": "import helmet from 'helmet';\napp.use(helmet());\n",
           "outcome": "satisfied",
-          "expected_score": 100,
-          "expected_grade": "A"
+          "expected_score": null,
+          "expected_grade": null
         },
         {
           "file": "server.ts",
           "source": "const helmet = require('helmet');\napp.use(helmet.noSniff());\n// app.use(helmet.hsts());\n",
           "outcome": "satisfied",
-          "expected_score": 100,
-          "expected_grade": "A"
+          "expected_score": null,
+          "expected_grade": null
         },
         {
           "file": "headers.py",
           "source": "response.headers['X-Frame-Options'] = 'DENY'\n",
           "outcome": "satisfied",
-          "expected_score": 100,
-          "expected_grade": "A"
+          "expected_score": null,
+          "expected_grade": null
         },
         {
           "file": "nginx.conf",
           "source": "add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains\" always;\n",
           "outcome": "satisfied",
-          "expected_score": 100,
-          "expected_grade": "A"
+          "expected_score": null,
+          "expected_grade": null
         },
         {
           "file": "app.js",
@@ -1398,11 +1407,956 @@
           "expected_grade": null
         }
       ]
+    },
+    {
+      "id": "HOST-SIGNED-COMMITS",
+      "positive_only": true,
+      "kind": "host",
+      "setting": "signed_commits",
+      "area": "repository-host",
+      "severity": "low",
+      "title": "Repository host requires signed commits",
+      "criteria": "Positive evidence only. A ruleset rule requires signatures on the default branch. Its absence is no evidence either way, because classic protection is not readable without admin rights.",
+      "next_action": "Keep signature requirements for the default branch.",
+      "examples": [
+        {
+          "setting": "signed_commits",
+          "status": "set",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "setting": "signed_commits",
+          "status": "unknown",
+          "outcome": "unclear",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "SECRET-FILE",
+      "kind": "path",
+      "pattern": "(?i)(?:^|/)(?:\\.env(?:\\.[^/]*)?|\\.pypirc|credentials(?:\\.json)?|secrets\\.json|id_(?:rsa|dsa|ecdsa|ed25519)|[^/]+\\.(?:pem|key|p12|pfx|jks|keystore))$",
+      "exclude": "(?i)(?:^|/)\\.env\\.(?:example|sample|template|dist|defaults?|test)$|(?:^|/)(?:[^/]*[._-])?(?:cert|certs|certificate|chain|fullchain|bundle|ca|cacert|public|pub)(?:[._-][^/]*)?\\.pem$",
+      "area": "secrets",
+      "severity": "medium",
+      "title": "Credential or key file in the repository",
+      "criteria": "Recognize environment, credential and private key file names from the file list. These files stay excluded from reading, so whether one holds a live secret is not established. Example environment files and certificate-named PEM files do not match.",
+      "next_action": "Remove the file from the repository, rotate anything it exposed, and load the value from a secret store.",
+      "examples": [
+        {
+          "file": "id_rsa",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "deploy/.env.production",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": ".env.example",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "certs/ca.pem",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "SECRET-TOKEN",
+      "kind": "secret-token",
+      "area": "secrets",
+      "severity": "high",
+      "title": "Credential in a recognized format",
+      "criteria": "Recognize prefixed AWS, GitHub, GitLab, Slack, npm, Stripe and Anthropic credentials and PEM private keys with key material. Generic high-entropy strings, documentation samples and repeated placeholder characters do not match. Whether a credential is live is not established, and output never contains its value.",
+      "next_action": "Revoke the credential, remove it from the history, and load the value from a secret store.",
+      "examples": [
+        {
+          "file": "config.py",
+          "source": "TOKEN = 'ghp_0123456789abcdefghijABCDEFGHIJ012345'\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "key.js",
+          "source": "const key = '-----BEGIN RSA PRIVATE KEY-----\\r\\nMIIEpAIBAAKCAQEA0123456789abcdefghijklmnopqrstuvwxyzABCDEF\\r\\n-----END RSA PRIVATE KEY-----';\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "docs.py",
+          "source": "AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'\nTOKEN = 'ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "parser.py",
+          "source": "HEADER = '-----BEGIN PRIVATE KEY-----'\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "CI-REMOTE-SCRIPT",
+      "kind": "ci-script",
+      "area": "supply-chain",
+      "severity": "high",
+      "title": "CI step pipes a download to an interpreter",
+      "criteria": "Inspect GitHub workflow run values and GitLab script, before_script and after_script values for curl/wget piped to a shell (also through sudo or sh -c \"$(curl ...)\") and Invoke-WebRequest piped to Invoke-Expression. Other downloads remain unverified.",
+      "next_action": "Download to a file, verify a pinned checksum or signature, then execute it.",
+      "examples": [
+        {
+          "file": ".github/workflows/build.yml",
+          "source": "jobs:\n  build:\n    steps:\n      - run: curl -sSL https://example.invalid/install.sh | bash\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": ".gitlab-ci.yml",
+          "source": "build:\n  script:\n  - curl -sSL https://example.invalid/install.sh | sh\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": ".github/workflows/build.yml",
+          "source": "jobs:\n  build:\n    steps:\n      - run: |\n          # curl https://example.invalid/install.sh | bash\n          curl -o install.sh https://example.invalid/install.sh\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "CI-FROZEN-INSTALL",
+      "kind": "install-command",
+      "area": "supply-chain",
+      "severity": "low",
+      "title": "Build installs npm packages without the lockfile mode",
+      "criteria": "In CI scripts and Dockerfile RUN instructions, npm install without named packages can change the lockfile. npm ci and yarn or pnpm with a frozen or immutable flag satisfy this check. Named packages and global tools are other operations.",
+      "next_action": "Use npm ci so a build installs exactly the reviewed lockfile.",
+      "examples": [
+        {
+          "file": ".github/workflows/build.yml",
+          "source": "jobs:\n  build:\n    steps:\n      - run: npm install\n",
+          "outcome": "violated",
+          "expected_score": 89,
+          "expected_grade": "B"
+        },
+        {
+          "file": "Dockerfile",
+          "source": "FROM example\nRUN npm install --omit=dev\n",
+          "outcome": "violated",
+          "expected_score": 89,
+          "expected_grade": "B"
+        },
+        {
+          "file": ".gitlab-ci.yml",
+          "source": "build:\n  script:\n    - npm ci\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "Dockerfile",
+          "source": "FROM example\nRUN npm install -g example-tool\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "CI-GITLAB-IMAGE",
+      "kind": "gitlab-image",
+      "area": "supply-chain",
+      "severity": "medium",
+      "title": "GitLab CI image has no immutable digest",
+      "criteria": "Recognize image values in GitLab CI files, including the name form. A sha256 digest satisfies this check. Values with variables usually name the project's own registry and are not assessed.",
+      "next_action": "Pin external CI images to reviewed immutable digests.",
+      "examples": [
+        {
+          "file": ".gitlab-ci.yml",
+          "source": "image: node:latest\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": ".gitlab-ci.yml",
+          "source": "build:\n  image:\n    name: node:22\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": ".gitlab-ci.yml",
+          "source": "image: node@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": ".gitlab-ci.yml",
+          "source": "image: $CI_REGISTRY_IMAGE:latest\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "CI-GITLAB-INCLUDE",
+      "kind": "gitlab-include",
+      "area": "supply-chain",
+      "severity": "medium",
+      "title": "GitLab CI include uses a mutable reference",
+      "criteria": "Remote, project and component includes run code from outside this repository. A full commit in the URL, ref or component version satisfies this check. Local and template includes are not assessed, and a variable ref stays unresolved.",
+      "next_action": "Pin included CI configuration to a reviewed full commit.",
+      "examples": [
+        {
+          "file": ".gitlab-ci.yml",
+          "source": "include:\n  - remote: https://example.invalid/ci.yml\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": ".gitlab-ci.yml",
+          "source": "include:\n  - project: group/ci\n    file: /ci.yml\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": ".gitlab-ci.yml",
+          "source": "include:\n  - project: group/ci\n    ref: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n    file: /ci.yml\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": ".gitlab-ci.yml",
+          "source": "include:\n  - local: /ci/build.yml\n  - template: Auto-DevOps.gitlab-ci.yml\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "CI-GITLAB-INJECTION",
+      "kind": "gitlab-injection",
+      "area": "supply-chain",
+      "severity": "high",
+      "title": "GitLab CI evaluates contributor-controlled text",
+      "criteria": "Inspect GitLab script values for eval or sh -c combined with contributor-editable variables such as commit messages, merge request titles and source branch names. The shell only expands these variables, so a plain echo does not match.",
+      "next_action": "Pass the value as data and never evaluate it as a command.",
+      "examples": [
+        {
+          "file": ".gitlab-ci.yml",
+          "source": "build:\n  script:\n    - eval \"echo $CI_MERGE_REQUEST_TITLE\"\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": ".gitlab-ci.yml",
+          "source": "build:\n  script:\n    - echo \"$CI_MERGE_REQUEST_TITLE\"\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "NPM-LOCK-SOURCES",
+      "kind": "lockfile",
+      "area": "supply-chain",
+      "severity": "medium",
+      "title": "Lockfile entry from an unusual source or without integrity",
+      "criteria": "Inspect package-lock.json and npm-shrinkwrap.json resolved URLs. HTTP, a host beside the public registries and the file's most frequent host, and an entry without integrity violate this check. This does not establish package safety or vulnerability status.",
+      "next_action": "Review the entry, restore it from the registry, and regenerate the lockfile.",
+      "examples": [
+        {
+          "file": "package-lock.json",
+          "source": "{\"lockfileVersion\":3,\"packages\":{\"node_modules/a\":{\"resolved\":\"http://registry.npmjs.org/a/-/a-1.0.0.tgz\",\"integrity\":\"sha512-a\"}}}",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "package-lock.json",
+          "source": "{\"lockfileVersion\":3,\"packages\":{\"node_modules/a\":{\"resolved\":\"https://registry.npmjs.org/a/-/a-1.0.0.tgz\",\"integrity\":\"sha512-a\"},\"node_modules/b\":{\"resolved\":\"https://packages.example.invalid/b-1.0.0.tgz\",\"integrity\":\"sha512-b\"}}}",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "package-lock.json",
+          "source": "{\"lockfileVersion\":3,\"packages\":{\"node_modules/a\":{\"resolved\":\"https://registry.npmjs.org/a/-/a-1.0.0.tgz\"}}}",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "package-lock.json",
+          "source": "{\"lockfileVersion\":3,\"packages\":{\"node_modules/a\":{\"resolved\":\"https://registry.npmjs.org/a/-/a-1.0.0.tgz\",\"integrity\":\"sha512-a\"}}}",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        }
+      ]
+    },
+    {
+      "id": "DEP-SOURCES",
+      "kind": "manifest-sources",
+      "area": "supply-chain",
+      "severity": "medium",
+      "title": "Dependency source is unencrypted or mutable",
+      "criteria": "In pyproject.toml, Cargo.toml, pom.xml and Gradle build files, HTTP repositories, allowInsecureProtocol, extra index URLs and Git dependencies without a full commit violate this check. HTTPS repositories and Git dependencies with a full commit satisfy it. Other manifests are not assessed.",
+      "next_action": "Use HTTPS repositories and pin Git dependencies to a reviewed full commit.",
+      "examples": [
+        {
+          "file": "pyproject.toml",
+          "source": "[tool.poetry.dependencies]\nexample = { git = \"https://git.example.invalid/example.git\", branch = \"main\" }\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "pyproject.toml",
+          "source": "[tool.uv]\nextra-index-url = [\"https://packages.example.invalid/simple\"]\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "pyproject.toml",
+          "source": "[project]\ndependencies = [\"example @ git+https://git.example.invalid/example.git@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"]\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "Cargo.toml",
+          "source": "[dependencies.example]\ngit = \"https://git.example.invalid/example.git\"\nrev = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "pom.xml",
+          "source": "<repositories>\n  <repository>\n    <url>http://repo.example.invalid/maven</url>\n  </repository>\n</repositories>\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "pom.xml",
+          "source": "<project>\n  <url>http://example.invalid</url>\n</project>\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "build.gradle",
+          "source": "repositories {\n  maven { url 'http://repo.example.invalid/maven' }\n}\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "build.gradle.kts",
+          "source": "repositories {\n  maven(\"https://repo.example.invalid/maven\")\n}\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        }
+      ]
+    },
+    {
+      "id": "REPO-BINARY",
+      "kind": "path",
+      "pattern": "(?i)\\.(?:jar|war|ear|exe|dll|so|dylib|msi|class|pyd)$",
+      "exclude": "(?:^|/)gradle-wrapper\\.jar$",
+      "area": "supply-chain",
+      "severity": "low",
+      "title": "Compiled binary in the repository",
+      "criteria": "Recognize compiled artifacts from the file list. Reviewers cannot read them, and generated directories such as dist and target are skipped. The Gradle wrapper is excluded because it has its own validation.",
+      "next_action": "Build the artifact from source or fetch a pinned release instead of committing it.",
+      "examples": [
+        {
+          "file": "lib/tool.jar",
+          "outcome": "violated",
+          "expected_score": 89,
+          "expected_grade": "B"
+        },
+        {
+          "file": "gradle/wrapper/gradle-wrapper.jar",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "REPO-SECURITY-POLICY",
+      "positive_only": true,
+      "kind": "path",
+      "pattern": "(?i)^(?:\\.github/|docs/)?SECURITY\\.(?:md|rst|txt)$",
+      "area": "repository-host",
+      "severity": "low",
+      "title": "Security policy file",
+      "criteria": "Positive evidence only. A missing file is no evidence either way, because an organization can publish its policy centrally.",
+      "next_action": "Keep the reporting contact in the policy current.",
+      "examples": [
+        {
+          "file": "SECURITY.md",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "docs/guide/SECURITY.md",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "DEP-UPDATE-CONFIG",
+      "positive_only": true,
+      "kind": "path",
+      "pattern": "^(?:\\.github/(?:dependabot\\.ya?ml|renovate\\.json5?)|\\.gitlab/renovate\\.json5?|renovate\\.json5?|\\.renovaterc(?:\\.json)?)$",
+      "area": "supply-chain",
+      "severity": "low",
+      "title": "Dependency update configuration",
+      "criteria": "Positive evidence only. A missing file is no evidence either way, because updates can be configured centrally. A configuration does not show that updates are merged.",
+      "next_action": "Review and merge the proposed updates regularly.",
+      "examples": [
+        {
+          "file": ".github/dependabot.yml",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "renovate.json",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "src/renovate.json",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "CI-RELEASE-INTEGRITY",
+      "positive_only": true,
+      "kind": "release-integrity",
+      "area": "supply-chain",
+      "severity": "low",
+      "title": "Release integrity step",
+      "criteria": "Positive evidence only. Recognize SBOM generation, cosign signing, build provenance and PyPI trusted publishing in CI files. A declared step does not show that a release used it, and a missing step is no evidence either way.",
+      "next_action": "Verify that published artifacts carry the declared signature or provenance.",
+      "examples": [
+        {
+          "file": ".github/workflows/release.yml",
+          "source": "jobs:\n  release:\n    steps:\n      - uses: actions/attest-build-provenance@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "source": "permissions:\n  id-token: write\njobs:\n  release:\n    steps:\n      - uses: pypa/gh-action-pypi-publish@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": ".github/workflows/release.yml",
+          "source": "jobs:\n  release:\n    steps:\n      - uses: pypa/gh-action-pypi-publish@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n        with:\n          password: ${{ secrets.PYPI_TOKEN }}\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "CI-CLOUD-OIDC",
+      "positive_only": true,
+      "kind": "cloud-oidc",
+      "area": "supply-chain",
+      "severity": "low",
+      "title": "Cloud login through OIDC",
+      "criteria": "Positive evidence only. Recognize AWS role-to-assume, Azure login with a tenant ID, GCP workload identity and GitLab id_tokens in CI files. Stored keys appear in the architecture profile as context, because a declaration does not show how a key is scoped or rotated.",
+      "next_action": "Keep the cloud role scoped to the branch and environment that need it.",
+      "examples": [
+        {
+          "file": ".github/workflows/deploy.yml",
+          "source": "jobs:\n  deploy:\n    steps:\n      - uses: aws-actions/configure-aws-credentials@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n        with:\n          role-to-assume: arn:aws:iam::123456789012:role/example\n",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": ".github/workflows/deploy.yml",
+          "source": "jobs:\n  deploy:\n    steps:\n      - uses: aws-actions/configure-aws-credentials@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n        with:\n          aws-access-key-id: ${{ secrets.AWS_KEY }}\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "IAC-HARDENING",
+      "positive_only": true,
+      "kind": "container-hardening",
+      "area": "hardening",
+      "severity": "low",
+      "title": "Container hardening setting",
+      "criteria": "Positive evidence only. Recognize runAsNonRoot and readOnlyRootFilesystem set to true in YAML. A missing setting is no evidence either way, and whether the file is deployed is not established.",
+      "next_action": "Keep the setting on every deployed workload.",
+      "examples": [
+        {
+          "file": "deployment.yaml",
+          "source": "securityContext:\n  runAsNonRoot: true\n  readOnlyRootFilesystem: true\n",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "deployment.yaml",
+          "source": "securityContext:\n  runAsNonRoot: false\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "PASSWORD-HASH",
+      "kind": "password-hash",
+      "area": "authentication",
+      "severity": "high",
+      "title": "Password reaches MD5 or SHA-1",
+      "criteria": "Follow a password-named value into a hash call on the same line or through a helper function in the same file. MD5 and SHA-1 violate this check; bcrypt, Argon2, scrypt, PBKDF2 and framework password hashers satisfy it. A helper in another file is not resolved, and other hashes are not assessed.",
+      "next_action": "Hash passwords with Argon2 or bcrypt and migrate stored values at the next login.",
+      "examples": [
+        {
+          "file": "login.js",
+          "source": "const digest = (value) => crypto.createHash('md5').update(value).digest('hex');\nfunction login(req) {\n  return find(digest(req.body.password));\n}\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "auth.py",
+          "source": "import hashlib\n\n\ndef digest(value):\n    return hashlib.sha1(value).hexdigest()\n\n\ndef login(password):\n    return find(digest(password))\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "login.js",
+          "source": "const stored = await bcrypt.hash(req.body.password, 12);\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "auth.py",
+          "source": "stored = generate_password_hash(password)\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "login.js",
+          "source": "const stored = security.hash(req.body.password);\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "JS-COOKIE",
+      "kind": "js-cookie",
+      "area": "authentication",
+      "severity": "medium",
+      "title": "Cookie disables httpOnly or secure",
+      "criteria": "Recognize literal httpOnly and secure flags in res.cookie, cookies.set and cookie option objects. False violates this check and true satisfies it; computed values and missing flags are not assessed.",
+      "next_action": "Set httpOnly and secure on session cookies.",
+      "examples": [
+        {
+          "file": "server.js",
+          "source": "res.cookie('session', value, { httpOnly: false });\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "server.js",
+          "source": "app.use(session({ cookie: { httpOnly: true, secure: true } }));\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "server.js",
+          "source": "res.cookie('theme', value, { secure: isProduction });\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "JS-CORS",
+      "kind": "js-cors",
+      "area": "authentication",
+      "severity": "medium",
+      "title": "Credentialed CORS accepts any origin",
+      "criteria": "Inspect cors() options with credentials true. A wildcard or a reflected origin violates this check, literal HTTPS origins satisfy it, and computed origins are not assessed.",
+      "next_action": "Allow only an exact list of trusted origins for credentialed requests.",
+      "examples": [
+        {
+          "file": "server.js",
+          "source": "app.use(cors({ origin: true, credentials: true }));\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "server.js",
+          "source": "app.use(cors({ origin: '*', credentials: true }));\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "server.js",
+          "source": "app.use(cors({ origin: ['https://app.example.invalid'], credentials: true }));\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "server.js",
+          "source": "app.use(cors({ origin: '*' }));\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "WEB-SETTINGS",
+      "kind": "web-settings",
+      "area": "authentication",
+      "severity": "medium",
+      "title": "Django or Flask setting weakens sessions or host checks",
+      "criteria": "Recognize literal session and CSRF cookie settings, ALLOWED_HOSTS, and CORS_ALLOW_ALL_ORIGINS with CORS_ALLOW_CREDENTIALS. Computed values are not assessed, and whether a settings file is used in production is not established.",
+      "next_action": "Enable secure session cookies and list the expected hosts and origins.",
+      "examples": [
+        {
+          "file": "settings.py",
+          "source": "SESSION_COOKIE_SECURE = False\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "settings.py",
+          "source": "ALLOWED_HOSTS = ['*']\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "settings.py",
+          "source": "CORS_ALLOW_CREDENTIALS = True\nCORS_ALLOW_ALL_ORIGINS = True\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "app.py",
+          "source": "app.config['SESSION_COOKIE_HTTPONLY'] = True\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "settings.py",
+          "source": "ALLOWED_HOSTS = ['app.example.invalid']\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "settings.py",
+          "source": "SESSION_COOKIE_SECURE = not DEBUG\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "TF-STATE",
+      "kind": "path",
+      "pattern": "(?i)(?:^|/)[^/]*\\.tfstate(?:\\.backup)?$",
+      "area": "secrets",
+      "severity": "high",
+      "title": "Terraform state file in the repository",
+      "criteria": "Recognize state files from the file list. Terraform stores resource attributes in state, including generated passwords and keys in plain text. The content is not read.",
+      "next_action": "Move state to an encrypted remote backend and rotate the values it exposed.",
+      "examples": [
+        {
+          "file": "infra/terraform.tfstate",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "terraform.tfstate.backup",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "infra/main.tf",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "TF-PUBLIC-INGRESS",
+      "kind": "tf-ingress",
+      "area": "infrastructure",
+      "severity": "high",
+      "title": "Administrative port open to the internet",
+      "criteria": "In AWS, Azure and GCP firewall declarations, an open source range with a port range covering SSH or RDP, or all protocols, violates this check. Other ports, egress, deny rules and computed values are not assessed. Whether the resource is deployed is not established.",
+      "next_action": "Restrict the source to a VPN or bastion range, or use a managed session service.",
+      "examples": [
+        {
+          "file": "main.tf",
+          "source": "resource \"aws_security_group\" \"web\" {\n  ingress {\n    from_port   = 22\n    to_port     = 22\n    protocol    = \"tcp\"\n    cidr_blocks = [\"0.0.0.0/0\"]\n  }\n}\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "main.tf",
+          "source": "security_rule {\n  direction              = \"Inbound\"\n  access                 = \"Allow\"\n  destination_port_range = \"3389\"\n  source_address_prefix  = \"*\"\n}\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "main.tf",
+          "source": "resource \"google_compute_firewall\" \"ssh\" {\n  source_ranges = [\"0.0.0.0/0\"]\n  allow {\n    protocol = \"tcp\"\n    ports    = [\"22\"]\n  }\n}\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "main.tf",
+          "source": "resource \"aws_security_group\" \"web\" {\n  ingress {\n    from_port   = 443\n    to_port     = 443\n    protocol    = \"tcp\"\n    cidr_blocks = [\"0.0.0.0/0\"]\n  }\n}\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "main.tf",
+          "source": "resource \"aws_security_group\" \"web\" {\n  egress {\n    from_port   = 0\n    to_port     = 0\n    protocol    = \"-1\"\n    cidr_blocks = [\"0.0.0.0/0\"]\n  }\n}\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "TF-PUBLIC-RESOURCE",
+      "kind": "tf-public",
+      "area": "infrastructure",
+      "severity": "high",
+      "title": "Storage or database declared as public",
+      "criteria": "A public-read ACL, publicly_accessible true and public_network_access_enabled true violate this check. Their false values and block_public_acls or block_public_policy true satisfy it. Whether the resource is deployed is not established.",
+      "next_action": "Keep the resource private and expose it through an authenticated service.",
+      "examples": [
+        {
+          "file": "main.tf",
+          "source": "resource \"aws_s3_bucket_acl\" \"data\" {\n  acl = \"public-read\"\n}\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "main.tf",
+          "source": "resource \"aws_db_instance\" \"db\" {\n  publicly_accessible = true\n}\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "main.tf",
+          "source": "resource \"aws_db_instance\" \"db\" {\n  publicly_accessible = false\n}\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "main.tf",
+          "source": "# acl = \"public-read\"\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "TF-IAM-WILDCARD",
+      "kind": "tf-iam",
+      "area": "infrastructure",
+      "severity": "high",
+      "title": "IAM statement allows every action on every resource",
+      "criteria": "A statement with a wildcard action and a wildcard resource violates this check, in HCL or JSON form. Deny statements and narrower statements are not assessed.",
+      "next_action": "List the actions and resources the role needs.",
+      "examples": [
+        {
+          "file": "iam.tf",
+          "source": "data \"aws_iam_policy_document\" \"admin\" {\n  statement {\n    actions   = [\"*\"]\n    resources = [\"*\"]\n  }\n}\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "iam.tf",
+          "source": "resource \"aws_iam_policy\" \"admin\" {\n  policy = jsonencode({\n    Statement = [{\n      Action   = \"*\"\n      Effect   = \"Allow\"\n      Resource = \"*\"\n    }]\n  })\n}\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "iam.tf",
+          "source": "data \"aws_iam_policy_document\" \"read\" {\n  statement {\n    actions   = [\"s3:GetObject\"]\n    resources = [\"*\"]\n  }\n}\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "iam.tf",
+          "source": "data \"aws_iam_policy_document\" \"deny\" {\n  statement {\n    effect    = \"Deny\"\n    actions   = [\"*\"]\n    resources = [\"*\"]\n  }\n}\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "TF-MODULE-PIN",
+      "kind": "tf-module",
+      "area": "supply-chain",
+      "severity": "medium",
+      "title": "Terraform module has no fixed version",
+      "criteria": "A Git or URL source without a ref or on a default branch, and a registry module without a version, violate this check. A full commit or an exact version satisfies it. Tags and version ranges are not assessed, and local modules do not apply.",
+      "next_action": "Pin external modules to a reviewed commit or exact version.",
+      "examples": [
+        {
+          "file": "main.tf",
+          "source": "module \"vpc\" {\n  source = \"git::https://git.example.invalid/vpc.git\"\n}\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "main.tf",
+          "source": "module \"vpc\" {\n  source = \"example/vpc/aws\"\n}\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "main.tf",
+          "source": "module \"vpc\" {\n  source = \"git::https://git.example.invalid/vpc.git?ref=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n}\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "main.tf",
+          "source": "module \"vpc\" {\n  source  = \"example/vpc/aws\"\n  version = \"5.0.0\"\n}\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "main.tf",
+          "source": "module \"vpc\" {\n  source  = \"example/vpc/aws\"\n  version = \"~> 5.0\"\n}\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "main.tf",
+          "source": "module \"vpc\" {\n  source = \"./modules/vpc\"\n}\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "TF-LOCK",
+      "positive_only": true,
+      "kind": "path",
+      "pattern": "(?:^|/)\\.terraform\\.lock\\.hcl$",
+      "area": "supply-chain",
+      "severity": "low",
+      "title": "Terraform dependency lock file",
+      "criteria": "Positive evidence only. The lock file pins provider versions and hashes. A missing file is no evidence either way.",
+      "next_action": "Keep the lock file reviewed and committed.",
+      "examples": [
+        {
+          "file": "infra/.terraform.lock.hcl",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
     }
   ],
-  "rule_version": 7,
+  "rule_version": 8,
   "change_relevance": {
-    "version": 6,
+    "version": 7,
     "documentation_extensions": [
       ".md",
       ".rst",
@@ -1577,6 +2531,18 @@
         "id": "REL-CONTROL-AUTHENTICATION",
         "level": "high",
         "aspect": "authentication",
+        "reason": "A recognized security operation or control is in the affected change context; inspect its behavior even when no weakness is detected."
+      },
+      "secrets": {
+        "id": "REL-CONTROL-SECRETS",
+        "level": "high",
+        "aspect": "secrets",
+        "reason": "A recognized security operation or control is in the affected change context; inspect its behavior even when no weakness is detected."
+      },
+      "infrastructure": {
+        "id": "REL-CONTROL-INFRASTRUCTURE",
+        "level": "high",
+        "aspect": "infrastructure",
         "reason": "A recognized security operation or control is in the affected change context; inspect its behavior even when no weakness is detected."
       }
     },

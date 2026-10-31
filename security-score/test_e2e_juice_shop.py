@@ -216,7 +216,7 @@ class JuiceShopE2ETests(unittest.TestCase):
         self.assertNotIn("\033", output)
         headings = list(
             re.finditer(
-                r"(?m)^(Repository|Authentication|Architecture|Frontend|Dependencies & CI|Cryptography|Deployment & transport) +(not assessed|(100|[1-9]?\d)/100)\b.*$",
+                r"(?m)^(Repository|Authentication|Architecture|Frontend|Dependencies & CI|Secrets|Cryptography|Deployment & transport) +(not assessed|(100|[1-9]?\d)/100)\b.*$",
                 output,
             )
         )
@@ -228,6 +228,7 @@ class JuiceShopE2ETests(unittest.TestCase):
                 "Architecture",
                 "Frontend",
                 "Dependencies & CI",
+                "Secrets",
                 "Cryptography",
                 "Deployment & transport",
             ],

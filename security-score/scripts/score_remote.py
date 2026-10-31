@@ -350,6 +350,25 @@ def gitlab_reviews(api, branch, protected, budget, token):
     )
 
 
+def github_branch_rules(api, branch, budget, token):
+    """Ruleset rules of a branch; unlike /protection this needs no admin rights."""
+    rules, _ = json_get(
+        api + "/rules/branches/" + quote(branch, safe="") + "?per_page=100",
+        budget,
+        token,
+        "api.github.com",
+        expected=list,
+    )
+    found = {}
+    for rule in rules if isinstance(rules, list) else []:
+        if isinstance(rule, dict) and isinstance(rule.get("type"), str):
+            parameters = rule.get("parameters")
+            found.setdefault(rule["type"], []).append(
+                parameters if isinstance(parameters, dict) else {}
+            )
+    return found
+
+
 def host_settings(host, project, budget, token=None, *, require_source=False):
     """Read only named fields; missing fields and 401/403/404 remain unknown."""
     if host == "github.com":
@@ -394,12 +413,34 @@ def host_settings(host, project, budget, token=None, *, require_source=False):
             or ("required_pull_request_reviews" in protection and reviews is None)
             else None
         )
+        # A ruleset can only add requirements to what classic protection reports.
+        rules = (
+            github_branch_rules(api, branch, budget, token) if protected is True else {}
+        )
+        ruleset_reviews = any(
+            type(rule.get("required_approving_review_count")) is int
+            and rule["required_approving_review_count"] > 0
+            for rule in rules.get("pull_request", [])
+        )
         analysis = document.get("security_and_analysis") or {}
         if not isinstance(analysis, dict):
             analysis = {}
+        status_checks = "required_status_checks" in rules or isinstance(
+            protection.get("required_status_checks"), dict
+        )
         settings = [
             setting("default_branch_protection", protected, branch_error),
-            setting("required_reviews", review_value, protection_error),
+            setting("required_reviews", True)
+            if ruleset_reviews
+            else setting("required_reviews", review_value, protection_error),
+            setting(
+                "successful_pipeline_before_merge",
+                True if status_checks else None,
+            ),
+            setting(
+                "signed_commits",
+                True if "required_signatures" in rules else None,
+            ),
         ]
         for field in ("secret_scanning", "dependabot_security_updates"):
             entry = analysis.get(field)

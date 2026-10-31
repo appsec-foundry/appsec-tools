@@ -13,12 +13,17 @@ Tests pin the exact behavior.
   GitLab.com repository URLs, including the repository-host security settings for
   URLs. Analyze changes (staged, unstaged, commits, revision ranges, patches) and
   state the compared versions. Checks cover data access, frontend output, CSP and
-  other browser security headers, token verification, hardening including
-  container privileges, and the dependency, CI workflow and build supply chain.
+  other browser security headers, token verification, password hashing, session and
+  CORS settings, credentials, hardening including container privileges, a narrow set
+  of Terraform misconfigurations, and the dependency, CI workflow and build supply
+  chain, including GitLab CI. Terraform stays a narrow set; a full policy catalog is
+  left to dedicated tools.
 
 - **REQ-03 — Score, grade, and change relevance.** A repository scan gives a score
   from 0 to 100, where 100 means no deductions, and a grade: A ≥ 90, B ≥ 80, C ≥ 70,
-  D ≥ 60, E ≥ 50, F < 50. Passed checks cannot offset a serious finding. A change
+  D ≥ 60, E ≥ 50, F < 50. Passed checks cannot offset a serious finding. Only a
+  fixed number of findings per rule deduct points, so one repeated pattern does not
+  hide every other difference; all findings stay in the output. A change
   gets a security relevance of high, medium, low, or unclear instead of a score. It
   depends on the security behavior the change touches, not only on detected
   weaknesses; introduced, worsened, resolved, and pre-existing findings are
@@ -27,8 +32,9 @@ Tests pin the exact behavior.
 - **REQ-04 — Honest limits.** Keep findings, positive evidence, unknowns, and
   exclusions apart. A detected technology is no proof of protection. Without
   enough coverage, or when required checks fail, withhold score and grade but keep
-  the findings. No findings in a change does not mean low relevance, and a high
-  score does not mean the code is safe.
+  the findings. Rules that can only report positive evidence never make an area or
+  a repository assessable. No findings in a change does not mean low relevance, and
+  a high score does not mean the code is safe.
 
 - **REQ-05 — Fast and bounded.** A repository scan should finish within a default
   budget of about 60 seconds, and all processing is bounded. When a limit stops a
@@ -57,12 +63,29 @@ Tests pin the exact behavior.
   fails on missing evidence, crashes, or a missed deadline instead of skipping.
 
 - **REQ-10 — Architecture profile.** A repository scan reports recognized
-  architecture traits with their evidence: authentication mechanisms, single-page
-  app or server-side templates, persistence, and how SQL query text is built. The
-  profile is context only and never changes score or grade; a trait that is not
-  recognized is reported as such, not as absent.
+  architecture traits with their evidence: login through SSO, passwords or both,
+  authentication mechanisms, the hash a password reaches, single-page app or
+  server-side templates, persistence, how SQL query text is built, deployment
+  targets, and how CI logs in to a cloud. The profile is context only and never
+  changes score or grade; a trait that is not recognized is reported as such, not as
+  absent.
 
 - **REQ-11 — Security headers as positive evidence.** Browser security headers
   other than CSP count only as positive evidence. A missing, disabled, or
   dynamically set header is neither a finding nor an unclear check, because
   proxies and platform configuration outside the repository can set it.
+
+- **REQ-12 — Credentials stay out of results.** Credential checks report file and
+  line, never the value. Files on the sensitive list are not read or downloaded;
+  they are recognized by path alone. Only formats with a fixed prefix count, because
+  entropy guesses would flood the score with false findings.
+
+- **REQ-13 — Known vulnerabilities stay outside the score.** Known dependency
+  vulnerabilities do not change score or grade, because feed data changes daily and
+  REQ-01 requires the same sources to give the same result. A scan must not send
+  dependency names to a third party unless the user selects that explicitly.
+
+- **REQ-14 — Controls outside the repository.** Signals that can equally be set
+  outside the repository, such as SBOMs, signed releases, update tooling, security
+  policies, and non-root container settings, count only as positive evidence. Their
+  absence is neither a finding nor an unclear check.

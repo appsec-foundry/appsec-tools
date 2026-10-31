@@ -9,6 +9,7 @@ import hashlib
 from pathlib import Path
 import re
 import textwrap
+from score_infrastructure import ci_file
 from score_reporting import container_build_file, source_priority
 
 from score_calculation import (
@@ -63,7 +64,27 @@ def validate_policy():
         "workflow-injection",
         "workflow-checkout",
         "container-privileges",
+        "container-hardening",
         "host",
+        "path",
+        "secret-token",
+        "ci-script",
+        "install-command",
+        "gitlab-image",
+        "gitlab-include",
+        "gitlab-injection",
+        "lockfile",
+        "manifest-sources",
+        "release-integrity",
+        "cloud-oidc",
+        "password-hash",
+        "js-cookie",
+        "js-cors",
+        "web-settings",
+        "tf-ingress",
+        "tf-public",
+        "tf-iam",
+        "tf-module",
     }
     catalog = POLICY["rules"]  # Disabled rules still reserve their IDs.
     if (
@@ -94,6 +115,13 @@ def validate_policy():
                 )
         if not isinstance(rule.get("examples"), list) or not rule["examples"]:
             raise ValueError("Every rule needs verifiable examples.")
+        if type(rule.get("positive_only", False)) is not bool:
+            raise ValueError("A rule's positive_only flag must be true or false.")
+        if rule["kind"] == "path":
+            if not isinstance(rule.get("pattern"), str):
+                raise ValueError("A path rule needs a pattern.")
+            re.compile(rule["pattern"])
+            re.compile(rule.get("exclude", "(?!)"))
     relevance = POLICY["change_relevance"]
     if (
         type(RULE_VERSION) is not int
@@ -149,6 +177,7 @@ IMPLEMENTATION_HASH = hashlib.sha256(
             "score_remote.py",
             "score_remote_sources.py",
             "score_architecture.py",
+            "score_infrastructure.py",
             "score_relevance.py",
             "score.py",
         )
@@ -163,7 +192,16 @@ SOURCE_EXTENSIONS = JS_EXTENSIONS | {
     ".html",
     ".conf",
     ".config",
+    ".tf",
 }
+GRADLE_BUILD_FILES = {
+    "build.gradle",
+    "build.gradle.kts",
+    "settings.gradle",
+    "settings.gradle.kts",
+}
+DEPENDENCY_FILES = {"pyproject.toml", "pom.xml", "Cargo.toml"} | GRADLE_BUILD_FILES
+LOCKFILES = {"package-lock.json", "npm-shrinkwrap.json"}
 
 
 class ScanLimit(ValueError):
@@ -173,6 +211,7 @@ class ScanLimit(ValueError):
 def supported(path):
     return (
         Path(path).suffix.lower() in SOURCE_EXTENSIONS
+        or Path(path).name in DEPENDENCY_FILES
         or container_build_file(Path(path).name)
         or (Path(path).name.startswith("requirements") and Path(path).suffix == ".txt")
     )
@@ -811,17 +850,6 @@ def other_observations(rule, text, code=None):
                 )
             if match and match[2]:
                 stages.add(match[2].lower())
-        elif kind == "user":
-            match = re.match(r"(?i)\s*USER\s+(\S+)", line)
-            if match:
-                user = match[1].split(":", 1)[0]
-                status = (
-                    "violated"
-                    if user in {"root", "0"}
-                    else "unclear"
-                    if "$" in user
-                    else "satisfied"
-                )
         if status:
             observations.append((number, status))
     return observations, False
@@ -850,9 +878,72 @@ def applies(rule, path):
         return suffix in JS_EXTENSIONS or path.endswith(".component.html")
     if kind in {"csp", "headers"}:
         return suffix in JS_EXTENSIONS | {".py", ".json", ".conf", ".config"}
-    if kind == "host":
+    if kind in {"host", "path"}:
         return False
+    if kind == "secret-token":
+        return True
+    if kind in {
+        "ci-script",
+        "gitlab-image",
+        "gitlab-include",
+        "gitlab-injection",
+        "release-integrity",
+        "cloud-oidc",
+    }:
+        return ci_file(path) and (
+            not kind.startswith("gitlab-") or not path.startswith(".github/")
+        )
+    if kind == "install-command":
+        return ci_file(path) or container_build_file(Path(path).name)
+    if kind == "container-hardening":
+        return suffix in {".yml", ".yaml"}
+    if kind == "lockfile":
+        return Path(path).name in LOCKFILES
+    if kind == "manifest-sources":
+        return Path(path).name in DEPENDENCY_FILES
+    if kind == "password-hash":
+        return suffix in JS_EXTENSIONS | {".py"}
+    if kind == "web-settings":
+        return suffix == ".py"
+    if kind.startswith("tf-"):
+        return suffix == ".tf"
     return container_build_file(Path(path).name)
+
+
+def scan_paths(paths, findings, checks):
+    """Rules that read only a path; the file's content is neither needed nor loaded."""
+    for rule in RULES:
+        if rule["kind"] != "path":
+            continue
+        pattern = re.compile(rule["pattern"])
+        ignored = re.compile(rule.get("exclude", "(?!)"))
+        status = "satisfied" if rule.get("positive_only") else "violated"
+        for path in paths:
+            if not pattern.search(path) or ignored.search(path):
+                continue
+            checks.append(
+                {
+                    "rule": rule["id"],
+                    "area": rule["area"],
+                    "file": path,
+                    "status": status,
+                    "locations": [{"line": 1, "status": status}],
+                }
+            )
+            if status == "violated":
+                findings.append(
+                    {
+                        "rule": rule["id"],
+                        "area": rule["area"],
+                        "severity": rule["severity"],
+                        "title": rule["title"],
+                        "file": path,
+                        "line": 1,
+                        "evidence": "Recognized by its path; the file's content was not read.",
+                        "next_action": rule["next_action"],
+                    }
+                )
+    return findings, checks
 
 
 def scan(files, budget, findings=None, checks=None):
@@ -925,10 +1016,12 @@ def scan_source(path, source, budget, findings, checks, files):
         if not applies(rule, path):
             continue
         budget.check()
-        if parse_error:
+        # Secret formats are read from raw text and need no parsed source.
+        unreadable = parse_error and rule["kind"] != "secret-token"
+        if unreadable:
             observed = []
         elif rule["kind"].startswith("py-"):
-            observed = [] if parse_error else python_observations(rule, text, tree)[0]
+            observed = python_observations(rule, text, tree)[0]
         elif rule["kind"] in {
             "js-sql",
             "frontend",
@@ -942,9 +1035,29 @@ def scan_source(path, source, budget, findings, checks, files):
             "workflow-injection",
             "workflow-checkout",
             "container-privileges",
+            "container-hardening",
             "image-script",
             "image-add",
             "js-jwt",
+            "user",
+            "secret-token",
+            "ci-script",
+            "install-command",
+            "gitlab-image",
+            "gitlab-include",
+            "gitlab-injection",
+            "lockfile",
+            "manifest-sources",
+            "release-integrity",
+            "cloud-oidc",
+            "password-hash",
+            "js-cookie",
+            "js-cors",
+            "web-settings",
+            "tf-ingress",
+            "tf-public",
+            "tf-iam",
+            "tf-module",
         }:
             observed = observations(rule, path, text, code, files)
         else:
@@ -954,7 +1067,7 @@ def scan_source(path, source, budget, findings, checks, files):
             "violated"
             if states["violated"]
             else "unclear"
-            if states["unclear"] or parse_error
+            if states["unclear"] or unreadable
             else "satisfied"
             if states["satisfied"]
             else "not_applicable"
@@ -969,14 +1082,14 @@ def scan_source(path, source, budget, findings, checks, files):
                     {
                         "line": source.get("lines", {}).get(row[0], row[0]),
                         "status": row[1],
-                        # Header observations also name the recognized header.
-                        **({"header": row[2]} if len(row) > 2 else {}),
+                        # Some observations name what they recognized, such as a header.
+                        **({"detail": row[2]} if len(row) > 2 else {}),
                     }
                     for row in observed
                 ],
             }
         )
-        if parse_error:
+        if unreadable:
             checks[-1]["error"] = parse_reason
         for line, outcome, *_ in observed:
             if outcome != "violated":

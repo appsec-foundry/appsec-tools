@@ -1,7 +1,9 @@
 """Repository score arithmetic; editable values live at the top of rules.json.
 
-Each finding deducts its severity's weight. Add deductions within each area,
-apply the strictest severity cap, and use the lowest assessed area score.
+Each finding deducts its severity's weight, up to a fixed number of findings per
+rule. Add deductions within each area, apply the strictest severity cap, and use
+the lowest assessed area score. Rules marked positive_only are reported but never
+make an area or a repository assessable.
 Control recognition and source scanning belong to score_core, not this module.
 """
 
@@ -20,6 +22,8 @@ POLICY = json.loads(CATALOG_BYTES)
 VERSION = POLICY["scoring_version"]
 WEIGHTS = POLICY["scoring"]["weights"]
 CAPS = POLICY["scoring"]["severity_caps"]
+COUNTED_INSTANCES = POLICY["scoring"]["counted_instances"]
+POSITIVE_ONLY = {rule["id"] for rule in POLICY["rules"] if rule.get("positive_only")}
 
 
 def validate_scoring():
@@ -33,6 +37,8 @@ def validate_scoring():
         raise ValueError("Weights must be whole points in 1–100.")
     if any(type(value) is not int or not 0 <= value <= 100 for value in CAPS.values()):
         raise ValueError("Severity caps must be integers in 0–100.")
+    if type(COUNTED_INSTANCES) is not int or COUNTED_INSTANCES < 1:
+        raise ValueError("Counted instances must be a positive whole number.")
     severities = ("critical", "high", "medium", "low")
     if any(
         WEIGHTS[a] < WEIGHTS[b] or CAPS[a] > CAPS[b]
@@ -52,7 +58,8 @@ def validate_scoring():
         raise ValueError("Grade bands must match REQ-03.")
     if (
         POLICY["scoring"]["aggregation"] != "weakest assessed area"
-        or POLICY["scoring"]["repetitions"] != "weight * instances"
+        or POLICY["scoring"]["repetitions"]
+        != "weight * min(instances, counted_instances)"
     ):
         raise ValueError(
             "Unsupported score formula; update score_calculation.py to change it."
@@ -82,8 +89,9 @@ def calculate_area(area, findings, *, assessed):
             "rule": rule,
             "severity": severity,
             "instances": count,
+            "counted_instances": min(count, COUNTED_INSTANCES),
             "points_per_instance": WEIGHTS[severity],
-            "deduction": count * WEIGHTS[severity],
+            "deduction": min(count, COUNTED_INSTANCES) * WEIGHTS[severity],
             "severity_cap": CAPS[severity],
         }
         for (rule, severity), count in sorted(counts.items())
@@ -113,9 +121,15 @@ def calculate(findings, checks, *, complete=True, require_source=False):
         {row["area"] for row in checks if row["status"] != "not_applicable"}
         | {finding["area"] for finding in findings}
     )
-    assessed = {
-        row["area"] for row in checks if row["status"] in {"satisfied", "violated"}
-    } | {finding["area"] for finding in findings}
+    recognized = [
+        row
+        for row in checks
+        if row["status"] in {"satisfied", "violated"}
+        and row.get("rule") not in POSITIVE_ONLY
+    ]
+    assessed = {row["area"] for row in recognized} | {
+        finding["area"] for finding in findings
+    }
     rows = [
         calculate_area(
             area,
@@ -125,9 +139,7 @@ def calculate(findings, checks, *, complete=True, require_source=False):
         for area in areas
     ]
     known = sum(
-        row["status"] in {"satisfied", "violated"}
-        and (not require_source or row["area"] != "repository-host")
-        for row in checks
+        not require_source or row["area"] != "repository-host" for row in recognized
     )
     uncertain = any(
         has_unknown(row) and row["area"] != "repository-host" for row in checks

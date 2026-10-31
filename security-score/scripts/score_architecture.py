@@ -9,21 +9,38 @@ from __future__ import annotations
 import ast
 from bisect import bisect_right
 from collections import Counter
-import json
 from pathlib import Path
 import re
 
 from score_core import JS_EXTENSIONS, qualified
+from score_infrastructure import (
+    PIPE_TO_SHELL,
+    ci_file,
+    ci_script_observations,
+    cloud_login_rows,
+    cloud_oidc_observations,
+    container_hardening_observations,
+    container_user_observations,
+    deployment_rows,
+    document,
+    gitlab_image_observations,
+    gitlab_include_observations,
+    gitlab_injection_observations,
+    install_observations,
+    line_of,
+    lockfile_observations,
+    logical_lines,
+    manifest_source_observations,
+    release_observations,
+    script_lines,
+    terraform_iam_observations,
+    terraform_ingress_observations,
+    terraform_module_observations,
+    terraform_public_observations,
+)
 from score_reporting import source_priority
 
 
-# A download piped to an interpreter, also through sudo or `sh -c "$(curl ...)"`.
-PIPE_TO_SHELL = re.compile(
-    r"\b(?:curl|wget)\b[^\n]{0,1000}\|\s*(?:sudo\s+(?:-\S+\s+){0,3})?(?:ba|z|k|da)?sh\b"
-    r"|\b(?:ba|z|k|da)?sh\s+-c\s+[\"']?\$\(\s*(?:curl|wget)\b"
-    r"|\b(?:Invoke-WebRequest|iwr)\b[^\n]{0,1000}\|\s*(?:iex|Invoke-Expression)\b",
-    re.I,
-)
 UNTRUSTED_CONTEXT = re.compile(
     r"\bgithub\s*\.\s*(?:head_ref\b|event\s*\.\s*(?:"
     r"(?:issue|pull_request|discussion)\s*\.\s*(?:title|body)\b"
@@ -41,19 +58,6 @@ PROPOSED_REVISION = re.compile(
     r"|workflow_run\s*\.\s*head_(?:sha|branch)|(?:number|pull_request\s*\.\s*number)\b))",
     re.I,
 )
-
-
-def document(text):
-    try:
-        result = json.loads(text)
-        return result if isinstance(result, dict) else None
-    except (ValueError, RecursionError):
-        return None
-
-
-def line_of(text, name):
-    index = text.find(name)
-    return text.count("\n", 0, index) + 1 if index >= 0 else 1
 
 
 def csp_status(policy):
@@ -395,22 +399,6 @@ def npm_observations(kind, path, text, files):
     return rows
 
 
-def logical_lines(text, comment=None):
-    """Join backslash continuations; yield (first line, instruction)."""
-    parts, start = [], 1
-    for number, line in enumerate(text.splitlines(), 1):
-        if comment and parts and re.match(comment, line):
-            continue  # Comment lines inside a continuation are removed.
-        parts.append(line.rstrip())
-        if parts[-1].endswith("\\"):
-            parts[-1] = parts[-1][:-1]
-            continue
-        yield start, " ".join(parts)
-        parts, start = [], number + 1
-    if parts:
-        yield start, " ".join(parts)
-
-
 def requirement_observations(text):
     """Options are unclear unless they add a plaintext, untrusted or mutable source."""
     rows = []
@@ -456,24 +444,11 @@ def expression_matches(segment, pattern):
 
 def workflow_injection_observations(text):
     """Untrusted event text expanded into run scripts or github-script code."""
-    rows = []
-    owner = None  # column of the run/script key whose value continues
-    for number, line in enumerate(text.splitlines(), 1):
-        stripped = line.lstrip(" ")
-        indent = len(line) - len(stripped)
-        if owner is not None and stripped and indent <= owner:
-            owner = None
-        if owner is None:
-            match = re.match(r"(?:-\s+)*(run|script)\s*:(?=\s|$)", stripped)
-            if not match:
-                continue
-            owner = indent + match.start(1)
-            segment = stripped[match.end() :]
-        else:
-            segment = line
-        if expression_matches(segment, UNTRUSTED_CONTEXT):
-            rows.append((number, "violated"))
-    return rows
+    return [
+        (number, "violated")
+        for number, segment in script_lines(text, "run|script")
+        if expression_matches(segment, UNTRUSTED_CONTEXT)
+    ]
 
 
 def workflow_checkout_observations(text):
@@ -581,8 +556,238 @@ def js_jwt_observations(text, code):
     return rows
 
 
+def js_cookie_observations(code):
+    """Literal httpOnly and secure flags in recognized cookie options."""
+    rows = []
+    breaks = [match.start() for match in re.finditer("\n", code)]
+    for match in re.finditer(
+        r"\bcookie\s*:\s*\{|\.cookie\s*\(|\bcookies\s*\.\s*set\s*\(", code
+    ):
+        closing = "}" if match[0].endswith("{") else ")"
+        end = code.find(closing, match.end(), match.end() + 400)
+        window = code[match.end() : end if end >= 0 else match.end() + 400]
+        for flag in re.finditer(r"\b(?:httpOnly|secure)\s*:\s*(true|false)\b", window):
+            rows.append(
+                (
+                    bisect_right(breaks, match.end() + flag.start()) + 1,
+                    "violated" if flag[1] == "false" else "satisfied",
+                )
+            )
+    return rows
+
+
+def js_cors_observations(text, code):
+    """Credentialed CORS: a wildcard or reflected origin versus literal HTTPS origins."""
+    rows = []
+    breaks = [match.start() for match in re.finditer("\n", code)]
+    for match in re.finditer(r"\bcors\s*\(\s*\{", code):
+        end = code.find("}", match.end(), match.end() + 400)
+        if end < 0 or not re.search(
+            r"\bcredentials\s*:\s*true\b", code[match.end() : end]
+        ):
+            continue
+        origin = re.search(r"\borigin\s*:", code[match.end() : end])
+        if not origin:
+            continue
+        value = text[match.end() + origin.end() : end].lstrip()
+        status = (
+            "violated"
+            if re.match(r"true\b|['\"`]\*['\"`]", value)
+            else "satisfied"
+            if re.match(r"\[?\s*['\"`]https://", value)
+            else None
+        )
+        if status:
+            rows.append((bisect_right(breaks, match.start()) + 1, status))
+    return rows
+
+
+WEB_SETTINGS = re.compile(
+    r"\s*(?:\w+\.config\[['\"])?"
+    r"(?:SESSION_COOKIE_SECURE|SESSION_COOKIE_HTTPONLY|CSRF_COOKIE_SECURE|REMEMBER_COOKIE_SECURE)"
+    r"(?:['\"]\])?\s*=\s*(True|False)\b"
+)
+
+
+def web_settings_observations(text):
+    """Django and Flask session settings; computed values stay unassessed."""
+    rows = []
+    credentials = re.search(r"(?m)^CORS_ALLOW_CREDENTIALS\s*=\s*True\b", text)
+    for number, line in enumerate(text.splitlines(), 1):
+        flag = WEB_SETTINGS.match(line)
+        hosts = re.match(r"\s*ALLOWED_HOSTS\s*=\s*\[([^\]]+)\]", line)
+        if flag:
+            rows.append((number, "satisfied" if flag[1] == "True" else "violated"))
+        elif hosts:
+            literal = re.fullmatch(
+                r"\s*(['\"])[^'\"]+\1\s*(?:,\s*(['\"])[^'\"]+\2\s*)*,?\s*", hosts[1]
+            )
+            if re.search(r"['\"]\*['\"]", hosts[1]):
+                rows.append((number, "violated"))
+            elif literal:
+                rows.append((number, "satisfied"))
+        elif credentials and re.match(
+            r"\s*(?:CORS_ALLOW_ALL_ORIGINS|CORS_ORIGIN_ALLOW_ALL)\s*=\s*True\b", line
+        ):
+            rows.append((number, "violated"))
+    return rows
+
+
+# Formats with a fixed prefix; generic high-entropy strings are not assessed.
+SECRET_FORMATS = re.compile(
+    r"\bAKIA[0-9A-Z]{16}\b"
+    r"|\bgh[pousr]_[A-Za-z0-9]{36,}\b"
+    r"|\bgithub_pat_[A-Za-z0-9_]{22,}\b"
+    r"|\bglpat-[A-Za-z0-9_-]{20,}"
+    r"|\bxox[abprs]-[A-Za-z0-9-]{10,}"
+    r"|\bnpm_[A-Za-z0-9]{36}\b"
+    r"|\bsk_live_[0-9a-zA-Z]{24,}\b"
+    r"|\bsk-ant-[A-Za-z0-9_-]{32,}"
+)
+PRIVATE_KEY = re.compile(
+    r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----(?:\\r|\\n|\s)+[A-Za-z0-9+/]{40,}"
+)
+
+
+def secret_token_observations(text):
+    """Lines only: a matched value never leaves this function."""
+    breaks = [match.start() for match in re.finditer("\n", text)]
+    rows = {
+        bisect_right(breaks, match.start()) + 1
+        for match in SECRET_FORMATS.finditer(text)
+        # Documentation samples and repeated placeholder characters.
+        if "EXAMPLE" not in match[0].upper() and len(set(match[0])) >= 12
+    } | {
+        bisect_right(breaks, match.start()) + 1 for match in PRIVATE_KEY.finditer(text)
+    }
+    return [(number, "violated") for number in sorted(rows)]
+
+
+PASSWORD_NAME = re.compile(r"(?i)pass(?:word|wd)")
+LOCAL_FUNCTION = re.compile(
+    r"\s*(?:export\s+)?(?:async\s+)?(?:def\s+(\w+)\s*\(|function\s+(\w+)\s*\("
+    r"|(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:function\b|\([^()\n]*\)\s*=>|\w+\s*=>))"
+)
+WEAK_HASH = re.compile(
+    r"\bcreateHash\s*\(\s*['\"`](md5|sha1)['\"`]|\bhashlib\s*\.\s*(md5|sha1)\s*\(", re.I
+)
+PASSWORD_HASHES = (
+    (
+        "bcrypt",
+        re.compile(
+            r"\bbcrypt(?:js)?\s*\.\s*(?:hash|hashSync|hashpw|compare|compareSync|checkpw)\s*\("
+        ),
+    ),
+    ("Argon2", re.compile(r"\bargon2\s*\.\s*(?:hash|verify)\s*\(")),
+    (
+        "scrypt",
+        re.compile(r"\b(?:crypto\s*\.\s*scrypt(?:Sync)?|hashlib\s*\.\s*scrypt)\s*\("),
+    ),
+    (
+        "PBKDF2",
+        re.compile(
+            r"\b(?:crypto\s*\.\s*pbkdf2(?:Sync)?|hashlib\s*\.\s*pbkdf2_hmac)\s*\("
+        ),
+    ),
+    (
+        "framework hasher",
+        re.compile(
+            r"\b(?:generate_password_hash|check_password_hash|make_password|check_password)\s*\("
+        ),
+    ),
+)
+
+
+def hash_call(text):
+    """(status, label) of the first recognized password or weak hash call."""
+    weak = WEAK_HASH.search(text)
+    if weak:
+        return "violated", {"md5": "MD5", "sha1": "SHA-1"}[(weak[1] or weak[2]).lower()]
+    for label, pattern in PASSWORD_HASHES:
+        if pattern.search(text):
+            return "satisfied", label
+    return None
+
+
+def hash_helpers(lines):
+    """Functions of this file by name, with the hash call in their body."""
+    helpers = {}
+    for index, line in enumerate(lines):
+        match = LOCAL_FUNCTION.match(line)
+        if not match:
+            continue
+        indent = len(line) - len(line.lstrip())
+        end = index + 1
+        while (
+            end < len(lines)
+            and end - index <= 40
+            and (
+                not lines[end].strip()
+                or len(lines[end]) - len(lines[end].lstrip()) > indent
+            )
+        ):
+            end += 1
+        found = hash_call("\n".join(lines[index:end]))
+        if found:
+            helpers[match[1] or match[2] or match[3]] = found
+    return helpers
+
+
+def password_hash_observations(text, code):
+    """Hash calls that receive a password, directly or through a helper in this file."""
+    lines = [
+        "" if not active.strip() or active.lstrip().startswith("#") else line
+        for line, active in zip(text.splitlines(), code.splitlines())
+    ]
+    helpers = hash_helpers(lines)
+    rows = []
+    for number, line in enumerate(lines, 1):
+        if not PASSWORD_NAME.search(line):
+            continue
+        found = hash_call(line)
+        if not found and not LOCAL_FUNCTION.match(line):
+            called = re.findall(r"(?<![\w.$])(\w+)\s*\(", line)
+            found = next((helpers[name] for name in called if name in helpers), None)
+        if found:
+            rows.append((number, *found))
+    return rows
+
+
+TEXT_DETECTORS = {
+    "container-hardening": container_hardening_observations,
+    "gitlab-image": gitlab_image_observations,
+    "gitlab-include": gitlab_include_observations,
+    "lockfile": lockfile_observations,
+    "release-integrity": release_observations,
+    "secret-token": secret_token_observations,
+    "tf-iam": terraform_iam_observations,
+    "tf-ingress": terraform_ingress_observations,
+    "tf-module": terraform_module_observations,
+    "tf-public": terraform_public_observations,
+    "user": container_user_observations,
+    "web-settings": web_settings_observations,
+}
+PATH_DETECTORS = {
+    "ci-script": ci_script_observations,
+    "cloud-oidc": cloud_oidc_observations,
+    "gitlab-injection": gitlab_injection_observations,
+    "install-command": install_observations,
+    "manifest-sources": manifest_source_observations,
+}
+
+
 def observations(rule, path, text, code, files):
     kind = rule["kind"]
+    if kind in TEXT_DETECTORS:
+        return TEXT_DETECTORS[kind](text)
+    if kind in PATH_DETECTORS:
+        return PATH_DETECTORS[kind](path, text)
+    if kind == "password-hash":
+        return password_hash_observations(text, code)
+    if kind == "js-cookie":
+        return js_cookie_observations(code)
+    if kind == "js-cors":
+        return js_cors_observations(text, code)
     if kind.startswith("npm-"):
         return npm_observations(kind, path, text, files)
     if kind == "csp":
@@ -699,8 +904,6 @@ NPM_TRAITS = (
             "express-openid-connect",
             "passport-openidconnect",
             "passport-oauth2",
-            "passport-saml",
-            "@node-saml/passport-saml",
             "next-auth",
             "@auth/core",
             "@azure/msal-node",
@@ -713,6 +916,7 @@ NPM_TRAITS = (
             "@auth0/auth0-spa-js",
         ),
     ),
+    ("authentication", "saml", ("passport-saml", "@node-saml/passport-saml")),
     (
         "authentication",
         "jwt",
@@ -783,14 +987,13 @@ PYTHON_TRAITS = (
             "social_core",
             "social_django",
             "allauth",
-            "onelogin.saml2",
-            "saml2",
             "msal",
             "requests_oauthlib",
             "mozilla_django_oidc",
             "flask_dance",
         ),
     ),
+    ("authentication", "saml", ("onelogin.saml2", "saml2")),
     (
         "authentication",
         "jwt",
@@ -800,6 +1003,31 @@ PYTHON_TRAITS = (
         "authentication",
         "session",
         ("flask_login", "flask_session", "django.contrib.sessions"),
+    ),
+)
+# Login configured in settings rather than declared as a package or import.
+LOGIN_CONFIGURATION = (
+    ("federated", "Spring OAuth2 client", (".yml", ".yaml"), r"(?m)^\s*issuer-uri\s*:"),
+    ("saml", "Spring SAML", (".yml", ".yaml"), r"(?m)^\s*saml2\s*:\s*$"),
+    (
+        "federated",
+        "Keycloak",
+        (".yml", ".yaml", ".json"),
+        r"[\"']?auth-server-url[\"']?\s*:",
+    ),
+    ("federated", "django-allauth", (".py",), r"(?m)^SOCIALACCOUNT_PROVIDERS\s*="),
+    (
+        "federated",
+        "mozilla-django-oidc",
+        (".py",),
+        r"(?m)^OIDC_OP_AUTHORIZATION_ENDPOINT\s*=",
+    ),
+    ("saml", "SAML settings", (".py",), r"(?m)^(?:SAML_CONFIG|SAML2_AUTH)\s*="),
+    (
+        "local-password",
+        "next-auth credentials",
+        tuple(JS_EXTENSIONS),
+        r"\bCredentialsProvider\s*\(",
     ),
 )
 # A password read from a request body indicates a local password login.
@@ -890,10 +1118,42 @@ def sql_queries(checks):
     }
 
 
-def describe(files, budget, checks=()):
+def password_hashing(checks):
+    """Which recognized hash a password reaches, from the PASSWORD-HASH check."""
+    rows = [
+        {
+            "technology": item["detail"],
+            "status": item["status"],
+            "file": row["file"],
+            "line": item["line"],
+        }
+        for row in checks
+        if row["rule"] == "PASSWORD-HASH"
+        for item in row.get("locations", [])
+    ]
+    return sorted(rows, key=lambda row: (source_priority(row["file"]), row["line"]))
+
+
+def login_summary(authentication):
+    mechanisms = {row["mechanism"] for row in authentication}
+    sso = bool(mechanisms & {"federated", "saml"})
+    password = "local-password" in mechanisms
+    return (
+        "both"
+        if sso and password
+        else "sso"
+        if sso
+        else "password"
+        if password
+        else "none"
+    )
+
+
+def describe(files, budget, checks=(), paths=()):
     """Technology observations are context, not scored control evidence."""
     traits = {"frontend": [], "templates": [], "persistence": [], "authentication": []}
     keys = {"persistence": "kind", "authentication": "mechanism"}
+    cloud_login = []
 
     def add(trait, kind, name, path, line=None):
         row = {"technology": name, "file": path}
@@ -906,6 +1166,11 @@ def describe(files, budget, checks=()):
     for path, source in sorted(files.items()):
         budget.check()
         suffix = Path(path).suffix.lower()
+        for mechanism, name, suffixes, pattern in LOGIN_CONFIGURATION:
+            if suffix in suffixes and re.search(pattern, source["text"]):
+                add("authentication", mechanism, name, path)
+        if ci_file(path):
+            cloud_login.extend(cloud_login_rows(path, source["text"]))
         if Path(path).name == "package.json":
             manifest = document(source["text"]) or {}
             dependencies = {}
@@ -953,6 +1218,10 @@ def describe(files, budget, checks=()):
                 )
     return {
         **traits,
+        "login": login_summary(traits["authentication"]),
+        "password_hashing": password_hashing(checks),
         "sql_queries": sql_queries(checks),
+        "deployment": deployment_rows(files, paths),
+        "cloud_login": cloud_login,
         "interpretation": "Declared packages, imports and selected code patterns only; their presence gives no score credit, and an unrecognized trait may still exist. CSP delivery, authorization, DB privileges and deployment controls require wider evidence.",
     }

@@ -52,6 +52,8 @@ def origin(path):
             "scripts",
         }
         or name.startswith("dockerfile")
+        or name in {".gitlab-ci.yml", ".gitlab-ci.yaml"}
+        or name.endswith(".tf")
         or container_build_file(name)
     ):
         return "build"
@@ -65,7 +67,16 @@ def source_priority(path):
     """
     name = PurePosixPath(path).name
     declaration = (
-        name in {"package.json", "package-lock.json", "npm-shrinkwrap.json"}
+        name
+        in {
+            "package.json",
+            "package-lock.json",
+            "npm-shrinkwrap.json",
+            "pyproject.toml",
+            "pom.xml",
+            "Cargo.toml",
+            ".gitlab-ci.yml",
+        }
         or container_build_file(name)
         or name.startswith("requirements")
     )
@@ -118,8 +129,13 @@ SUBCATEGORIES = (
     ("architecture", "Architecture", ("execution", "injection", "deserialization")),
     ("frontend", "Frontend", ("output", "frontend-policy")),
     ("dependencies", "Dependencies & CI", ("supply-chain",)),
+    ("secrets", "Secrets", ("secrets",)),
     ("cryptography", "Cryptography", ("cryptography",)),
-    ("deployment", "Deployment & transport", ("hardening", "transport")),
+    (
+        "deployment",
+        "Deployment & transport",
+        ("hardening", "transport", "infrastructure"),
+    ),
 )
 
 POSITIVE_REASONS = {
@@ -155,6 +171,24 @@ POSITIVE_REASONS = {
     "JS-RANDOM": "Cryptographic random source for a named secret",
     "IAC-PRIVILEGED": "Container privileges explicitly restricted",
     "IAC-ADD-URL": "Remote build input pinned by checksum or commit",
+    "IAC-HARDENING": "Container hardening declared",
+    "HOST-SIGNED-COMMITS": "Signed commits required by a ruleset",
+    "REPO-SECURITY-POLICY": "Security policy present",
+    "DEP-UPDATE-CONFIG": "Dependency update configuration present",
+    "TF-LOCK": "Terraform dependency lock present",
+    "CI-RELEASE-INTEGRITY": "Release integrity steps declared",
+    "CI-CLOUD-OIDC": "Cloud login through OIDC without a stored key",
+    "CI-FROZEN-INSTALL": "Install restricted to the lockfile",
+    "CI-GITLAB-IMAGE": "CI image pinned by digest",
+    "CI-GITLAB-INCLUDE": "CI include pinned to a commit",
+    "NPM-LOCK-SOURCES": "Lockfile entries from the usual registry with integrity",
+    "DEP-SOURCES": "Dependency source uses HTTPS or a full commit",
+    "PASSWORD-HASH": "Password hashed with a recognized password hash",
+    "JS-COOKIE": "Cookie flag enabled",
+    "JS-CORS": "Credentialed CORS limited to HTTPS origins",
+    "WEB-SETTINGS": "Session or host setting restricted",
+    "TF-PUBLIC-RESOURCE": "Public access explicitly restricted",
+    "TF-MODULE-PIN": "Terraform module pinned to a commit or exact version",
 }
 
 HOST_REASONS = {
@@ -301,16 +335,16 @@ def topic_examples(style, topic):
         )
         more = f" (+{count - 1} more)" if count > 1 else ""
         reason = POSITIVE_REASONS.get(rule, f"Positive evidence recognized by {rule}")
-        headers = sorted(
+        details = sorted(
             {
-                item["header"]
+                item["detail"]
                 for row in rows
                 for item in row.get("locations", [])
-                if "header" in item
+                if "detail" in item
             }
         )
-        if headers:
-            reason += ": " + ", ".join(headers)
+        if details:
+            reason += ": " + ", ".join(details)
         lines += entry(
             style,
             style.paint(f"{'OK':<{LABEL_WIDTH}}", "green"),
@@ -320,7 +354,7 @@ def topic_examples(style, topic):
     if not candidates and not positive:
         lines += note(
             style,
-            "No token verification recognized; login, sessions and access control are not assessed."
+            "No recognized token, cookie or password hash check; login flows and access control are not assessed."
             if topic["id"] == "authentication" and not topic["checks"]
             else "No recognized control evidence from the available checks.",
         )
@@ -346,12 +380,19 @@ def topic_header(style, topic, width):
 
 PROFILE_LABELS = {
     "local-password": "local passwords",
-    "federated": "federated login",
+    "federated": "SSO (OIDC/OAuth)",
+    "saml": "SSO (SAML)",
     "jwt": "JWT",
     "session": "server sessions",
     "sql": "SQL",
     "document": "document store",
 }
+LOGIN_LABELS = {
+    "both": "SSO and passwords",
+    "sso": "SSO (no password login recognized)",
+    "password": "passwords (no SSO recognized)",
+}
+CLOUD_LOGIN_LABELS = {"oidc": "OIDC", "stored-key": "stored key"}
 
 
 def architecture_profile(style, architecture):
@@ -389,7 +430,18 @@ def architecture_profile(style, architecture):
         queries = f"literal query text in {calls}"
     else:
         queries = ""
+    first_hash = {}
+    for row in sorted(
+        architecture.get("password_hashing", []),
+        key=lambda row: row["status"] != "violated",
+    ):
+        first_hash.setdefault(row["technology"], row)
+    password_hash = ", ".join(
+        f"{safe(name)} ({location(row)})" for name, row in first_hash.items()
+    )
     rows = (
+        ("Login", LOGIN_LABELS.get(architecture.get("login"), "")),
+        ("Password hash", password_hash),
         ("Authentication", grouped(by("authentication", "mechanism"))),
         (
             "Frontend",
@@ -402,6 +454,28 @@ def architecture_profile(style, architecture):
         ),
         ("Persistence", grouped(by("persistence", "kind"))),
         ("SQL queries", queries),
+        (
+            "Deployment",
+            ", ".join(
+                sorted(
+                    {
+                        safe(row["technology"])
+                        for row in architecture.get("deployment", [])
+                    }
+                )
+            ),
+        ),
+        (
+            "Cloud login",
+            ", ".join(
+                sorted(
+                    {
+                        f"{safe(row['technology'])}: {CLOUD_LOGIN_LABELS[row['method']]}"
+                        for row in architecture.get("cloud_login", [])
+                    }
+                )
+            ),
+        ),
     )
     lines = note(style, "Profile (context only, adds no score credit):")
     for label, text in rows:

@@ -121,6 +121,14 @@ def excluded(path):
     )
 
 
+def repository_paths(files, exclusions):
+    """Every listed path outside generated directories; unread files stay unread."""
+    listed = {*files, *(row["file"] for row in exclusions)}
+    return sorted(
+        path for path in listed if not set(PurePosixPath(path).parts) & EXCLUDED_DIRS
+    )
+
+
 def stop(process):
     if os.name == "posix":
         try:

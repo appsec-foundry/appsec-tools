@@ -5,7 +5,7 @@ The default engine checks selected patterns in source files, dependencies, and a
 ## How the score is calculated
 
 1. Each assessed area, such as execution or transport, starts with 100 points.
-2. Every finding deducts points from its area. More severe findings deduct more points. Repeated findings count each time, including across files.
+2. Findings deduct points from their area. More severe findings deduct more points. The first three findings of a rule count, including across files; further findings stay in the output but deduct nothing.
 3. The most severe finding also sets an upper limit for that area's score. Use the lower result: the points left after deductions or this limit. Scores cannot fall below 0.
 4. The **lowest assessed area score** becomes the repository score. Stronger areas cannot offset a weaker area.
 
@@ -24,6 +24,7 @@ The upper limit makes sure that a severe finding is visible in the grade, even w
 | --- | --- | --- |
 | One high finding | 100 − 25 = 75, limited to 59 | **59 (E)** |
 | Two high findings in the same area | 100 − 50 = 50, below the limit of 59 | **50 (E)** |
+| Nine findings of one high rule | Three count: 100 − 75 = 25 | **25 (F)** |
 | One high finding in each of two areas | Each area scores 59; the lowest wins | **59 (E)** |
 
 These examples assume no other area scores lower. Fixing a finding may leave the headline unchanged if a severity limit or another area still determines the result. Use `--details` to see the findings and calculation for each area.
