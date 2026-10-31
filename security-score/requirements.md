@@ -89,3 +89,17 @@ Tests pin the exact behavior.
   outside the repository, such as SBOMs, signed releases, update tooling, security
   policies, and non-root container settings, count only as positive evidence. Their
   absence is neither a finding nor an unclear check.
+
+- **REQ-15 — Repository overview only with `--details`.** A repository scan with
+  `--details` adds languages, files, technologies and development signals such as
+  branches, pull or merge request markers, process files and CI. Only such a run
+  collects them: any other scan does no extra file, Git or host API work and does
+  not load this code. The overview never changes score, grade, findings or exit
+  status, and author addresses stay out of the output.
+
+- **REQ-16 — Technology risks are hints, not findings.** The overview names insecure
+  or end-of-life technology from a bundled list. Because it runs only with
+  `--details`, it cannot deduct points: a score must not depend on the output mode.
+  End of life is a fixed limit in that list, never a comparison with today's date,
+  so the same sources give the same result (REQ-01). Version-specific vulnerabilities
+  stay outside (REQ-13).

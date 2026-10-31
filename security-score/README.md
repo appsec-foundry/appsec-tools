@@ -17,7 +17,7 @@ Requires Python 3.10+, `pipx`, and Git with SSH access to GitHub.
 pipx install "git+ssh://git@github.com/appsec-foundry/appsec-analyzer-tools.git#subdirectory=security-score"
 
 security-score /path/to/repository             # score
-security-score /path/to/repository --details   # subscores and findings per topic
+security-score /path/to/repository --details   # overview, subscores and findings per topic
 security-score https://github.com/juice-shop/juice-shop
 security-score /path/to/repository --staged    # relevance of staged changes
 ```
@@ -44,6 +44,27 @@ Security score · 0/100 (partial)
 Scope: https://github.com/juice-shop/juice-shop @ 717f5efa886b
 Findings are static pattern matches; exploitability unverified.
 Partial result: subscores describe recognized evidence only; no repository grade is available.
+
+Overview
+  Technology (context only, adds no score credit):
+    Languages       TypeScript 638, CSS 83, HTML 81, Terraform 11, JavaScript 7, Python 3, +1 more
+    Files           1468 listed (330 assets, 37 build, 161 examples, 659 source, 281 tests), 962
+                    read, 139140 lines read
+    Frameworks      Angular, Express, Socket.IO
+    Test tools      Cypress, Vitest
+    Runtimes        Node.js 20.19.2 (infrastructure/Dockerfile:1), Node.js 22 - 26
+                    (package.json:211), Node.js 24 (Dockerfile:1)
+    Package tools   npm
+  Technology risks (context only, adds no score credit):
+    Runtimes        Node.js 20.19.2: end of life (infrastructure/Dockerfile:1, +1 more)
+  Development (context only, adds no score credit):
+    Branches        12
+    Commits         last 9 commits on default branch: 0 with a pull/merge request marker, 1 other
+                    merge, 8 without marker; 4 authors; latest 2026-10-23
+    Process files   contributing guide, pull request template
+    CI              GitHub Actions (16 files); runs on pull or merge requests and tests
+    Quality tools   ESLint
+    Security tools  CodeQL
 
 Repository               79/100  ████████░░  2 findings
   Score: 100 - 20 = 80, capped at 79 by a medium finding
@@ -193,6 +214,30 @@ many direct dependencies name an exact version, and Renovate or Dependabot. Both
 profiles are context and add no points.
 `--json` and `--yaml` contain every finding and the full calculation.
 
+### Overview in `--details`
+
+`--details` starts with an overview of the repository. Only this mode collects it:
+a plain, `--json`, `--yaml` or `--quiet` scan does not load this code, reads no Git
+history and sends no extra API request.
+
+| Block | Content |
+| --- | --- |
+| Technology | Languages, files by kind, frameworks, test tools, declared runtimes, package tools |
+| Technology risks | Entries of a bundled list: dependencies that are insecure in every version or end of life, such as `node-serialize` or Log4j 1; runtimes and base images past end of life; DES, RC4, ECB mode and TLS below 1.2; Flash and Silverlight content |
+| Development | Branches, up to the last 100 commits with pull or merge request markers, merges, authors and latest date; CODEOWNERS and other process files; CI system, whether it runs on pull or merge requests and runs tests; quality and security tools |
+
+The overview is context. It never changes the score, grade, findings or exit
+status. That includes technology risks: they run only with `--details`, and a score
+must not depend on the output mode. An empty row says nothing was recognized, not
+that the technology is absent. Risk entries cover manifests, source and build files
+outside `tests` and `examples`, and Go and Ruby manifests are not read.
+
+Commits follow the first-parent line. A commit without a marker may still have been
+reviewed, because a rebase or an unmarked squash merge leaves no trace in the
+subject. Author addresses are counted, never shown. URL scans take one page of
+commits from the host API, which also lists side branches, so often fewer than 100
+remain. A directory without `.git` or a rate limit shows as `unavailable`.
+
 ### Exit status
 
 | Status | Meaning |
@@ -226,7 +271,8 @@ so the error message cannot always tell them apart.
 
 Without a token, GitHub allows 60 API requests per hour per IP address, shared
 with everything else on that address. A scan uses three or four of them, because
-files come from `raw.githubusercontent.com`, which does not count. A token raises
+files come from `raw.githubusercontent.com`, which does not count; `--details` adds
+two for commits and branches. A token raises
 the limit to 5,000 per hour. For a public repository it goes only to the API; file
 downloads stay on the raw host without the token. A private repository uses one
 API request per file. When a limit is reached, the error says how long to wait.
@@ -255,9 +301,9 @@ explained in the [technical reference](references/scoring.md#change-relevance).
 | Option | Meaning |
 | --- | --- |
 | `repository` | Local directory or supported HTTPS URL; defaults to the current directory. `--repo DIRECTORY` is an alternative for local directories. |
-| `--details`, `--detail` | Subscores and findings per topic; for changes, the signals grouped by rule. |
+| `--details`, `--detail` | Repository overview, subscores and findings per topic; for changes, the signals grouped by rule. |
 | `--quiet`, `--quite` | Print only the number, or nothing if there is none. Cannot be combined with `--json`, `--yaml`, change analysis, `--list-rules`, or `--verify-rules`. |
-| `--json`, `--yaml` | Structured output with all findings and the calculation. |
+| `--json`, `--yaml` | Structured output with all findings and the calculation. With `--details` it also contains the `overview`. |
 | `--token-env NAME` | Environment variable that holds the API token for a repository URL. |
 | `--timeout SECONDS` | Time budget from 0.1 to 120 seconds; default 60. |
 | `--engine analyzer` | Use a separately installed AppSec Analyzer instead of the bundled rules; repository scans only. `--analyzer PATH` sets the absolute path of a trusted executable; otherwise it is taken from `PATH`. See [compatibility](references/compatibility.md). |

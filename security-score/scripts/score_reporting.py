@@ -528,8 +528,8 @@ def architecture_profile(style, architecture):
     return profile_rows(style, rows)
 
 
-def profile_rows(style, rows):
-    lines = note(style, "Profile (context only, adds no score credit):")
+def profile_rows(style, rows, title="Profile"):
+    lines = note(style, f"{title} (context only, adds no score credit):")
     for label, text in rows:
         lines += wrapped(
             text or "none recognized", style.width, " " * 20, f"    {label:<16}"
@@ -557,6 +557,124 @@ def dependency_profile(style, architecture):
     return profile_rows(style, rows) if any(text for _, text in rows) else []
 
 
+RISK_LABELS = (
+    ("dependency", "Dependencies"),
+    ("runtime", "Runtimes"),
+    ("crypto", "Crypto & TLS"),
+    ("content", "Legacy content"),
+)
+
+
+def counted(rows, name, count, limit=6):
+    """'TypeScript 412, Python 3' with the remainder as a count."""
+    shown = [f"{safe(row[name])} {row[count]}" for row in rows[:limit]]
+    if len(rows) > limit:
+        shown.append(f"+{len(rows) - limit} more")
+    return ", ".join(shown)
+
+
+def file_row(files):
+    origins = ", ".join(
+        f"{count} {safe(name)}" for name, count in files["by_origin"].items()
+    )
+    text = (
+        f"{files['listed']} listed ({origins}), "
+        f"{files['read']} read, {files['lines']} lines read"
+    )
+    return text if files["listing_complete"] else text + "; listing cut short"
+
+
+def history_rows(history):
+    if "unavailable" in history:
+        reason = f"unavailable: {safe(history['unavailable'])}"
+        return (("Branches", reason), ("Commits", reason))
+    summary = (
+        f"last {plural(history['commits'], 'commit')} on {safe(history['ref'])}: "
+        f"{history['with_request_marker']} with a pull/merge request marker, "
+        f"{plural(history['other_merges'], 'other merge')}, "
+        f"{history['without_marker']} without marker; "
+        f"{plural(history['authors'], 'author')}"
+    )
+    if history["latest_commit"]:
+        summary += f"; latest {safe(history['latest_commit'])}"
+    branches = history["branches"]
+    return (
+        ("Branches", "" if branches is None else str(branches)),
+        ("Commits", summary),
+    )
+
+
+def risk_rows(risks):
+    rows = []
+    for category, label in RISK_LABELS:
+        entries = []
+        for row in risks:
+            if row["category"] == category:
+                more = row["occurrences"] - 1
+                extra = f", +{more} more" if more else ""
+                entries.append(
+                    f"{safe(row['technology'])}: {safe(row['reason'])} "
+                    f"({location(row)}{extra})"
+                )
+        if entries:
+            rows.append((label, "; ".join(entries)))
+    return rows
+
+
+def overview_section(style, overview):
+    """Repository context above the topics; none of it reaches a score."""
+    if not overview:
+        return []
+    development = overview["development"]
+
+    def names(rows):
+        return ", ".join(safe(name) for name in rows)
+
+    runtimes = ", ".join(
+        f"{safe(row['runtime'])} {safe(row['version'])} ({location(row)})"
+        for row in overview["runtimes"][:6]
+    )
+    ci = ", ".join(
+        f"{safe(row['system'])} ({plural(row['files'], 'file')})"
+        for row in development["ci"]
+    )
+    if ci and development["ci_steps"]:
+        ci += "; runs " + " and ".join(development["ci_steps"])
+    risks = risk_rows(overview["technology_risks"])
+    lines = ["", style.paint("Overview", "bold")]
+    lines += profile_rows(
+        style,
+        (
+            ("Languages", counted(overview["languages"], "language", "files")),
+            ("Files", file_row(overview["files"])),
+            ("Frameworks", names(overview["frameworks"])),
+            ("Test tools", names(overview["test_tools"])),
+            ("Runtimes", runtimes),
+            ("Package tools", names(overview["package_tools"])),
+        ),
+        "Technology",
+    )
+    if risks:
+        lines += profile_rows(style, risks, "Technology risks")
+    else:
+        lines += note(
+            style,
+            "Technology risks: none recognized from the bundled list; no proof of absence.",
+        )
+    lines += profile_rows(
+        style,
+        (
+            *history_rows(development["history"]),
+            ("Process files", names(development["process_files"])),
+            ("CI", ci),
+            ("Quality tools", names(development["quality_tools"])),
+            ("Security tools", names(development["security_tools"])),
+        ),
+        "Development",
+    )
+    return lines
+
+
 def render_repository(result, summary, style=None):
     """A subscore with a few concrete examples directly beneath each topic."""
     style = style or Style()
@@ -579,6 +697,7 @@ def render_repository(result, summary, style=None):
             "Partial result: subscores describe recognized evidence only; no repository grade is available.",
             "",
         )
+    lines += overview_section(style, result.get("overview"))
     topics = subcategories(result)
     width = max(len(topic["title"]) for topic in topics)
     for topic in topics:

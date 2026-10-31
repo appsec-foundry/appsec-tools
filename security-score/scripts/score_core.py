@@ -179,6 +179,7 @@ IMPLEMENTATION_HASH = hashlib.sha256(
             "score_remote_sources.py",
             "score_architecture.py",
             "score_infrastructure.py",
+            "score_overview.py",
             "score_relevance.py",
             "score.py",
         )

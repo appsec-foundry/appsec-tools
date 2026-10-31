@@ -651,6 +651,38 @@ def verify_rules():
     }
 
 
+def repository_context(options, scope, files, exclusions, budget):
+    """What only --details shows; it runs after the score and cannot change it."""
+    from score_overview import (
+        history_summary,
+        local_history,
+        remote_history,
+        repository_overview,
+    )
+
+    listed = not any(row["file"] == "repository-tree" for row in exclusions)
+    paths = [
+        path
+        for path in repository_paths(files, exclusions)
+        if path != "repository-tree"
+    ]
+    overview = repository_overview(files, paths, listed, budget)
+    remote = scope["selection"] == "git-url"
+    try:
+        rows, head, branches = (
+            remote_history(options, scope["revision"], budget)
+            if remote
+            else local_history(Path(options.repo).expanduser().resolve(), budget)
+        )
+        history = history_summary(
+            rows, head, branches, "default branch" if remote else "HEAD"
+        )
+    except SourceError as error:
+        history = {"unavailable": str(error)}
+    overview["development"]["history"] = history
+    return overview
+
+
 def run(options):
     budget = Budget(options.timeout)
     if options.verify_rules:
@@ -903,6 +935,14 @@ def run(options):
         )
     if scan_error:
         result["warnings"].append(scan_error)
+    if options.details and not options.quiet and not change:
+        announce(options, "Collecting repository overview...")
+        try:
+            result["overview"] = repository_context(
+                options, scope, after, exclusions, budget
+            )
+        except SourceError:
+            result["warnings"].append("Overview skipped: the time budget ran out.")
     return result, (0 if complete else 1) if change else {
         "scored": 0,
         "undetermined": 2,

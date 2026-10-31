@@ -140,6 +140,8 @@ python3 -B -m unittest test_security_score -v
 
 Run the test command from the `security-score` directory. Catalog and implementation fingerprints help identify results produced under different policies. Version 1 and version 2 scores with repeated findings are not directly comparable.
 
+The tables of the `--details` overview live in `scripts/score_overview.py`, not in `rules.json`, because the overview is not part of the score (REQ-15, REQ-16). `EOL_BELOW` holds the first supported version per runtime. Raise a limit when upstream support ends and never compare with the current date. `INSECURE_PACKAGES` takes only packages that are the problem in every version; a vulnerability in some versions belongs to dedicated tools (REQ-13). `score.py` imports this module only in the `--details` branch, so no other module may import it.
+
 ## Limits
 
 The default total time budget is 60 seconds; `--timeout` accepts 0.1–120 seconds. URL scans give source selection and downloads 70% of the remaining time after host discovery, reserving the rest to analyze available sources and publish a result. The scanner checks the budget between bounded operations; active network requests can take a few seconds to settle. This is an approximate execution budget, not a hard process deadline.

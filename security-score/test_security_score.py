@@ -24,6 +24,7 @@ import score as cli  # noqa: E402
 import score_architecture as architecture  # noqa: E402
 import score_core as core  # noqa: E402
 import score_infrastructure as infrastructure  # noqa: E402
+import score_overview as overview  # noqa: E402
 import score_sources as sources  # noqa: E402
 import score_remote as remote  # noqa: E402
 import score_remote_sources as remote_sources  # noqa: E402
@@ -3065,6 +3066,477 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(len(result["signals"]), 1000)
         self.assertTrue(any(row["level"] == "high" for row in result["signals"]))
 
+    def test_req15_overview_work_runs_only_for_details_output(self):
+        self.write("app.py", "eval(payload)\n")
+        self.git("init", "-b", "main")
+        with (
+            mock.patch.object(
+                cli, "repository_context", side_effect=AssertionError("ran")
+            ) as context,
+            mock.patch.object(
+                overview, "git", side_effect=AssertionError("ran")
+            ) as history,
+        ):
+            for arguments in (
+                [],
+                ["--json"],
+                ["--yaml"],
+                ["--quiet"],
+                ["--quiet", "--details"],
+            ):
+                with (
+                    self.subTest(arguments=arguments),
+                    contextlib.redirect_stdout(io.StringIO()),
+                    contextlib.redirect_stderr(io.StringIO()),
+                ):
+                    cli.main([str(self.repo), *arguments])
+        context.assert_not_called()
+        history.assert_not_called()
+
+    def test_req15_a_plain_scan_does_not_load_the_overview_code(self):
+        self.write("app.py", "x = 1\n")
+        probe = (
+            "import contextlib, io, sys\n"
+            f"sys.path.insert(0, {str(SCRIPTS)!r})\n"
+            "import score\n"
+            "with contextlib.redirect_stdout(io.StringIO()):\n"
+            f"    with contextlib.redirect_stderr(io.StringIO()):\n"
+            f"        score.main([{str(self.repo)!r}, *sys.argv[1:]])\n"
+            "print('score_overview' in sys.modules)\n"
+        )
+        for arguments, loaded in (
+            ([], "False"),
+            (["--json"], "False"),
+            (["--quiet"], "False"),
+            (["--quiet", "--details"], "False"),
+            (["--details"], "True"),
+        ):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run(
+                    [sys.executable, "-B", "-c", probe, *arguments],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                self.assertEqual(result.stdout.strip(), loaded, result.stderr)
+
+    def test_req15_details_never_change_score_findings_or_exit_status(self):
+        self.write("package.json", '{"dependencies":{"node-serialize":"0.0.4"}}')
+        self.write("Dockerfile", "FROM python:2.7\n")
+        self.write("app.py", "eval(payload)\n")
+        plain_status, plain, _ = self.invoke()
+        detail_status, detailed, _ = self.invoke("--details")
+        self.assertEqual(detail_status, plain_status)
+        self.assertNotIn("overview", plain)
+        for field in ("score", "grade", "observed_score", "verdict"):
+            self.assertEqual(detailed[field], plain[field])
+        for field in ("findings", "checks", "areas"):
+            self.assertEqual(detailed[field], plain[field])
+        self.assertEqual(
+            [row["technology"] for row in detailed["overview"]["technology_risks"]],
+            ["node-serialize", "Python 2.7"],
+        )
+
+    def test_req15_change_analysis_has_no_overview(self):
+        self.init()
+        self.write("app.py", "eval(payload)\n")
+        self.assertNotIn("overview", self.invoke("--details", "--worktree")[1])
+
+    def test_req15_overview_appears_in_details_text_only(self):
+        self.write("app.py", "x = 1\n")
+        _, result, _ = self.invoke("--details")
+        self.assertIn("Overview", cli.render(result, details=True))
+        self.assertNotIn("Overview", cli.render(result, details=False))
+
+    def test_overview_names_languages_files_frameworks_and_tools(self):
+        self.write(
+            "package.json",
+            '{"engines":{"node":">=22"},"dependencies":{"express":"4.0.0"},'
+            '"devDependencies":{"jest":"29.0.0"}}',
+        )
+        self.write("package-lock.json", '{"lockfileVersion":3,"packages":{}}')
+        self.write("requirements.txt", "# flask\nDjango==5.0\npytest==8.0\n")
+        self.write(
+            "pom.xml",
+            "<dependency>\n<groupId>org.springframework.boot</groupId>\n"
+            "<artifactId>spring-boot-starter-web</artifactId>\n</dependency>\n",
+        )
+        self.write("Dockerfile", "FROM node:24-alpine\n")
+        self.write("src/a.ts", "export const a = 1;\n")
+        self.write("src/b.ts", "export const b = 1;\n")
+        self.write("app.py", "x = 1\n")
+        self.write("tests/test_app.py", "x = 1\n")
+        self.write("assets/lib.min.js", "x\n")
+        self.write("logo.png", "binary")
+        result = self.invoke("--details")[1]
+        context = result["overview"]
+        self.assertEqual(
+            context["languages"],
+            [
+                {"language": "Python", "files": 2},
+                {"language": "TypeScript", "files": 2},
+            ],
+        )
+        self.assertEqual(context["files"]["listed"], 11)
+        self.assertEqual(context["files"]["by_origin"]["tests"], 1)
+        self.assertTrue(context["files"]["listing_complete"])
+        self.assertEqual(context["frameworks"], ["Django", "Express", "Spring Boot"])
+        self.assertEqual(context["test_tools"], ["Jest", "pytest"])
+        self.assertEqual(context["package_tools"], ["Maven", "npm", "pip"])
+        self.assertEqual(
+            [(row["runtime"], row["version"]) for row in context["runtimes"]],
+            [("Node.js", "24"), ("Node.js", ">=22")],
+        )
+        self.assertEqual(context["technology_risks"], [])
+        details = " ".join(cli.render(result, details=True).split())
+        self.assertIn("Languages Python 2, TypeScript 2", details)
+        self.assertIn("Frameworks Django, Express, Spring Boot", details)
+        self.assertIn("Technology risks: none recognized", details)
+
+    def overview_of(self, path, text):
+        return overview.repository_overview(
+            {path: {"text": text}}, [path], True, sources.Budget()
+        )
+
+    def test_req16_recognized_technology_risks(self):
+        for path, text, expected in (
+            ("Dockerfile", "FROM python:2.7-slim\n", "Python 2.7"),
+            (
+                "Dockerfile",
+                "FROM --platform=linux/amd64 node:20-alpine AS build\n",
+                "Node.js 20",
+            ),
+            ("Dockerfile", "FROM docker.io/library/php:8.1-fpm\n", "PHP 8.1"),
+            ("Dockerfile", "FROM ruby:3.1.4@sha256:abc\n", "Ruby 3.1.4"),
+            ("Dockerfile", "FROM centos:7\n", "CentOS 7"),
+            ("compose.yml", "services:\n  a:\n    image: debian:buster\n", "Debian 10"),
+            ("ci.yml", "  - image: 'ubuntu:18.04'\n", "Ubuntu 18.04"),
+            ("package.json", '{"engines":{"node":"^14.17.0"}}', "Node.js ^14.17.0"),
+            ("pyproject.toml", 'requires-python = "==3.8.*"\n', "Python ==3.8.*"),
+            ("package.json", '{"dependencies":{"vm2":"3.9.0"}}', "vm2"),
+            ("package.json", '{"devDependencies":{"angular":"1.8.3"}}', "angular"),
+            ("requirements.txt", "PyCrypto==2.6.1  # old\n", "pycrypto"),
+            (
+                "pyproject.toml",
+                '[project]\ndependencies = [\n  "pycrypto>=2.6",\n]\n',
+                "pycrypto",
+            ),
+            (
+                "pyproject.toml",
+                '[tool.poetry.dependencies]\npycrypto = "2.6"\n',
+                "pycrypto",
+            ),
+            (
+                "pom.xml",
+                "<groupId>log4j</groupId>\n<artifactId>log4j</artifactId>\n",
+                "log4j:log4j",
+            ),
+            (
+                "build.gradle",
+                "implementation 'org.apache.struts:struts-core:1.3.10'\n",
+                "org.apache.struts:struts-core",
+            ),
+            ("app.py", "ctx = ssl.PROTOCOL_TLSv1_1\n", "TLS below 1.2"),
+            ("app.py", "ctx.minimum_version = ssl.TLSVersion.TLSv1\n", "TLS below 1.2"),
+            ("app.py", "cipher = DES3.new(key)\n", "DES or 3DES"),
+            ("app.py", "cipher = ARC4.new(key)\n", "RC4"),
+            ("app.py", "cipher = AES.new(key, AES.MODE_ECB)\n", "ECB mode"),
+            ("app.js", "tls.connect({minVersion: 'TLSv1.1'});\n", "TLS below 1.2"),
+            ("app.js", "crypto.createCipheriv('DES-CBC', k, iv);\n", "DES or 3DES"),
+            ("app.js", "crypto.createCipheriv('aes-256-ecb', k, null);\n", "ECB mode"),
+            ("app.js", "crypto.createDecipher('aes192', p);\n", "crypto.createCipher"),
+            ("nginx.conf", "ssl_protocols TLSv1.1 TLSv1.2;\n", "TLS below 1.2"),
+            ("apache.conf", "SSLProtocol +TLSv1 +TLSv1.2\n", "TLS below 1.2"),
+            ("main.tf", 'min_tls_version = "TLS1_0"\n', "TLS below 1.2"),
+            ("main.tf", 'minimum_protocol_version = "TLSv1_2016"\n', "TLS below 1.2"),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    [
+                        row["technology"]
+                        for row in self.overview_of(path, text)["technology_risks"]
+                    ],
+                    [expected],
+                )
+
+    def test_req16_supported_or_undecided_technology_stays_unreported(self):
+        for path, text in (
+            ("Dockerfile", "FROM python:3\n"),
+            ("Dockerfile", "FROM python:3.10-slim\n"),
+            ("Dockerfile", "FROM node:22\n"),
+            ("Dockerfile", "FROM node:lts\n"),
+            ("Dockerfile", "FROM ubuntu:20.04\n"),
+            ("Dockerfile", "FROM mycompany/python:2.7\n"),
+            ("Dockerfile", "FROM python:${VERSION}\n"),
+            ("Dockerfile", "# FROM python:2.7\n"),
+            ("package.json", '{"engines":{"node":">=14"}}'),
+            ("package.json", '{"engines":{"node":"14 - 24"}}'),
+            ("package.json", '{"dependencies":{"@angular/core":"19.0.0"}}'),
+            ("pyproject.toml", 'requires-python = ">=3.8"\n'),
+            ("pyproject.toml", 'requires-python = "~=3.8"\n'),
+            (
+                "pyproject.toml",
+                '[project]\ndependencies = [\n  # "pycrypto",\n  "uvicorn[standard]",\n]\n',
+            ),
+            ("requirements.txt", "requests==2.0\npycryptodome==3.0\n"),
+            ("nginx.conf", "ssl_protocols TLSv1.2 TLSv1.3;\n"),
+            ("nginx.conf", "# ssl_protocols TLSv1;\n"),
+            ("apache.conf", "SSLProtocol all -SSLv3 -TLSv1 -TLSv1.1\n"),
+            ("main.tf", 'min_tls_version = "1.2"\n'),
+            ("main.tf", 'minimum_protocol_version = "TLSv1.2_2021"\n'),
+            ("app.py", "# cipher = AES.new(key, AES.MODE_ECB)\n"),
+            ("app.py", "ctx = ssl.PROTOCOL_TLS_CLIENT\n"),
+            ("app.js", "crypto.createCipheriv('aes-256-gcm', k, iv);\n"),
+            ("app.js", "// crypto.createCipher('aes192', p);\n"),
+            ("tests/app.py", "cipher = DES.new(key)\n"),
+            ("examples/Dockerfile", "FROM python:2.7\n"),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.overview_of(path, text)["technology_risks"], [])
+
+    def test_req16_repeated_technology_keeps_its_first_location_and_a_count(self):
+        rows = self.overview_of("app.py", "a = DES.new(k)\nb = DES.new(k)\n")[
+            "technology_risks"
+        ]
+        self.assertEqual((rows[0]["line"], rows[0]["occurrences"]), (1, 2))
+
+    def test_req16_browser_plugin_content_is_recognized_from_the_file_list(self):
+        result = overview.repository_overview(
+            {}, ["public/old.swf", "app.XAP", "tests/old.swf"], True, sources.Budget()
+        )
+        self.assertEqual(
+            [
+                (row["technology"], row["occurrences"])
+                for row in result["technology_risks"]
+            ],
+            [("Adobe Flash", 1), ("Microsoft Silverlight", 1)],
+        )
+
+    def test_end_of_life_list_never_reads_the_clock(self):
+        with mock.patch.object(overview, "EOL_BELOW", {"node": (22,)}):
+            self.assertTrue(overview.past_end_of_life("node", "20.11.1"))
+            self.assertFalse(overview.past_end_of_life("node", "22"))
+        self.assertNotIn("datetime", vars(overview))
+        self.assertNotIn("time", vars(overview))
+
+    def test_overview_recognizes_process_files_ci_and_quality_tools(self):
+        self.write("CODEOWNERS", "* @example\n")
+        self.write("CONTRIBUTING.md", "Text\n")
+        self.write(".github/PULL_REQUEST_TEMPLATE/default.md", "Text\n")
+        self.write("CHANGELOG.md", "Text\n")
+        self.write(".pre-commit-config.yaml", "repos: []\n")
+        self.write("eslint.config.mjs", "export default [];\n")
+        self.write("Jenkinsfile", "pipeline {}\n")
+        self.write(
+            ".github/workflows/ci.yml",
+            "on:\n  pull_request:\njobs:\n  a:\n    steps:\n"
+            "      - run: python -m pytest\n"
+            "      - uses: github/codeql-action/init@v3\n"
+            "      - uses: snyk/actions/node@master\n"
+            "      - run: trivy image example\n",
+        )
+        development = self.invoke("--details")[1]["overview"]["development"]
+        self.assertEqual(
+            development["process_files"],
+            ["CODEOWNERS", "changelog", "contributing guide", "pull request template"],
+        )
+        self.assertEqual(
+            development["ci"],
+            [
+                {"system": "GitHub Actions", "files": 1},
+                {"system": "Jenkins", "files": 1},
+            ],
+        )
+        self.assertEqual(
+            development["ci_steps"], ["on pull or merge requests", "tests"]
+        )
+        self.assertEqual(development["quality_tools"], ["ESLint", "pre-commit"])
+        self.assertEqual(development["security_tools"], ["CodeQL", "Snyk", "Trivy"])
+
+    def test_a_tool_named_in_workflow_text_is_no_tool_in_use(self):
+        self.write(
+            ".github/workflows/check.yml",
+            "on: [push]\njobs:\n  a:\n    steps:\n      - run: echo 'try snyk'\n"
+            "      - uses: actions/github-script@v7\n"
+            "        with:\n          script: const tools = /semgrep|snyk|trivy|grype/;\n"
+            "            if (context.payload.pull_request) {}\n",
+        )
+        development = self.invoke("--details")[1]["overview"]["development"]
+        self.assertEqual(development["security_tools"], [])
+        self.assertEqual(development["ci_steps"], [])
+
+    def commit_file(self, name, subject):
+        self.write(name, "x = 1\n")
+        self.git("add", ".")
+        self.git("commit", "--no-gpg-sign", "-m", subject)
+
+    def test_history_follows_the_first_parent_line_without_author_addresses(self):
+        self.init()
+        self.git("checkout", "-b", "feature")
+        self.commit_file("feature.py", "Side commit")
+        self.git("checkout", "main")
+        self.git(
+            "merge",
+            "--no-ff",
+            "--no-gpg-sign",
+            "-m",
+            "Merge pull request #7 from example/feature",
+            "feature",
+        )
+        self.git("branch", "other")
+        self.commit_file("squash.py", "Squashed change (#8)")
+        self.commit_file("direct.py", "Direct change")
+        self.git(
+            "merge", "--no-ff", "--no-gpg-sign", "-m", "Merge branch 'other'", "other"
+        )
+        result = self.invoke("--details")[1]
+        history = result["overview"]["development"]["history"]
+        self.assertEqual(history["ref"], "HEAD")
+        self.assertEqual(history["branches"], 3)
+        self.assertEqual(history["commits"], 4)
+        self.assertEqual(history["with_request_marker"], 2)
+        self.assertEqual(history["without_marker"], 2)
+        self.assertEqual(history["authors"], 1)
+        self.assertRegex(history["latest_commit"], r"^\d{4}-\d{2}-\d{2}$")
+        self.assertNotIn("example.invalid", json.dumps(result))
+        details = " ".join(cli.render(result, details=True).split())
+        self.assertIn("Branches 3", details)
+        self.assertIn(
+            "last 4 commits on HEAD: 2 with a pull/merge request marker", details
+        )
+
+    def test_marked_merges_are_not_counted_as_other_merges(self):
+        rows = [
+            overview.commit_row(
+                "a", ["b", "c"], "x", "2026-01-02", "Merge branch 'x' into 'main'"
+            ),
+            overview.commit_row("b", ["d", "e"], "x", "2026-01-01", "Merge branch 'y'"),
+            overview.commit_row("d", [], "x", "2026-01-01", "Start"),
+        ]
+        summary = overview.history_summary(rows, "a", 1, "HEAD")
+        self.assertEqual(
+            (
+                summary["with_request_marker"],
+                summary["other_merges"],
+                summary["without_marker"],
+            ),
+            (1, 1, 1),
+        )
+
+    def test_selected_directory_without_git_states_the_gap(self):
+        self.write("app.py", "x = 1\n")
+        status, result, _ = self.invoke("--details")
+        self.assertEqual(
+            result["overview"]["development"]["history"],
+            {"unavailable": "no Git history in the selected directory"},
+        )
+        self.assertEqual(status, self.invoke()[0])
+        self.assertIn(
+            "unavailable: no Git history in the selected directory",
+            " ".join(cli.render(result, details=True).split()),
+        )
+
+    def test_repository_without_commits_states_the_gap(self):
+        self.write("app.py", "x = 1\n")
+        self.git("init", "-b", "main")
+        history = self.invoke("--details")[1]["overview"]["development"]["history"]
+        self.assertEqual(history, {"unavailable": "Git history not readable"})
+
+    def test_repository_configuration_cannot_start_a_program_through_history(self):
+        self.init()
+        marker = self.root / "program-ran"
+        program = self.root / "fake-gpg"
+        program.write_text(
+            "#!/bin/sh\n"
+            'for value in "$@"; do\n'
+            f'  if [ "$value" = "--verify" ]; then touch {marker}; exit 0; fi\n'
+            "done\n"
+            "printf '\\n[GNUPG:] SIG_CREATED D 1 8 00 0 F\\n' >&2\n"
+            "echo '-----BEGIN PGP SIGNATURE-----'\n"
+            "echo 'AAAA'\n"
+            "echo '-----END PGP SIGNATURE-----'\n"
+        )
+        program.chmod(0o755)
+        self.git("config", "gpg.program", str(program))
+        self.git("config", "user.signingKey", "fixture")
+        self.git("commit", "--allow-empty", "-S", "-m", "Signed")
+        self.git("config", "log.showSignature", "true")
+        # The control proves that this configuration would run the program.
+        self.git("log", "-1", "--format=%H")
+        self.assertTrue(marker.exists())
+        marker.unlink()
+        history = self.invoke("--details")[1]["overview"]["development"]["history"]
+        self.assertEqual(history["commits"], 2)
+        self.assertFalse(marker.exists())
+
+    def test_overview_that_runs_out_of_budget_leaves_the_result(self):
+        self.write("app.py", "eval(payload)\n")
+        status, plain, _ = self.invoke()
+        with mock.patch.object(
+            overview, "repository_overview", side_effect=sources.BudgetExceeded("limit")
+        ):
+            detail_status, result, _ = self.invoke("--details")
+        self.assertEqual(detail_status, status)
+        self.assertEqual(result["observed_score"], plain["observed_score"])
+        self.assertNotIn("overview", result)
+        self.assertIn("Overview skipped: the time budget ran out.", result["warnings"])
+        self.assertIn(
+            "Overview skipped", " ".join(cli.render(result, details=True).split())
+        )
+
+    def test_unexpected_version_text_is_not_shown(self):
+        self.assertEqual(
+            self.overview_of("package.json", '{"engines":{"node":"14\\u001b[2J"}}')[
+                "runtimes"
+            ],
+            [],
+        )
+
+    def test_large_manifest_stays_within_linear_work(self):
+        manifest = json.dumps({"dependencies": {f"p{n}": "1" for n in range(30000)}})
+        started = time.monotonic()
+        self.overview_of("package.json", manifest)
+        self.assertLess(time.monotonic() - started, 5)
+
+    def test_hostile_text_does_not_stall_the_technology_patterns(self):
+        for path, text in (
+            ("nginx.conf", "ssl_protocols " * 40000),
+            ("nginx.conf", "\n" * 500000),
+            ("apache.conf", "SSLProtocol " * 40000),
+            ("app.py", " " * 500000),
+        ):
+            with self.subTest(path=path, size=len(text)):
+                started = time.monotonic()
+                self.overview_of(path, text)
+                self.assertLess(time.monotonic() - started, 5)
+
+    def test_control_characters_in_the_overview_never_reach_the_terminal(self):
+        self.write("app.py", "x = 1\n")
+        result = self.invoke("--details")[1]
+        context = result["overview"]
+        context["runtimes"] = [
+            {
+                "runtime": "Node.js",
+                "version": "14\x1b[2J",
+                "file": "evil\x1b]0;x\x07.json",
+                "line": 1,
+            }
+        ]
+        context["technology_risks"] = [
+            {
+                "category": "runtime",
+                "technology": "x\x9b2J",
+                "reason": "end of life",
+                "file": "evil\x1b.json",
+                "line": 1,
+                "occurrences": 2,
+            }
+        ]
+        context["development"]["history"] = {"unavailable": "gap\x1b[2J"}
+        self.assertNotRegex(
+            cli.render(result, details=True), r"[\x00-\x09\x0b-\x1f\x7f-\x9f]"
+        )
+
 
 class RemoteTests(unittest.TestCase):
     def test_slow_headers_and_bodies_cannot_outlive_the_request_budget(self):
@@ -3245,6 +3717,7 @@ class RemoteTests(unittest.TestCase):
                         ),
                         (source, 200),
                         (None, status_code),
+                        (None, 403),  # Commit history of the overview.
                     ],
                 ),
                 contextlib.redirect_stdout(io.StringIO()) as output,
@@ -3256,6 +3729,7 @@ class RemoteTests(unittest.TestCase):
                 f"source download failed (HTTP {status_code}): z.py", output.getvalue()
             )
             self.assertIn("59/100 (partial)", output.getvalue())
+            self.assertIn("unavailable: not readable (HTTP 403)", output.getvalue())
 
     def test_default_budget_and_download_reserve_leave_analysis_time(self):
         self.assertEqual(cli.parser().parse_args([]).timeout, 60)
@@ -4357,6 +4831,147 @@ class RemoteTests(unittest.TestCase):
                 self.assertEqual(output.getvalue(), "")
                 self.assertIn(expected, errors.getvalue())
                 self.assertIn("No score", errors.getvalue())
+
+    def history_options(self, url="https://github.com/example/project"):
+        options = cli.parser().parse_args([url])
+        options.repo = url  # Set by execute() for a real run.
+        return options
+
+    def test_req15_default_url_scan_spends_no_quota_on_history(self):
+        source = b"eval(payload)\n"
+        with (
+            mock.patch.object(
+                remote, "host_settings", return_value=([], "a" * 40, False)
+            ),
+            mock.patch.object(
+                remote,
+                "get",
+                side_effect=[
+                    (self.listing([self.entry(size=len(source))]), 200),
+                    (source, 200),
+                ],
+            ) as requests,
+            mock.patch.object(
+                overview, "remote_history", side_effect=AssertionError("ran")
+            ) as history,
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            cli.main(["https://github.com/example/project"])
+        history.assert_not_called()
+        self.assertEqual(requests.call_count, 2)
+
+    def test_github_history_uses_two_requests_and_keeps_addresses_out(self):
+        head, side, base = "a" * 40, "b" * 40, "c" * 40
+
+        def commit(sha, parents, message, email, date):
+            return {
+                "sha": sha,
+                "parents": [{"sha": parent} for parent in parents],
+                "commit": {
+                    "message": message,
+                    "author": {"email": email, "date": date},
+                },
+            }
+
+        commits = [
+            commit(
+                head,
+                [base, side],
+                "Merge pull request #1 from example/side\n\nBody",
+                "one@example.invalid",
+                "2026-10-01T10:00:00Z",
+            ),
+            commit(
+                side, [base], "Side", "side@example.invalid", "2026-09-30T10:00:00Z"
+            ),
+            commit(base, [], "Start", "two@example.invalid", "2026-09-01T10:00:00Z"),
+            "not a commit",
+        ]
+        with mock.patch.object(
+            overview,
+            "json_get",
+            side_effect=[(commits, None), ([{}] * overview.BRANCH_PAGE, None)],
+        ) as requests:
+            rows, start, branches = overview.remote_history(
+                self.history_options(), head, sources.Budget()
+            )
+        self.assertEqual(requests.call_count, 2)
+        self.assertIn(f"sha={head}", requests.call_args_list[0].args[0])
+        summary = overview.history_summary(rows, start, branches, "default branch")
+        self.assertEqual(summary["commits"], 2)
+        self.assertEqual(summary["with_request_marker"], 1)
+        self.assertEqual(summary["without_marker"], 1)
+        self.assertEqual(summary["authors"], 2)
+        self.assertEqual(summary["latest_commit"], "2026-10-01")
+        self.assertEqual(summary["branches"], "100+")
+        self.assertNotIn("example.invalid", json.dumps(summary))
+
+    def test_gitlab_history_reads_its_own_fields(self):
+        head, base = "a" * 40, "b" * 40
+        commits = [
+            {
+                "id": head,
+                "parent_ids": [base],
+                "title": "Merge branch 'a' into 'main'",
+                "author_email": "one@example.invalid",
+                "committed_date": "2026-10-01T10:00:00.000+00:00",
+            },
+            {
+                "id": base,
+                "parent_ids": [],
+                "title": "Start",
+                "author_email": "one@example.invalid",
+                "committed_date": "2026-09-01T10:00:00.000+00:00",
+            },
+        ]
+        with mock.patch.object(
+            overview, "json_get", side_effect=[(commits, None), ([{}, {}], None)]
+        ) as requests:
+            rows, start, branches = overview.remote_history(
+                self.history_options("https://gitlab.com/example/project"),
+                head,
+                sources.Budget(),
+            )
+        self.assertIn(f"ref_name={head}", requests.call_args_list[0].args[0])
+        summary = overview.history_summary(rows, start, branches, "default branch")
+        self.assertEqual(
+            (summary["commits"], summary["with_request_marker"], summary["authors"]),
+            (2, 1, 1),
+        )
+        self.assertEqual(summary["branches"], 2)
+
+    def test_history_survives_malformed_or_looping_host_data(self):
+        rows = [
+            overview.github_commit({"sha": "a", "parents": [{"sha": "b"}]}),
+            overview.github_commit(
+                {"sha": "b", "parents": [{"sha": "a"}, "x"], "commit": "text"}
+            ),
+            overview.gitlab_commit({"id": 1, "parent_ids": "b", "title": 5}),
+        ]
+        summary = overview.history_summary(rows, "a", None, "default branch")
+        self.assertEqual(summary["commits"], 2)
+        self.assertEqual(summary["latest_commit"], "")
+
+    def test_rate_limited_history_stays_a_stated_gap(self):
+        with mock.patch.object(
+            overview, "json_get", return_value=({}, "API rate limit reached")
+        ):
+            with self.assertRaisesRegex(sources.SourceError, "API rate limit reached"):
+                overview.remote_history(
+                    self.history_options(), "a" * 40, sources.Budget()
+                )
+
+    def test_unreadable_branch_list_keeps_the_commit_history(self):
+        with mock.patch.object(
+            overview,
+            "json_get",
+            side_effect=[([], None), ({}, "API rate limit reached")],
+        ):
+            rows, _, branches = overview.remote_history(
+                self.history_options(), "a" * 40, sources.Budget()
+            )
+        self.assertEqual((rows, branches), ([], None))
 
 
 if __name__ == "__main__":
