@@ -9,10 +9,10 @@ from __future__ import annotations
 import ast
 from bisect import bisect_right
 from collections import Counter
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 
-from score_core import JS_EXTENSIONS, qualified
+from score_core import JS_EXTENSIONS, javascript_code, qualified
 from score_infrastructure import (
     PIPE_TO_SHELL,
     ci_file,
@@ -529,17 +529,141 @@ def dockerfile_observations(kind, text):
     return rows
 
 
+JS_NAME = r"[A-Za-z_$][\w$]*"
+JS_CALL = re.compile(rf"(?<![\w$.])({JS_NAME}(?:\s*\.\s*{JS_NAME})?)\s*\(")
+
+
+def js_imports(text, code):
+    """Active ESM and require bindings, without importing the target project."""
+    patterns = (
+        (
+            rf"\bimport\s+(\*\s+as\s+{JS_NAME}|{JS_NAME}|\{{[^{{}}]{{1,1000}}\}})\s+from\s+['\"]([^'\"\n]+)['\"]",
+            "as",
+        ),
+        (
+            rf"\b(?:const|let|var)\s+({JS_NAME}|\{{[^{{}}]{{1,1000}}\}})\s*=\s*require\s*\(\s*['\"]([^'\"\n]+)['\"]\s*\)",
+            ":",
+        ),
+    )
+    for pattern, separator in patterns:
+        for match in re.finditer(pattern, text):
+            if code[match.start()].isspace():
+                continue
+            binding, module = match[1].strip(), match[2]
+            if binding.startswith("{"):
+                for item in binding[1:-1].split(","):
+                    names = re.split(
+                        r"\s+as\s+" if separator == "as" else r"\s*:\s*", item.strip()
+                    )
+                    if all(re.fullmatch(JS_NAME, name) for name in names):
+                        yield names[-1], module, names[0]
+            else:
+                member = (
+                    "*"
+                    if binding.startswith("*")
+                    else "="
+                    if separator == ":"
+                    else None
+                )
+                yield binding.split()[-1], module, member
+
+
+def js_arguments(code, opening, pairs):
+    """Top-level argument spans; cap each inspected expression at 4 KiB."""
+    end = pairs.get(opening)
+    if (
+        end is None
+        or code[end] != {"(": ")", "{": "}", "[": "]"}.get(code[opening])
+        or end - opening > 4000
+    ):
+        return None
+    spans, start, index = [], opening + 1, opening + 1
+    while index < end:
+        if code[index] in "([{":
+            closing = pairs.get(index)
+            if closing is None or closing >= end:
+                return None
+            index = closing
+        elif code[index] == ",":
+            spans.append((start, index))
+            start = index + 1
+        index += 1
+    if start < end or start != opening + 1:
+        spans.append((start, end))
+    return spans
+
+
 def js_jwt_observations(text, code):
-    """Literal algorithm allow-lists and expiry handling in token verification options."""
+    """Assess options on verification calls, never unrelated algorithms fields."""
+    names = {
+        "jwt.verify": 2,
+        "jsonwebtoken.verify": 2,
+        "expressJwt": 0,
+        "expressjwt": 0,
+    }
+    for local, module, member in js_imports(text, code):
+        if module == "jsonwebtoken" and member in {None, "*", "=", "verify"}:
+            names[local + ".verify" if member in {None, "*", "="} else local] = 2
+        elif module == "express-jwt" and member in {None, "expressjwt"}:
+            names[local] = 0
+        elif module == "express-jwt" and member in {"*", "="}:
+            names[local + ".expressjwt"] = 0
+            if member == "=":
+                names[local] = 0
     rows = []
     breaks = [match.start() for match in re.finditer("\n", code)]
-    for match in re.finditer(r"\balgorithms\s*:\s*\[", code):
-        number = bisect_right(breaks, match.start()) + 1
-        end = code.find("]", match.end(), match.end() + 400)
+    pairs = bracket_pairs(code)
+    for call in JS_CALL.finditer(code):
+        name = re.sub(r"\s", "", call[1])
+        if name not in names:
+            continue
+        number = bisect_right(breaks, call.start()) + 1
+        arguments = js_arguments(code, call.end() - 1, pairs)
+        option_index = names[name]
+        if arguments is None or len(arguments) <= option_index:
+            rows.append((number, "unclear"))
+            continue
+        start, stop = arguments[option_index]
+        option_code = code[start:stop]
+        opening = start + len(option_code) - len(option_code.lstrip())
+        if (
+            not option_code.strip().startswith("{")
+            or pairs.get(opening) != start + len(option_code.rstrip()) - 1
+        ):
+            rows.append((number, "unclear"))
+            continue
+        properties = js_arguments(code, opening, pairs)
+        if properties is None or any("..." in code[a:b] for a, b in properties):
+            rows.append((number, "unclear"))
+            continue
+        algorithms, expiries = [], []
+        for a, b in properties:
+            if re.match(r"\s*algorithms\s*:", code[a:b]):
+                algorithms.append((a, b))
+            if re.match(r"\s*ignoreExpiration\s*:", code[a:b]):
+                expiries.append((a, b))
+        expiry = (
+            re.fullmatch(
+                r"\s*ignoreExpiration\s*:\s*(true|false)\s*", code[slice(*expiries[0])]
+            )
+            if len(expiries) == 1
+            else None
+        )
+        if expiry and expiry[1] == "true":
+            rows.append((number, "violated"))
+            continue
+        if len(algorithms) != 1:
+            rows.append((number, "unclear"))
+            continue
+        a, b = algorithms[0]
+        match = re.match(r"\s*algorithms\s*:\s*\[", code[a:b])
+        if not match:
+            rows.append((number, "unclear"))
+            continue
+        offset = a + match.end()
+        end = pairs.get(offset - 1, -1)
         items = (
-            [item.strip() for item in text[match.end() : end].split(",")]
-            if end >= 0
-            else []
+            [item.strip() for item in text[offset:end].split(",")] if end >= 0 else []
         )
         values = [re.fullmatch(r"(['\"`])([\w.-]+)\1", item) for item in items if item]
         status = (
@@ -547,18 +671,13 @@ def js_jwt_observations(text, code):
             if end < 0
             else "violated"
             if any(value and value[2].lower() == "none" for value in values)
+            else "unclear"
+            if expiries and expiry is None or code[end + 1 : b].strip()
             else "satisfied"
             if values and all(values)
             else "unclear"
         )
         rows.append((number, status))
-    for match in re.finditer(r"\bignoreExpiration\s*:\s*(\w+)", code):
-        rows.append(
-            (
-                bisect_right(breaks, match.start()) + 1,
-                {"true": "violated", "false": "satisfied"}.get(match[1], "unclear"),
-            )
-        )
     return rows
 
 
@@ -675,7 +794,9 @@ LOCAL_FUNCTION = re.compile(
     r"|(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:function\b|\([^()\n]*\)\s*=>|\w+\s*=>))"
 )
 WEAK_HASH = re.compile(
-    r"\bcreateHash\s*\(\s*['\"`](md5|sha1)['\"`]|\bhashlib\s*\.\s*(md5|sha1)\s*\(", re.I
+    r"\bcreateHash\s*\(\s*['\"`](md5|sha1|sha224|sha256|sha384|sha512|sha3-\d+)['\"`]"
+    r"|\bhashlib\s*\.\s*(md5|sha1|sha224|sha256|sha384|sha512|sha3_\d+)\s*\(",
+    re.I,
 )
 PASSWORD_HASHES = (
     (
@@ -708,7 +829,15 @@ def hash_call(text):
     """(status, label) of the first recognized password or weak hash call."""
     weak = WEAK_HASH.search(text)
     if weak:
-        return "violated", {"md5": "MD5", "sha1": "SHA-1"}[(weak[1] or weak[2]).lower()]
+        algorithm = (weak[1] or weak[2]).lower().replace("_", "-")
+        label = (
+            "MD5"
+            if algorithm == "md5"
+            else "SHA-" + algorithm[3:]
+            if not algorithm.startswith("sha3")
+            else algorithm.upper()
+        )
+        return "violated", label
     for label, pattern in PASSWORD_HASHES:
         if pattern.search(text):
             return "satisfied", label
@@ -739,8 +868,153 @@ def hash_helpers(lines):
     return helpers
 
 
-def password_hash_observations(text, code):
+def js_hash_uses(text, code):
+    """Located hash operations and the value actually passed as password input."""
+    pairs = bracket_pairs(code)
+    for call in JS_CALL.finditer(code):
+        args = js_arguments(code, call.end() - 1, pairs)
+        if not args:
+            continue
+        end = pairs[call.end() - 1] + 1
+        expression = text[call.start() : end]
+        weak = WEAK_HASH.search(expression)
+        found = (
+            hash_call(expression)
+            if weak and weak.start() < call.end() - call.start()
+            else next(
+                (
+                    ("satisfied", label)
+                    for label, pattern in PASSWORD_HASHES
+                    if pattern.match(expression)
+                ),
+                None,
+            )
+        )
+        if not found:
+            continue
+        name = re.sub(r"\s", "", call[1])
+        if name.endswith("createHash"):
+            update = re.match(r"\s*\.\s*update\s*\(", code[end : end + 100])
+            if not update:
+                continue
+            args = js_arguments(code, end + update.end() - 1, pairs)
+            if not args:
+                continue
+        input_index = 1 if name in {"argon2.verify", "check_password_hash"} else 0
+        if len(args) > input_index:
+            start, stop = args[input_index]
+            yield call.start(), code[start:stop], found
+
+
+JS_HASH_HELPER = re.compile(
+    rf"(?m)^[ \t]*(?P<export>export\s+)?(?:async\s+)?(?:"
+    rf"function\s+(?P<function>{JS_NAME})\s*\(\s*(?P<param>{JS_NAME})(?:\s*:\s*\w+)?\s*\)\s*\{{\s*return\s+"
+    rf"|(?:const|let|var)\s+(?P<arrow>{JS_NAME})\s*=\s*(?:async\s+)?\(\s*(?P<arg>{JS_NAME})(?:\s*:\s*\w+)?\s*\)\s*=>\s*(?:\{{\s*return\s+)?)"
+)
+
+
+def js_hash_helpers(text, code, exported=False):
+    """Single-expression helpers whose parameter reaches a recognized hash."""
+    helpers = {}
+    for match in JS_HASH_HELPER.finditer(code):
+        if exported and not match["export"]:
+            continue
+        # Only a simple return expression on one line is summarized.
+        end = code.find("\n", match.end())
+        end = min(len(code) if end < 0 else end, match.end() + 4000)
+        body = code[match.end() : end]
+        raw = text[match.end() : end]
+        parameter = match["param"] or match["arg"]
+        for position, argument, found in js_hash_uses(raw, body):
+            # The expression must start with the hashing operation, not a separate call.
+            if (
+                body[:position].strip() in {"", "await"}
+                and argument.strip() == parameter
+            ):
+                helpers[match["function"] or match["arrow"]] = found
+    return helpers
+
+
+class PasswordHashResolver:
+    """One import hop over already-selected sources; no filesystem or module execution."""
+
+    def __init__(self, files, budget):
+        self.files, self.budget, self.cache = files, budget, {}
+
+    def exports(self, path, module):
+        if (
+            not (module.startswith(("./", "../")) or module in {".", ".."})
+            or "\\" in module
+        ):
+            return {}
+        parts = list(PurePosixPath(path).parent.parts)
+        for part in module.split("/"):
+            if part == "..":
+                if not parts:
+                    return {}
+                parts.pop()
+            elif part not in {"", "."}:
+                parts.append(part)
+        base = "/".join(parts)
+        candidates = (
+            [base]
+            if Path(base).suffix in JS_EXTENSIONS
+            else [base + ext for ext in sorted(JS_EXTENSIONS)]
+            + [base + "/index" + ext for ext in sorted(JS_EXTENSIONS)]
+        )
+        selected = [candidate for candidate in candidates if candidate in self.files]
+        if len(selected) != 1:
+            return {}  # Ambiguous language/runtime resolution stays unassessed.
+        target = selected[0]
+        if target not in self.cache:
+            self.budget.check()
+            source = self.files[target]
+            result = {}
+            if not source.get("fragment") and not source.get("fragments"):
+                try:
+                    code = javascript_code(source["text"])
+                    result = js_hash_helpers(source["text"], code, exported=True)
+                except SyntaxError:
+                    pass
+            self.cache[target] = result
+        return self.cache[target]
+
+    def bindings(self, path, text, code):
+        helpers = js_hash_helpers(text, code)
+        for local, module, member in js_imports(text, code):
+            exported = self.exports(path, module)
+            if member in exported:
+                helpers[local] = exported[member]
+            elif member in {"*", "="}:
+                helpers.update(
+                    {local + "." + name: found for name, found in exported.items()}
+                )
+        return helpers
+
+
+def password_hash_observations(text, code, path="", resolver=None):
     """Hash calls that receive a password, directly or through a helper in this file."""
+    if Path(path).suffix.lower() in JS_EXTENSIONS:
+        breaks = [match.start() for match in re.finditer("\n", code)]
+        rows = [
+            (bisect_right(breaks, position) + 1, *found)
+            for position, argument, found in js_hash_uses(text, code)
+            if PASSWORD_NAME.search(argument)
+        ]
+        helpers = (
+            resolver.bindings(path, text, code)
+            if resolver
+            else js_hash_helpers(text, code)
+        )
+        pairs = bracket_pairs(code)
+        for call in JS_CALL.finditer(code):
+            name = re.sub(r"\s", "", call[1])
+            if name not in helpers:
+                continue
+            args = js_arguments(code, call.end() - 1, pairs)
+            if args and PASSWORD_NAME.search(code[args[0][0] : args[0][1]]):
+                rows.append((bisect_right(breaks, call.start()) + 1, *helpers[name]))
+        return sorted(set(rows))
     lines = [
         "" if not active.strip() or active.lstrip().startswith("#") else line
         for line, active in zip(text.splitlines(), code.splitlines())
@@ -782,14 +1056,14 @@ PATH_DETECTORS = {
 }
 
 
-def observations(rule, path, text, code, files):
+def observations(rule, path, text, code, files, password_resolver=None):
     kind = rule["kind"]
     if kind in TEXT_DETECTORS:
         return TEXT_DETECTORS[kind](text)
     if kind in PATH_DETECTORS:
         return PATH_DETECTORS[kind](path, text)
     if kind == "password-hash":
-        return password_hash_observations(text, code)
+        return password_hash_observations(text, code, path, password_resolver)
     if kind == "js-cookie":
         return js_cookie_observations(code)
     if kind == "js-cors":

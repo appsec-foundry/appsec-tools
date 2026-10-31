@@ -960,13 +960,18 @@ def scan_paths(paths, findings, checks, files=None):
 
 
 def scan(files, budget, findings=None, checks=None):
+    from score_architecture import PasswordHashResolver
+
     findings = [] if findings is None else findings
     checks = [] if checks is None else checks
+    password_resolver = PasswordHashResolver(files, budget)
     for path in sorted(files, key=source_priority):
         original = files[path]
         for source in original.get("fragments", [original]):
             try:
-                scan_source(path, source, budget, findings, checks, files)
+                scan_source(
+                    path, source, budget, findings, checks, files, password_resolver
+                )
             except (RecursionError, TypeError, IndexError, OverflowError):
                 checks.append(
                     {
@@ -980,7 +985,7 @@ def scan(files, budget, findings=None, checks=None):
     return findings, checks
 
 
-def scan_source(path, source, budget, findings, checks, files):
+def scan_source(path, source, budget, findings, checks, files, password_resolver=None):
     from score_architecture import observations
 
     budget.check()
@@ -1072,7 +1077,7 @@ def scan_source(path, source, budget, findings, checks, files):
             "tf-iam",
             "tf-module",
         }:
-            observed = observations(rule, path, text, code, files)
+            observed = observations(rule, path, text, code, files, password_resolver)
         else:
             observed = other_observations(rule, text, code)[0]
         states = Counter(row[1] for row in observed)

@@ -103,3 +103,10 @@ Tests pin the exact behavior.
   End of life is a fixed limit in that list, never a comparison with today's date,
   so the same sources give the same result (REQ-01). Version-specific vulnerabilities
   stay outside (REQ-13).
+
+- **REQ-17 — Authentication evidence follows recognized calls.** Password hashing
+  checks follow simple JavaScript/TypeScript helpers through one relative import
+  into already-selected complete source files and distinguish fast general-purpose
+  hashes from password KDFs. JWT option checks apply to recognized verification
+  calls; unresolved verification options remain unclear, and unrelated option
+  objects never establish authentication evidence.

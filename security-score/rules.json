@@ -599,7 +599,7 @@
       "area": "authentication",
       "severity": "high",
       "title": "JavaScript token verification allows none or ignores expiry",
-      "criteria": "Recognize algorithms option arrays and ignoreExpiration. An allowed 'none' algorithm or ignoreExpiration: true violates this check; a literal list of named algorithms satisfies it; other values remain unclear. Calls that only decode a token are not recognized.",
+      "criteria": "Inspect literal options of jwt.verify/jsonwebtoken.verify and express-jwt calls, including ESM/require aliases. An allowed 'none' algorithm or ignoreExpiration: true violates this check; an explicit literal algorithm list with no unresolved expiry override satisfies it. Missing, dynamic, spread or duplicate relevant options remain unclear. Unrelated algorithms fields and decode-only calls are not assessed.",
       "next_action": "Verify tokens with an explicit list of expected signing algorithms and keep expiry checks enabled.",
       "examples": [
         {
@@ -620,6 +620,34 @@
           "file": "auth.js",
           "source": "const claims = jwt.verify(token, key, { algorithms: [config.algorithm] });\n",
           "outcome": "unclear",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "auth.js",
+          "source": "import { verify as check } from 'jsonwebtoken';\ncheck(token, key, { ignoreExpiration: true });\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "auth.js",
+          "source": "import { expressjwt as guard } from 'express-jwt';\nguard({ secret: key, algorithms: ['RS256'] });\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "auth.js",
+          "source": "jwt.verify(token, key, callback);\n",
+          "outcome": "unclear",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "auth.js",
+          "source": "const settings = { algorithms: ['none'] };\n",
+          "outcome": "not_applicable",
           "expected_score": null,
           "expected_grade": null
         }
@@ -2065,8 +2093,8 @@
       "kind": "password-hash",
       "area": "authentication",
       "severity": "high",
-      "title": "Password reaches MD5 or SHA-1",
-      "criteria": "Follow a password-named value into a hash call on the same line or through a helper function in the same file. MD5 and SHA-1 violate this check; bcrypt, Argon2, scrypt, PBKDF2 and framework password hashers satisfy it. A helper in another file is not resolved, and other hashes are not assessed.",
+      "title": "Password reaches a fast general-purpose hash",
+      "criteria": "Follow password-named inputs into hash calls and simple local helpers. JavaScript/TypeScript also resolves one relative ESM/require import hop to named ESM exports in already-selected complete files, without executing code. MD5, SHA-1, SHA-2 and SHA-3 violate this check; bcrypt, Argon2, scrypt, PBKDF2 and framework password hashers satisfy it without verifying their parameters. Unresolved helpers, ambiguous paths and other hashes are not assessed.",
       "next_action": "Hash passwords with Argon2 or bcrypt and migrate stored values at the next login.",
       "examples": [
         {
@@ -2100,6 +2128,30 @@
         {
           "file": "login.js",
           "source": "const stored = security.hash(req.body.password);\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "auth/login.ts",
+          "source": "import * as security from '../lib/digests';\nsecurity.hash(req.body.password);\n",
+          "files": {
+            "lib/digests.ts": "export const hash = (data: string) => crypto.createHash('md5').update(data).digest('hex');\n"
+          },
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "login.js",
+          "source": "crypto.createHash('sha256').update(password).digest('hex');\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "login.js",
+          "source": "crypto.createHash('md5').update(email); // password\n",
           "outcome": "not_applicable",
           "expected_score": null,
           "expected_grade": null
@@ -2457,7 +2509,7 @@
       ]
     }
   ],
-  "rule_version": 9,
+  "rule_version": 10,
   "change_relevance": {
     "version": 7,
     "documentation_extensions": [

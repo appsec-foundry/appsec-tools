@@ -37,7 +37,8 @@ $ security-score /path/to/repository
 `59/100 (partial)` instead of a grade means that some checks were inconclusive
 or a limit was reached. The number then covers only the recognized evidence.
 
-With `--details` (excerpt from a Juice Shop scan):
+With `--details` (historical excerpt from a Juice Shop scan with rule version 9;
+current rules also recognize its imported MD5 password hashing):
 
 ```text
 Security score · 0/100 (partial)
@@ -188,7 +189,7 @@ own [scoring policy](references/compatibility.md).
 | Topic | Checks |
 | --- | --- |
 | Repository | Host settings such as branch protection, rulesets, and required reviews (URL scans only); security policy file |
-| Authentication | JWT verification options, password hashing, cookie flags, credentialed CORS, Django and Flask session and host settings; no rules for login flows or access control |
+| Authentication | Call-scoped JWT verification options, password hashing including simple imported JS/TS helpers, cookie flags, credentialed CORS, Django and Flask session and host settings; no rules for login flows or access control |
 | Architecture | Code execution, SQL injection, and unsafe deserialization patterns |
 | Frontend | HTML output sinks, framework bypasses, Content Security Policy, and other security headers (positive evidence only) |
 | Dependencies & CI | Package sources and indexes, missing lockfiles, exactly pinned Python requirements, lockfile sources and integrity, Maven, Gradle, Cargo and `pyproject.toml` sources, install scripts, committed binaries, Action, image, GitLab include and Terraform module pinning, CI permissions, script injection, privileged pull request checkouts, downloads in CI and container builds |
@@ -345,7 +346,10 @@ From a clone, use `./security-score` instead of the URL.
 - Secrets count only with a fixed prefix or a recognized file name; a generic
   key or password in source code is not found. Credential values never appear in
   the output, and sensitive files are not read.
-- A password hash is followed only within one file.
+- JavaScript/TypeScript password hashing follows direct calls and simple helpers,
+  including one relative import to a named ESM export. Python helpers stay within
+  one file. Re-exports, runtime aliases and complex data flows are not resolved;
+  KDF parameters are not checked.
 - Application code is read for Python and JavaScript/TypeScript only. A repository
   in another language gets configuration checks at most.
 - Code, tests, and builds of the scanned project are never run.

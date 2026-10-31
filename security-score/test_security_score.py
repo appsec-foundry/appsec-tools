@@ -2299,6 +2299,299 @@ class ScoreTests(unittest.TestCase):
             [("SHA-1", "violated", 5)],
         )
 
+    def test_password_hash_resolves_juice_shop_style_imports_and_template_calls(self):
+        self.write(
+            "lib/digests.ts",
+            "import crypto from 'node:crypto';\n"
+            "export const hash = (data: string) => crypto.createHash('md5').update(data).digest('hex');\n",
+        )
+        self.write(
+            "routes/login.ts",
+            "import * as security from '../lib/digests';\n"
+            "db.query(`SELECT id FROM users WHERE password = '${security.hash(req.body.password || '')}'`);\n",
+        )
+        self.write(
+            "models/user.ts",
+            "import { hash as digest } from '../lib/digests';\n"
+            "const stored = digest(clearTextPassword);\n",
+        )
+        result = self.invoke()[1]
+        self.assertEqual(
+            sorted(
+                (row["file"], row["line"])
+                for row in result["findings"]
+                if row["rule"] == "PASSWORD-HASH"
+            ),
+            [("models/user.ts", 2), ("routes/login.ts", 2)],
+        )
+        topics = {topic["id"]: topic for topic in reporting.subcategories(result)}
+        self.assertEqual(topics["authentication"]["index"], 50)
+        self.assertEqual(
+            {row["technology"] for row in result["architecture"]["password_hashing"]},
+            {"MD5"},
+        )
+
+    def test_password_hash_checks_actual_arguments_and_active_code(self):
+        source = (
+            "const password = get(); crypto.createHash('md5').update(email);\n"
+            "crypto.createHash('md5').update(email); // password\n"
+            'const note = "bcrypt.hash(password, 12)";\n'
+            "const fake = /crypto.createHash('md5').update(password)/;\n"
+            "wrapper(password, crypto.createHash('md5').update(email));\n"
+            "const stored = bcrypt.hash(\n  req.body.password, 12\n);\n"
+            "crypto.createHash('md5').update(\n  req.body.password\n).digest('hex');\n"
+        )
+        _, checks = core.scan({"auth.ts": {"text": source}}, sources.Budget())
+        locations = next(
+            row["locations"] for row in checks if row["rule"] == "PASSWORD-HASH"
+        )
+        self.assertEqual(
+            locations,
+            [
+                {"line": 6, "status": "satisfied", "detail": "bcrypt"},
+                {"line": 9, "status": "violated", "detail": "MD5"},
+            ],
+        )
+
+    def test_password_hash_imports_only_use_available_unambiguous_exports(self):
+        helper = "export const hash = (value: string) => crypto.createHash('md5').update(value).digest('hex');\n"
+        for module, extra, expected in (
+            ("../lib/digest", {"lib/digest.ts": {"text": helper}}, "violated"),
+            ("../lib", {"lib/index.ts": {"text": helper}}, "violated"),
+            ("../lib/digest.ts", {"lib/digest.ts": {"text": helper}}, "violated"),
+            ("../lib/digest", {}, "not_applicable"),
+            ("../../outside", {"outside.ts": {"text": helper}}, "not_applicable"),
+            ("external", {"external.ts": {"text": helper}}, "not_applicable"),
+            (
+                "../lib/digest",
+                {"lib/digest.ts": {"text": helper}, "lib/digest.js": {"text": helper}},
+                "not_applicable",
+            ),
+            (
+                "../lib/digest",
+                {"lib/digest.ts": {"text": helper, "fragment": True}},
+                "not_applicable",
+            ),
+            (
+                "../lib/digest",
+                {"lib/digest.ts": {"text": helper, "fragments": [{"text": helper}]}},
+                "not_applicable",
+            ),
+            (
+                "../lib/digest",
+                {"lib/digest.ts": {"text": helper + "/*"}},
+                "not_applicable",
+            ),
+            (
+                "../lib/digest",
+                {"lib/digest.ts": {"text": helper.replace("export ", "")}},
+                "not_applicable",
+            ),
+            (
+                "../lib/digest",
+                {
+                    "lib/digest.ts": {
+                        "text": helper.replace("update(value)", "update(email)")
+                    }
+                },
+                "not_applicable",
+            ),
+        ):
+            with self.subTest(module=module, extra=extra):
+                files = {
+                    "routes/auth.ts": {
+                        "text": f"import * as security from '{module}';\nsecurity.hash(req.body.password);\n"
+                    },
+                    **extra,
+                }
+                _, checks = core.scan(files, sources.Budget())
+                outcome = next(
+                    row["status"]
+                    for row in checks
+                    if row["rule"] == "PASSWORD-HASH"
+                    and row["file"] == "routes/auth.ts"
+                )
+                self.assertEqual(outcome, expected)
+
+    def test_password_hash_resolves_commonjs_bindings_without_executing_helpers(self):
+        helper = "export function digest(value) { return bcrypt.hash(value, 12); }\n"
+        for declaration, call in (
+            ("const security = require('./digest');", "security.digest"),
+            ("const { digest: hash } = require('./digest');", "hash"),
+            ("import { digest } from './digest';", "digest"),
+        ):
+            with self.subTest(declaration=declaration):
+                files = {
+                    "digest.js": {"text": helper},
+                    "auth.js": {
+                        "text": declaration + "\n" + call + "(req.body.password);\n"
+                    },
+                }
+                findings, checks = core.scan(files, sources.Budget())
+                self.assertFalse(
+                    any(row["rule"] == "PASSWORD-HASH" for row in findings)
+                )
+                self.assertEqual(
+                    next(
+                        row["status"]
+                        for row in checks
+                        if row["rule"] == "PASSWORD-HASH" and row["file"] == "auth.js"
+                    ),
+                    "satisfied",
+                )
+
+    def test_password_hash_does_not_treat_default_imports_as_named_export_namespaces(
+        self,
+    ):
+        files = {
+            "digest.js": {
+                "text": "export const hash = (value) => crypto.createHash('md5').update(value).digest('hex');\n"
+            },
+            "login.js": {
+                "text": "import security from './digest';\nsecurity.hash(password);\n"
+            },
+        }
+        findings, _ = core.scan(files, sources.Budget())
+        self.assertFalse(any(row["rule"] == "PASSWORD-HASH" for row in findings))
+
+    def test_argon2_verify_uses_the_password_argument(self):
+        _, checks = core.scan(
+            {
+                "login.js": {
+                    "text": "argon2.verify(stored, req.body.password);\nargon2.verify(passwordHash, email);\n"
+                }
+            },
+            sources.Budget(),
+        )
+        self.assertEqual(
+            next(row["locations"] for row in checks if row["rule"] == "PASSWORD-HASH"),
+            [{"line": 1, "status": "satisfied", "detail": "Argon2"}],
+        )
+
+    def test_fast_password_hashes_are_not_password_kdfs(self):
+        for algorithm, label in (
+            ("sha256", "SHA-256"),
+            ("sha512", "SHA-512"),
+            ("sha3-256", "SHA3-256"),
+        ):
+            for path, source in (
+                (
+                    "auth.js",
+                    f"crypto.createHash('{algorithm}').update(password).digest('hex');\n",
+                ),
+                (
+                    "auth.py",
+                    f"stored = hashlib.{algorithm.replace('-', '_')}(password).hexdigest()\n",
+                ),
+            ):
+                with self.subTest(path=path, algorithm=algorithm):
+                    _, checks = core.scan({path: {"text": source}}, sources.Budget())
+                    self.assertEqual(
+                        next(
+                            row["locations"]
+                            for row in checks
+                            if row["rule"] == "PASSWORD-HASH"
+                        ),
+                        [{"line": 1, "status": "violated", "detail": label}],
+                    )
+
+    def test_imported_password_helpers_are_cached_per_scan_and_not_between_scans(self):
+        helper = "export const hash = (data: string) => crypto.createHash('md5').update(data).digest('hex');\n"
+        files = {"lib/hash.ts": {"text": helper}}
+        files.update(
+            {
+                f"routes/auth{index}.ts": {
+                    "text": "import * as security from '../lib/hash';\nsecurity.hash(password);\n"
+                }
+                for index in range(20)
+            }
+        )
+        with mock.patch.object(
+            architecture, "javascript_code", wraps=core.javascript_code
+        ) as lexer:
+            findings, _ = core.scan(files, sources.Budget())
+        self.assertEqual(lexer.call_count, 1)
+        self.assertEqual(sum(row["rule"] == "PASSWORD-HASH" for row in findings), 20)
+        files["lib/hash.ts"]["text"] = helper.replace(
+            "crypto.createHash('md5').update(data).digest('hex')",
+            "bcrypt.hash(data, 12)",
+        )
+        findings, _ = core.scan(files, sources.Budget())
+        self.assertFalse(any(row["rule"] == "PASSWORD-HASH" for row in findings))
+
+    def test_auth_patterns_bound_large_or_malformed_source(self):
+        for source in (
+            "\n" * 100000,
+            "import * as security from './hash';\n" * 4000,
+            "jwt.verify(t, k, { algorithms: [" + "'RS256'," * 10000 + "] });",
+            "crypto.createHash('md5').update(" + "password," * 10000 + ");",
+        ):
+            with self.subTest(prefix=source[:40]):
+                started = time.monotonic()
+                code = core.javascript_code(source)
+                resolver = architecture.PasswordHashResolver({}, sources.Budget(5))
+                architecture.password_hash_observations(
+                    source, code, "auth.ts", resolver
+                )
+                architecture.js_jwt_observations(source, code)
+                self.assertLess(time.monotonic() - started, 5)
+
+    def test_jwt_verification_is_call_scoped_and_resolves_aliases(self):
+        for source, status in (
+            (
+                "const cfg = { algorithms: ['none'], ignoreExpiration: true };",
+                "not_applicable",
+            ),
+            ("other.verify(t, k, { algorithms: ['none'] });", "not_applicable"),
+            ("jwt.sign(t, k, { algorithms: ['none'] });", "not_applicable"),
+            ("jwt.decode(token);", "not_applicable"),
+            ("jwt.verify(t, k, (err, decoded) => consume(decoded));", "unclear"),
+            ("jwt.verify(t, k, options);", "unclear"),
+            ("jwt.verify(t, k, { algorithms: getAlgorithms() });", "unclear"),
+            ("jwt.verify(t, k, { algorithms: ['RS256'], ...options });", "unclear"),
+            (
+                "jwt.verify(t, k, { algorithms: ['RS256'], ignoreExpiration: setting });",
+                "unclear",
+            ),
+            ("jwt.verify(t, k, { nested: { algorithms: ['none'] } });", "unclear"),
+            ("jwt.verify(t, k, opts || { algorithms: ['RS256'] });", "unclear"),
+            (
+                "jwt.verify(t, k, { algorithms: ['RS256'], algorithms: ['HS256'] });",
+                "unclear",
+            ),
+            (
+                "jwt.verify(t, k, { algorithms: ['RS256'], ignoreExpiration: false });",
+                "satisfied",
+            ),
+            (
+                "import tokens from 'jsonwebtoken'; tokens.verify(t,k,{algorithms:['none']});",
+                "violated",
+            ),
+            (
+                "import { verify as check } from 'jsonwebtoken'; check(t,k,{ignoreExpiration:true});",
+                "violated",
+            ),
+            (
+                "const { verify: check } = require('jsonwebtoken'); check(t,k,{algorithms:['RS256']});",
+                "satisfied",
+            ),
+            (
+                "import { expressjwt as guard } from 'express-jwt'; guard({secret:key,algorithms:['RS256']});",
+                "satisfied",
+            ),
+            ("import guard from 'express-jwt'; guard({secret:key});", "unclear"),
+            (
+                "const guard = require('express-jwt'); guard({secret:key,algorithms:['none']});",
+                "violated",
+            ),
+        ):
+            with self.subTest(source=source):
+                _, checks = core.scan({"auth.ts": {"text": source}}, sources.Budget())
+                self.assertEqual(
+                    next(row["status"] for row in checks if row["rule"] == "JS-JWT"),
+                    status,
+                )
+
     def test_profile_reports_login_hash_deployment_and_cloud_login(self):
         self.write(
             "package.json",
