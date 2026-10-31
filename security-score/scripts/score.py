@@ -14,6 +14,7 @@ from pathlib import Path
 import re
 import shutil
 import sys
+import time
 import threading
 from urllib.parse import urlsplit
 from score_update import UpdateAction
@@ -29,10 +30,12 @@ try:
         ScanLimit,
         VERSION,
         calculate,
+        check_groups,
         compare,
         grade,
         scan,
         scan_paths,
+        selected_rules,
     )
 except (
     OSError,
@@ -175,6 +178,18 @@ def parser():
         "--list-rules",
         action="store_true",
         help="Show the rule catalog without scanning",
+    )
+    result.add_argument(
+        "--list-checks",
+        action="store_true",
+        help="List selectable check groups and their rule IDs, then exit",
+    )
+    result.add_argument(
+        "--checks", help="Run comma-separated check groups or rule IDs (default: all)"
+    )
+    result.add_argument(
+        "--skip-checks",
+        help="Omit comma-separated check groups or rule IDs from the selection",
     )
     result.add_argument(
         "--engine",
@@ -685,6 +700,14 @@ def repository_context(options, scope, files, exclusions, budget):
 
 def run(options):
     budget = Budget(options.timeout)
+    if options.list_checks:
+        return {"default": "all", "check_groups": check_groups()}, 0
+    try:
+        rules = selected_rules(options.checks, options.skip_checks)
+    except ValueError as error:
+        raise SourceError(str(error)) from None
+    active_ids = {rule["id"] for rule in rules}
+    custom_checks = active_ids != {rule["id"] for rule in RULES}
     if options.verify_rules:
         return verify_rules(), 0
     if options.list_rules:
@@ -700,6 +723,8 @@ def run(options):
     if options.analyzer:
         raise SourceError("--analyzer requires --engine analyzer.")
     remote = remote_identity(options)
+    if options.details:
+        announce(options, f"Preparing scan: {len(rules)} selected checks...")
     announce(options, "Reading selected sources...")
     settings = []
     if "://" in options.repo:
@@ -715,8 +740,17 @@ def run(options):
     scan_error = None
     architecture = None
     try:
-        scan(before, budget, old_findings, old_checks)
-        scan(after, budget, findings, checks)
+        progress = (
+            (
+                lambda current, total: announce(
+                    options, f"Checking sources: {current}/{total} files..."
+                )
+            )
+            if options.details
+            else None
+        )
+        scan(before, budget, old_findings, old_checks, rules=rules, progress=progress)
+        scan(after, budget, findings, checks, rules=rules, progress=progress)
         paths = repository_paths(after, exclusions)
         if scope["kind"] == "repository":
             # An absent lockfile proves nothing once the file listing was cut short.
@@ -725,7 +759,13 @@ def run(options):
                 and row["reason"] != "excluded or unsupported"
                 for row in exclusions
             )
-            scan_paths(paths, findings, checks, after if listed else None)
+            if options.details:
+                announce(
+                    options, "Checking repository paths and dependency declarations..."
+                )
+            scan_paths(paths, findings, checks, after if listed else None, rules=rules)
+        if options.details:
+            announce(options, "Building architecture and identity-provider profiles...")
         architecture = describe(after, budget, checks, paths)
     except (SourceError, ScanLimit) as error:
         scan_error = str(error)
@@ -759,10 +799,10 @@ def run(options):
         and not any(row["reason"] != "excluded or unsupported" for row in exclusions)
     )
     host_findings, host_checks = settings_checks(settings)
-    findings.extend(host_findings)
+    findings.extend(row for row in host_findings if row["rule"] in active_ids)
     for finding in findings:
         finding.pop("_identity", None)
-    checks.extend(host_checks)
+    checks.extend(row for row in host_checks if row["rule"] in active_ids)
     architecture = architecture or {
         "frontend": [],
         "templates": [],
@@ -771,13 +811,18 @@ def run(options):
         "interpretation": "Architecture observation did not complete.",
     }
     if (
-        architecture["frontend"]
-        or any(
-            row["rule"] == "FRONTEND-BINDING" and row["status"] != "not_applicable"
+        "WEB-CSP" in active_ids
+        and (
+            architecture["frontend"]
+            or any(
+                row["rule"] == "FRONTEND-BINDING" and row["status"] != "not_applicable"
+                for row in checks
+            )
+        )
+        and not any(
+            row["rule"] == "WEB-CSP" and row["status"] != "not_applicable"
             for row in checks
         )
-    ) and not any(
-        row["rule"] == "WEB-CSP" and row["status"] != "not_applicable" for row in checks
     ):
         checks.append(
             {
@@ -858,6 +903,8 @@ def run(options):
                 )
         announce(options, "Calculating security score...")
         result = calculate(findings, checks, complete=complete, require_source=True)
+        if custom_checks and result["verdict"] == "scored":
+            result.update(score=None, grade=None, verdict="partial")
         result["analysis"] = "repository-score"
         explain_observations(result, findings, checks)
     if remote:
@@ -890,6 +937,9 @@ def run(options):
                 "coverage_fingerprint": hashlib.sha256(
                     json.dumps(coverage_identity).encode()
                 ).hexdigest(),
+                "selected_checks_fingerprint": hashlib.sha256(
+                    json.dumps(sorted(active_ids)).encode()
+                ).hexdigest(),
                 "source_policy": "bounded-static-v3",
                 "subject_kind": scope["kind"],
                 "host_settings_fingerprint": hashlib.sha256(
@@ -905,6 +955,16 @@ def run(options):
             ],
         }
     )
+    result["coverage"]["selected_checks"] = [rule["id"] for rule in rules]
+    if custom_checks:
+        result["scope"]["check_selection"] = {
+            "checks": options.checks or "all",
+            "skip_checks": options.skip_checks,
+            "count": len(rules),
+        }
+        result["warnings"].append(
+            "Only the explicitly selected checks were assessed; the observed score is not a full repository grade."
+        )
     if not change:
         result["findings"] = findings
         if scope["selection"] == "git-url":
@@ -970,7 +1030,8 @@ def execute(argv):
     if options.head and not options.base:
         arguments.error("--head requires --base.")
     if options.quiet and (
-        options.list_rules
+        options.list_checks
+        or options.list_rules
         or options.verify_rules
         or options.patch
         or options.base
@@ -980,12 +1041,33 @@ def execute(argv):
         or options.worktree
     ):
         arguments.error("--quiet/--quite supports repository scores only.")
+    if (options.checks or options.skip_checks) and (
+        options.engine == "analyzer"
+        or options.patch
+        or options.base
+        or options.commit
+        or options.staged
+        or options.unstaged
+        or options.worktree
+    ):
+        arguments.error("Check selection supports internal repository scans only.")
     try:
+        selected_rules(options.checks, options.skip_checks)
+    except ValueError as error:
+        arguments.error(str(error))
+    try:
+        started = time.monotonic()
         with Progress(
             enabled=not options.quiet and not options.json and not options.yaml
         ) as progress:
             options.step = progress.step
             result, status = run(options)
+        if (
+            options.details
+            and not options.quiet
+            and not (options.list_rules or options.list_checks or options.verify_rules)
+        ):
+            result["duration_seconds"] = round(max(0, time.monotonic() - started), 3)
         if options.quiet:
             value = result.get("score")
             if value is None:
@@ -999,6 +1081,15 @@ def execute(argv):
             output = yaml_text(result)
         elif options.verify_rules:
             output = f"Verified {result['rules_verified']} scanner rules, {result['examples_verified']} examples and {result['relevance_examples_verified']} relevance examples."
+        elif options.list_checks:
+            output = (
+                "Default: all\n\n"
+                + "\n".join(
+                    f"{group:<16} {len(ids):>2} checks"
+                    for group, ids in result["check_groups"].items()
+                )
+                + "\n\nUse --checks GROUP[,GROUP...] or rule IDs from --list-rules."
+            )
         elif options.list_rules:
             output = "\n\n".join(
                 f"{rule['id']} · {rule['severity']} · {rule['title']}\n{rule['criteria']}"
@@ -1017,6 +1108,8 @@ def execute(argv):
             )
         else:
             output = render(result, options.details, Style.detect(sys.stdout))
+            if "duration_seconds" in result:
+                output += f"\n\nDuration: {result['duration_seconds']:.2f} s"
         print(output)
         return status
     except KeyboardInterrupt:

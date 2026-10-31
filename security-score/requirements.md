@@ -6,8 +6,8 @@ Tests pin the exact behavior.
 
 - **REQ-01 — Standalone and deterministic.** The default engine uses only the
   bundled rules, without AppSec Analyzer or model calls. The same sources, rules,
-  and settings give the same result, and each result names its rule and scoring
-  versions.
+  and settings give the same security result, and each result names its rule and
+  scoring versions; observational timing metadata is excluded from this guarantee.
 
 - **REQ-02 — Repositories and changes.** Scan local checkouts and GitHub.com or
   GitLab.com repository URLs, including the repository-host security settings for
@@ -55,7 +55,9 @@ Tests pin the exact behavior.
   quiet and JSON/YAML modes. The exit status is the same in every mode, so scripts
   can tell a partial result from a complete one. Redirected output contains no
   color codes, and text from the scanned repository cannot inject terminal control
-  characters.
+  characters. Detailed text ends with the elapsed scan duration; structured output
+  requested with details includes it as `duration_seconds`, without affecting the
+  score, relevance, exit status or quiet output.
 
 - **REQ-09 — End-to-end check before release.** Changes to URL scanning or console
   output need a live run of the installed CLI against
@@ -110,3 +112,30 @@ Tests pin the exact behavior.
   hashes from password KDFs. JWT option checks apply to recognized verification
   calls; unresolved verification options remain unclear, and unrelated option
   objects never establish authentication evidence.
+
+- **REQ-18 — Targeted authentication checks.** Recognize explicit unsafe OAuth
+  flow choices, disabled SAML audience or time validation, and direct comparisons
+  of request passwords with stored password fields in supported source patterns.
+  Missing settings alone must not imply a vulnerability or disregard equivalent
+  controls supplied by a protocol or library.
+
+- **REQ-19 — Identity providers and grants.** Report recognized identity servers,
+  endpoint roles and OAuth grants with source locations, distinguishing requested,
+  configured and merely supported grants. Link a grant to a server only from
+  explicit evidence, leave dynamic configuration unresolved, and omit credentials,
+  paths and query parameters from reported server origins.
+
+- **REQ-20 — TLS and certificate configuration evidence.** Report recognized TLS
+  APIs/listeners and certificate or trust configuration as positive evidence only,
+  without reading certificate or key material or inferring deployment protection.
+  Explicitly disabled client certificate or hostname verification is a finding;
+  server-side TLS semantics must not be confused with client verification.
+
+- **REQ-21 — User-selected checks.** Allow users to list, select and omit bundled
+  check groups or individual rule IDs for internal repository scans; the default
+  remains the complete enabled catalog. Reject unknown or empty selections, report
+  the chosen scope and withhold a full repository grade for a subset.
+
+- **REQ-22 — Detailed scan progress.** Detailed text mode reports preparation,
+  file-check progress and major scan stages on stderr. Progress must not corrupt
+  structured output, quiet output, findings or exit statuses.

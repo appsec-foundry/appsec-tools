@@ -2507,9 +2507,328 @@
           "expected_grade": null
         }
       ]
+    },
+    {
+      "id": "AUTH-SSO",
+      "kind": "security-controls",
+      "area": "authentication",
+      "severity": "low",
+      "title": "Federated authentication API used",
+      "criteria": "Recognize calls to selected imported OAuth/OIDC and SAML APIs, browser redirects with literal OAuth authorization parameters, OIDC metadata JSON, Keycloak adapter URLs and scalar Spring OAuth2 client YAML settings. This is usage evidence only; it proves neither a running integration nor correct verification. Package or import presence alone is not a pass.",
+      "next_action": "Review provider, issuer, audience and callback validation for the actual deployment.",
+      "examples": [
+        {
+          "file": "auth.ts",
+          "source": "import { Strategy as Login } from 'passport-oauth2';\nnew Login({authorizationURL: url}, verify);\n",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "auth.py",
+          "source": "from requests_oauthlib import OAuth2Session\nclient = OAuth2Session(client_id)\n",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "auth.ts",
+          "source": "import { Strategy } from 'passport-oauth2';\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ],
+      "positive_only": true
+    },
+    {
+      "id": "AUTH-OAUTH-IMPLICIT",
+      "kind": "security-controls",
+      "area": "authentication",
+      "severity": "medium",
+      "title": "OAuth authorization response requests an access token",
+      "criteria": "Inspect literal browser authorization redirects, including one leading same-file URL constant, selected OAuth client options and URLSearchParams protocol fields. A response_type containing token is a candidate for browser token leakage; code is positive evidence for this flow choice only. Dynamic response types remain unclear; absent fields are not assessed.",
+      "next_action": "Prefer authorization code flow with PKCE; review token leakage and injection mitigations.",
+      "examples": [
+        {
+          "file": "auth.ts",
+          "source": "const provider = 'https://idp.example/authorize';\nwindow.location.assign(`${provider}?client_id=${clientId}&response_type=token`);\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "auth.ts",
+          "source": "window.location.assign('https://idp.example/authorize?client_id=example&response_type=code');\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "auth.ts",
+          "source": "window.location.assign(`https://idp.example/authorize?client_id=example&response_type=${flow}`);\n",
+          "outcome": "unclear",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "AUTH-OAUTH-PASSWORD",
+      "kind": "security-controls",
+      "area": "authentication",
+      "severity": "high",
+      "title": "OAuth password grant requested",
+      "criteria": "Recognize literal grant_type in JavaScript OAuth client options/URLSearchParams and Python requests/httpx request data, plus explicit Spring client grant configuration. The password grant violates the check; authorization_code, client_credentials and refresh_token are positive flow-choice evidence. Dynamic values remain unclear; other client APIs are not resolved.",
+      "next_action": "Replace the password grant with a suitable authorization code flow and PKCE.",
+      "examples": [
+        {
+          "file": "auth.ts",
+          "source": "const body = new URLSearchParams({grant_type: 'password', username: name, password: value});\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "auth.py",
+          "source": "import requests\nrequests.post(endpoint, data={'grant_type': 'password'})\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "auth.ts",
+          "source": "new URLSearchParams({grant_type: 'authorization_code'});\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "auth.ts",
+          "source": "const note = {grant_type: 'password'};\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "AUTH-OAUTH-PKCE",
+      "kind": "security-controls",
+      "area": "authentication",
+      "severity": "medium",
+      "title": "OAuth PKCE uses the plain challenge method",
+      "criteria": "Inspect explicit code_challenge_method in recognized authorization redirects and protocol parameter builders. plain violates this check and S256 satisfies it. A missing method is not a finding, since a library or another component may supply it.",
+      "next_action": "Use PKCE with S256 and verify the authorization server enforces the challenge.",
+      "examples": [
+        {
+          "file": "auth.ts",
+          "source": "new URLSearchParams({code_challenge_method: 'plain'});\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "auth.ts",
+          "source": "new URLSearchParams({code_challenge_method: 'S256'});\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "auth.ts",
+          "source": "new URLSearchParams({code_challenge_method: method});\n",
+          "outcome": "unclear",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "AUTH-SAML-VALIDATION",
+      "kind": "security-controls",
+      "area": "authentication",
+      "severity": "high",
+      "title": "SAML audience or time validation explicitly disabled",
+      "criteria": "Inspect literal options passed to imported Node-SAML or Passport-SAML constructors. audience: false and acceptedClockSkewMs: -1 violate the check; an explicit literal audience or nonnegative skew gives evidence for that setting only. Dynamic options stay unclear. Disabling assertion-signature preference alone is not treated as disabling all signature checks.",
+      "next_action": "Validate the expected audience and assertion validity times using the SAML library.",
+      "examples": [
+        {
+          "file": "auth.ts",
+          "source": "import { SAML } from '@node-saml/node-saml';\nnew SAML({audience: false});\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "auth.ts",
+          "source": "import { Strategy } from '@node-saml/passport-saml';\nnew Strategy({acceptedClockSkewMs: -1}, verify);\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "auth.ts",
+          "source": "import { SAML } from '@node-saml/node-saml';\nnew SAML({audience: 'https://sp.example', acceptedClockSkewMs: 0});\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "auth.ts",
+          "source": "import { SAML } from '@node-saml/node-saml';\nnew SAML(options);\n",
+          "outcome": "unclear",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "AUTH-PASSWORD-COMPARE",
+      "kind": "security-controls",
+      "area": "authentication",
+      "severity": "high",
+      "title": "Request password compared directly to a stored password field",
+      "criteria": "Recognize direct equality or inequality between a request password and a user/account/record password field in JavaScript and Python. This is a static candidate for plaintext storage or accepting a client-supplied stored verifier; aliases and surrounding authentication decisions are not resolved.",
+      "next_action": "Verify the submitted password using an established password KDF verification API.",
+      "examples": [
+        {
+          "file": "auth.ts",
+          "source": "if (req.body.password === user.password) { login(user); }\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "auth.py",
+          "source": "if request.form['password'] == user.password:\n    login(user)\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "auth.ts",
+          "source": "if (await bcrypt.compare(req.body.password, user.password)) login(user);\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "TLS-USAGE",
+      "kind": "security-controls",
+      "area": "transport",
+      "severity": "low",
+      "title": "TLS API or listener configured",
+      "criteria": "Recognize imported Node.js TLS/HTTPS APIs, Python SSLContext/create_default_context calls and nginx listen ssl directives. Presence shows TLS configuration, not network enforcement, a handshake, certificate validity or secure parameters. Absence has no scoring consequence.",
+      "next_action": "Verify TLS termination and protocol policy in the deployed environment.",
+      "examples": [
+        {
+          "file": "server.ts",
+          "source": "import https from 'node:https';\nhttps.createServer({cert: certificate, key: privateKey}, app);\n",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "server.py",
+          "source": "import ssl\nctx = ssl.create_default_context()\n",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "nginx.conf",
+          "source": "listen 443 ssl;\n",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "server.ts",
+          "source": "// https.createServer(options);\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ],
+      "positive_only": true
+    },
+    {
+      "id": "TLS-CERTIFICATE",
+      "kind": "security-controls",
+      "area": "transport",
+      "severity": "low",
+      "title": "TLS certificate or trust material configured",
+      "criteria": "Recognize cert, ca or pfx options on imported Node.js TLS/HTTPS calls, Python certificate-chain loading on a locally recognized context, and nginx certificate directives. Only configuration locations and fixed labels are reported; no certificate or key files are read. Contents, chain validity, expiry and deployment remain unverified.",
+      "next_action": "Verify certificate identity, chain, renewal and key storage in the deployment.",
+      "examples": [
+        {
+          "file": "server.ts",
+          "source": "import { createServer } from 'node:https';\ncreateServer({cert: certificate, key: privateKey}, app);\n",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "server.py",
+          "source": "import ssl\nctx = ssl.create_default_context()\nctx.load_cert_chain('server.pem', 'server.key')\n",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "nginx.conf",
+          "source": "ssl_certificate /run/tls/server.pem;\n",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "server.ts",
+          "source": "const cert = 'server.pem';\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ],
+      "positive_only": true
+    },
+    {
+      "id": "PY-TLS-CONTEXT",
+      "kind": "security-controls",
+      "area": "transport",
+      "severity": "high",
+      "title": "Python client TLS verification explicitly disabled",
+      "criteria": "Inspect check_hostname and verify_mode assignments on a uniquely assigned local client context created with ssl.create_default_context or SSLContext(PROTOCOL_TLS_CLIENT), including import aliases. Disabling hostname verification or setting CERT_NONE violates the check. Server contexts and unresolved or rebound contexts are not assessed.",
+      "next_action": "Keep hostname verification and CERT_REQUIRED enabled for client connections.",
+      "examples": [
+        {
+          "file": "client.py",
+          "source": "import ssl\nctx = ssl.create_default_context()\nctx.check_hostname = False\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "client.py",
+          "source": "import ssl\nctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)\nctx.verify_mode = ssl.CERT_NONE\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "client.py",
+          "source": "import ssl\nctx = ssl.create_default_context()\nctx.check_hostname = True\nctx.verify_mode = ssl.CERT_REQUIRED\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        }
+      ]
     }
   ],
-  "rule_version": 10,
+  "rule_version": 11,
   "change_relevance": {
     "version": 7,
     "documentation_extensions": [

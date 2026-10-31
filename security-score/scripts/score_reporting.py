@@ -191,6 +191,14 @@ POSITIVE_REASONS = {
     "WEB-SETTINGS": "Session or host setting restricted",
     "TF-PUBLIC-RESOURCE": "Public access explicitly restricted",
     "TF-MODULE-PIN": "Terraform module pinned to a commit or exact version",
+    "AUTH-SSO": "Federated authentication usage (configuration only)",
+    "AUTH-OAUTH-IMPLICIT": "OAuth response requests an authorization code",
+    "AUTH-OAUTH-PASSWORD": "OAuth grant avoids the password grant",
+    "AUTH-OAUTH-PKCE": "PKCE challenge uses S256",
+    "AUTH-SAML-VALIDATION": "SAML audience or time validation configured",
+    "TLS-USAGE": "TLS usage (configuration only)",
+    "TLS-CERTIFICATE": "TLS certificate or trust material (configuration only)",
+    "PY-TLS-CONTEXT": "Client certificate or hostname verification enabled",
 }
 
 HOST_REASONS = {
@@ -441,6 +449,34 @@ LOGIN_LABELS = {
     "password": "passwords (no SSO recognized)",
 }
 CLOUD_LOGIN_LABELS = {"oidc": "OIDC", "stored-key": "stored key"}
+
+
+def identity_profile(style, architecture):
+    providers = architecture.get("identity_providers", [])
+    grants = architecture.get("oauth_grants", [])
+    if not providers and not grants:
+        return []
+
+    def limited(values):
+        values = list(dict.fromkeys(values))
+        return "; ".join(values[:3]) + (
+            f"; +{len(values) - 3} more" if len(values) > 3 else ""
+        )
+
+    servers = limited(
+        f"{safe(row['technology'])}: {safe(row['server'] or 'unresolved server')} ({safe(row['endpoint'])}, {location(row)})"
+        for row in providers
+    )
+    flows = limited(
+        f"{safe(row['grant_type'])} ({safe(row['evidence'])}, {safe(row['server'] or 'server unresolved')}, {location(row)})"
+        + (f", PKCE {safe(row['pkce_method'])}" if row.get("pkce_method") else "")
+        for row in grants
+    )
+    return profile_rows(
+        style,
+        (("SSO servers", servers), ("OAuth grants", flows)),
+        "Identity profile",
+    )
 
 
 def architecture_profile(style, architecture):
@@ -697,6 +733,14 @@ def render_repository(result, summary, style=None):
             "Partial result: subscores describe recognized evidence only; no repository grade is available.",
             "",
         )
+    if scope.get("check_selection"):
+        selection = scope["check_selection"]
+        text = f"Checks: {safe(selection['checks'])}"
+        if selection.get("skip_checks"):
+            text += f"; skipped: {safe(selection['skip_checks'])}"
+        lines += note(
+            style, text + f" ({selection['count']} selected; subset assessment).", ""
+        )
     lines += overview_section(style, result.get("overview"))
     topics = subcategories(result)
     width = max(len(topic["title"]) for topic in topics)
@@ -704,6 +748,8 @@ def render_repository(result, summary, style=None):
         lines += ["", topic_header(style, topic, width)]
         lines += score_explanation(style, topic)
         lines += topic_examples(style, topic)
+        if topic["id"] == "authentication":
+            lines += identity_profile(style, result.get("architecture") or {})
         if topic["id"] == "architecture":
             lines += architecture_profile(style, result.get("architecture", {}))
             lines += note(

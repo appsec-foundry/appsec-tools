@@ -233,7 +233,11 @@ class JuiceShopE2ETests(unittest.TestCase):
                 "Deployment & transport",
             ],
         )
-        self.assertRegex(output, r"(?m)^Authentication +not assessed")
+        self.assertRegex(output, r"(?m)^Authentication +(?:100|[1-9]?\d)/100")
+        self.assertIn("AUTH-OAUTH-IMPLICIT", output)
+        self.assertIn("https://accounts.google.com", output)
+        self.assertIn("implicit (requested", output)
+        self.assertRegex(output, r"Duration: \d+\.\d{2} s\n$")
         scores = []
         for number, heading in enumerate(headings):
             end = (

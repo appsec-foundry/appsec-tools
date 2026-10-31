@@ -110,6 +110,32 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(errors.getvalue(), "")
         timer.assert_not_called()
 
+    def test_details_duration_is_last_and_does_not_change_score(self):
+        self.write("app.py", "requests.get(url, verify=True)\n")
+        status, plain, _ = self.invoke()
+        detail_status, detailed, _ = self.invoke("--details")
+        self.assertEqual(status, detail_status)
+        self.assertNotIn("duration_seconds", plain)
+        self.assertIsInstance(detailed["duration_seconds"], (int, float))
+        self.assertGreaterEqual(detailed["duration_seconds"], 0)
+        self.assertEqual(plain["score"], detailed["score"])
+        for flags, ending in (
+            (["--details"], "Duration: 4.25 s"),
+            (["--details", "--yaml"], None),
+        ):
+            output = io.StringIO()
+            with (
+                mock.patch.object(cli, "run", return_value=(dict(plain), status)),
+                mock.patch.object(cli.time, "monotonic", side_effect=[100, 104.25]),
+                contextlib.redirect_stdout(output),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                self.assertEqual(cli.main([str(self.repo), *flags]), status)
+            if ending:
+                self.assertTrue(output.getvalue().rstrip().endswith(ending))
+            else:
+                self.assertIn('"duration_seconds": 4.25', output.getvalue())
+
     def test_quite_alias_and_quiet_details_both_remain_silent(self):
         self.write("app.py", "eval(payload)\n")
         for args in (["--quite"], ["--quiet", "--details"], ["--quite", "--detail"]):
@@ -1939,17 +1965,25 @@ class ScoreTests(unittest.TestCase):
     def test_security_headers_count_only_accepted_literal_values(self):
         nosniff, frame = "X-Content-Type-Options", "X-Frame-Options"
         hsts, referrer = "Strict-Transport-Security", "Referrer-Policy"
+        coop, corp = "Cross-Origin-Opener-Policy", "Cross-Origin-Resource-Policy"
         for path, text, expected in (
             (
                 "server.js",
                 "import helmet from 'helmet';\napp.use(helmet());\n",
-                {(2, nosniff), (2, frame), (2, hsts), (2, referrer)},
+                {
+                    (2, nosniff),
+                    (2, frame),
+                    (2, hsts),
+                    (2, referrer),
+                    (2, coop),
+                    (2, corp),
+                },
             ),
             (
                 "server.js",
                 "const guard = require('helmet');\n"
                 "app.use(guard({ hsts: false, 'frameguard': { action: 'deny' } }));\n",
-                {(2, nosniff), (2, referrer)},
+                {(2, nosniff), (2, referrer), (2, coop), (2, corp)},
             ),
             (
                 "server.ts",
@@ -2019,7 +2053,7 @@ class ScoreTests(unittest.TestCase):
             "x.js", text, core.javascript_code(text)
         )
         self.assertLess(time.monotonic() - started, 2)
-        self.assertEqual(len(rows), 4)  # Only the innermost call has no arguments.
+        self.assertEqual(len(rows), 6)  # Only the innermost call has no arguments.
 
     def test_security_headers_never_deduct_or_withhold_a_score(self):
         self.write("app.py", "eval(payload)\n")

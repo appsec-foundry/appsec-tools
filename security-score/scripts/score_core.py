@@ -86,6 +86,7 @@ def validate_policy():
         "tf-public",
         "tf-iam",
         "tf-module",
+        "security-controls",
     }
     catalog = POLICY["rules"]  # Disabled rules still reserve their IDs.
     if (
@@ -166,6 +167,54 @@ def validate_policy():
 validate_policy()
 # Disabled rules keep their ID reserved and their examples, but never run.
 RULES = [rule for rule in RULES if rule.get("enabled", True)]
+
+
+def check_groups():
+    areas = {
+        "authentication": {"authentication"},
+        "tls": {"transport"},
+        "headers": {"frontend-policy"},
+        "architecture": {"execution", "injection", "deserialization"},
+        "frontend": {"output", "frontend-policy"},
+        "dependencies": {"supply-chain"},
+        "secrets": {"secrets"},
+        "cryptography": {"cryptography"},
+        "deployment": {"hardening", "infrastructure"},
+        "repository": {"repository-host"},
+    }
+    return {
+        "all": [rule["id"] for rule in RULES],
+        **{
+            group: [rule["id"] for rule in RULES if rule["area"] in matched]
+            for group, matched in areas.items()
+        },
+    }
+
+
+def selected_rules(include=None, exclude=None):
+    groups = check_groups()
+    identifiers = set(groups["all"])
+
+    def resolve(value):
+        result = set()
+        for token in value.split(","):
+            token = token.strip()
+            if token.lower() in groups:
+                result.update(groups[token.lower()])
+            elif token.upper() in identifiers:
+                result.add(token.upper())
+            else:
+                raise ValueError("Unknown check group or rule; use --list-checks.")
+        return result
+
+    chosen = resolve(include) if include is not None else identifiers
+    if exclude is not None:
+        chosen -= resolve(exclude)
+    if not chosen:
+        raise ValueError("Select at least one check; use --list-checks.")
+    return [rule for rule in RULES if rule["id"] in chosen]
+
+
 CATALOG_HASH = hashlib.sha256(CATALOG_BYTES).hexdigest()
 IMPLEMENTATION_HASH = hashlib.sha256(
     b"".join(
@@ -178,6 +227,7 @@ IMPLEMENTATION_HASH = hashlib.sha256(
             "score_remote.py",
             "score_remote_sources.py",
             "score_architecture.py",
+            "score_controls.py",
             "score_infrastructure.py",
             "score_overview.py",
             "score_relevance.py",
@@ -905,6 +955,15 @@ def applies(rule, path):
         return Path(path).name in DEPENDENCY_FILES
     if kind == "password-hash":
         return suffix in JS_EXTENSIONS | {".py"}
+    if kind == "security-controls":
+        return suffix in JS_EXTENSIONS | {
+            ".py",
+            ".conf",
+            ".config",
+            ".json",
+            ".yaml",
+            ".yml",
+        }
     if kind == "web-settings":
         return suffix == ".py"
     if kind.startswith("tf-"):
@@ -912,12 +971,12 @@ def applies(rule, path):
     return container_build_file(Path(path).name)
 
 
-def scan_paths(paths, findings, checks, files=None):
+def scan_paths(paths, findings, checks, files=None, *, rules=None):
     """Rules decided by the file list: a path alone, or a lockfile beside a manifest.
 
     Without files the lockfile rule stays silent, as for an incomplete listing.
     """
-    for rule in RULES:
+    for rule in RULES if rules is None else rules:
         status = "satisfied" if rule.get("positive_only") else "violated"
         if rule["kind"] == "path":
             pattern = re.compile(rule["pattern"])
@@ -959,18 +1018,27 @@ def scan_paths(paths, findings, checks, files=None):
     return findings, checks
 
 
-def scan(files, budget, findings=None, checks=None):
+def scan(files, budget, findings=None, checks=None, *, rules=None, progress=None):
     from score_architecture import PasswordHashResolver
 
     findings = [] if findings is None else findings
     checks = [] if checks is None else checks
     password_resolver = PasswordHashResolver(files, budget)
-    for path in sorted(files, key=source_priority):
+    for index, path in enumerate(sorted(files, key=source_priority), 1):
+        if progress and (index == 1 or index % 50 == 0 or index == len(files)):
+            progress(index, len(files))
         original = files[path]
         for source in original.get("fragments", [original]):
             try:
                 scan_source(
-                    path, source, budget, findings, checks, files, password_resolver
+                    path,
+                    source,
+                    budget,
+                    findings,
+                    checks,
+                    files,
+                    password_resolver,
+                    rules,
                 )
             except (RecursionError, TypeError, IndexError, OverflowError):
                 checks.append(
@@ -985,7 +1053,9 @@ def scan(files, budget, findings=None, checks=None):
     return findings, checks
 
 
-def scan_source(path, source, budget, findings, checks, files, password_resolver=None):
+def scan_source(
+    path, source, budget, findings, checks, files, password_resolver=None, rules=None
+):
     from score_architecture import observations
 
     budget.check()
@@ -1008,6 +1078,8 @@ def scan_source(path, source, budget, findings, checks, files, password_resolver
         code, parse_error = "", True
         parse_reason = f"JavaScript lexer limitation: {error.msg}"
     code_lines = code.splitlines()
+    controls = None
+    control_profile = {}
     signatures = {}
     signatures_ready = False
     if tree is not None:
@@ -1030,7 +1102,7 @@ def scan_source(path, source, budget, findings, checks, files, password_resolver
                 )
                 self.generic_visit(node)
 
-    for rule in RULES:
+    for rule in RULES if rules is None else rules:
         if not applies(rule, path):
             continue
         budget.check()
@@ -1038,6 +1110,12 @@ def scan_source(path, source, budget, findings, checks, files, password_resolver
         unreadable = parse_error and rule["kind"] != "secret-token"
         if unreadable:
             observed = []
+        elif rule["kind"] == "security-controls":
+            if controls is None:
+                from score_controls import inspect_controls
+
+                controls = inspect_controls(path, text, code, control_profile)
+            observed = controls.get(rule["id"], [])
         elif rule["kind"].startswith("py-"):
             observed = python_observations(rule, text, tree)[0]
         elif rule["kind"] in {
@@ -1109,6 +1187,17 @@ def scan_source(path, source, budget, findings, checks, files, password_resolver
         )
         if unreadable:
             checks[-1]["error"] = parse_reason
+        if rule["id"] == "AUTH-SSO" and any(control_profile.values()):
+            checks[-1]["identity_profile"] = {
+                key: [
+                    {
+                        **row,
+                        "line": source.get("lines", {}).get(row["line"], row["line"]),
+                    }
+                    for row in values
+                ]
+                for key, values in control_profile.items()
+            }
         for line, outcome, *_ in observed:
             if outcome != "violated":
                 continue

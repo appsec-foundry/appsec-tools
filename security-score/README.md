@@ -18,6 +18,8 @@ pipx install "git+ssh://git@github.com/appsec-foundry/appsec-analyzer-tools.git#
 
 security-score /path/to/repository             # score
 security-score /path/to/repository --details   # overview, subscores and findings per topic
+security-score /path/to/repository --details --checks authentication,tls,headers
+security-score /path/to/repository --quite     # only the number, without progress
 security-score https://github.com/juice-shop/juice-shop
 security-score /path/to/repository --staged    # relevance of staged changes
 ```
@@ -38,7 +40,7 @@ $ security-score /path/to/repository
 or a limit was reached. The number then covers only the recognized evidence.
 
 With `--details` (historical excerpt from a Juice Shop scan with rule version 9;
-current rules also recognize its imported MD5 password hashing):
+current rules also recognize its imported MD5 password hashing and OAuth implicit flow):
 
 ```text
 Security score · 0/100 (partial)
@@ -140,6 +142,14 @@ the output repeats the current values.
 
 This scan hit a limit, so its exit status is `1` and there is no grade.
 
+Current `--details` output also shows an identity profile under Authentication:
+recognized servers, endpoint roles, and grants marked `requested`, `configured`
+or `supported`. For Juice Shop it recognizes Google at
+`https://accounts.google.com` and the requested `implicit` flow. Server origins
+omit credentials, paths and query parameters. The last line shows the elapsed
+scan time, for example `Duration: 8.42 s`; JSON/YAML with `--details` includes
+`duration_seconds` instead.
+
 Only the number, for scripts and CI. Always check the exit status as well;
 here, `2` marks a partial result:
 
@@ -189,13 +199,13 @@ own [scoring policy](references/compatibility.md).
 | Topic | Checks |
 | --- | --- |
 | Repository | Host settings such as branch protection, rulesets, and required reviews (URL scans only); security policy file |
-| Authentication | Call-scoped JWT verification options, password hashing including simple imported JS/TS helpers, cookie flags, credentialed CORS, Django and Flask session and host settings; no rules for login flows or access control |
+| Authentication | JWT verification, password hashing and direct password comparisons, OAuth implicit/password grants and PKCE method, explicit SAML audience/time-check bypasses, cookie flags, credentialed CORS, Django/Flask settings; SSO usage and identity-server/grant profile |
 | Architecture | Code execution, SQL injection, and unsafe deserialization patterns |
 | Frontend | HTML output sinks, framework bypasses, Content Security Policy, and other security headers (positive evidence only) |
 | Dependencies & CI | Package sources and indexes, missing lockfiles, exactly pinned Python requirements, lockfile sources and integrity, Maven, Gradle, Cargo and `pyproject.toml` sources, install scripts, committed binaries, Action, image, GitLab include and Terraform module pinning, CI permissions, script injection, privileged pull request checkouts, downloads in CI and container builds |
 | Secrets | Credential and key files by name, Terraform state, and credentials in formats with a fixed prefix |
 | Cryptography | Weak hashes and predictable random values |
-| Deployment & transport | Debug mode, container host privileges, TLS verification, and Terraform: open administrative ports, public storage and databases, wildcard IAM |
+| Deployment & transport | Debug mode, container host privileges, TLS verification including Python client contexts, TLS/certificate configuration evidence, and Terraform: open administrative ports, public storage and databases, wildcard IAM |
 
 Each topic shows the lowest area score within it, how that score came about, and
 up to three findings with file, line and points deducted. Below them, `OK` lines
@@ -205,6 +215,10 @@ occurs. Positive evidence adds no points and does not offset findings. Some rule
 can only report positive evidence, such as security headers, SBOM or provenance
 steps, or a non-root container user. Their absence is no finding, and they cannot
 make a topic or repository assessable.
+SSO, TLS and certificate usage are also configuration evidence only. A package
+name alone is not a successful check, and certificate validity or a live TLS
+handshake is not tested. Header evidence includes CSP, HSTS, framing, content-type,
+referrer and cross-origin opener/resource policies.
 Architecture also shows a profile: SSO, passwords or both, the hash a password
 reaches, authentication mechanisms, single-page app or server-side templates,
 persistence, whether SQL queries are built by concatenation, deployment targets,
@@ -299,6 +313,28 @@ explained in the [technical reference](references/scoring.md#change-relevance).
 
 ### Options
 
+Choose checks without editing the bundled rules:
+
+```sh
+security-score --list-checks
+security-score /path/to/repository --checks authentication,tls,headers --details
+security-score /path/to/repository --skip-checks dependencies --details
+security-score /path/to/repository --checks JS-JWT,PY-JWT --json
+```
+
+The default is `all`. Available groups are `authentication`, `tls`, `headers`,
+`architecture`, `frontend`, `dependencies`, `secrets`, `cryptography`, `deployment`
+and `repository`; individual rule IDs from `--list-rules` also work. Groups can
+overlap. `--skip-checks` removes checks from the selection. Selection applies to
+internal repository scans, and an empty or unknown selection is an argument error.
+A subset reports its recognized index as partial and withholds the overall
+repository grade; `--checks all` preserves the default behavior.
+
+`--details` logs preparation, selected-check count, file progress, path checks,
+profile collection and scoring steps to stderr. JSON/YAML and both spellings
+`--quiet`/`--quite` suppress progress. Quiet mode prints only the numeric index;
+the exit status still indicates partial coverage.
+
 | Option | Meaning |
 | --- | --- |
 | `repository` | Local directory or supported HTTPS URL; defaults to the current directory. `--repo DIRECTORY` is an alternative for local directories. |
@@ -309,6 +345,9 @@ explained in the [technical reference](references/scoring.md#change-relevance).
 | `--timeout SECONDS` | Time budget from 0.1 to 120 seconds; default 60. |
 | `--engine analyzer` | Use a separately installed AppSec Analyzer instead of the bundled rules; repository scans only. `--analyzer PATH` sets the absolute path of a trusted executable; otherwise it is taken from `PATH`. See [compatibility](references/compatibility.md). |
 | `--list-rules` | Show the bundled rules. |
+| `--list-checks` | List selectable groups and their check counts without scanning. |
+| `--checks GROUPS_OR_IDS` | Run comma-separated groups or rule IDs; default `all`. |
+| `--skip-checks GROUPS_OR_IDS` | Omit groups or rule IDs from the selected checks. |
 | `--verify-rules` | Run the bundled rule examples. |
 | `--version` | Show the version and the Git commit it was built from. |
 | `--update` | Update the pipx installation; see below. |
@@ -361,7 +400,7 @@ From a clone, use `./security-score` instead of the URL.
 Run from `security-score/`:
 
 ```sh
-python3 -B -m unittest test_security_score -v   # offline tests
+python3 -B -m unittest test_security_score test_security_controls -v  # offline tests
 python3 -B -m unittest test_packaging -v        # build and install a wheel
 python3 scripts/score.py --verify-rules         # rule examples
 ```

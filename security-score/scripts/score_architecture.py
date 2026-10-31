@@ -182,9 +182,11 @@ SECURITY_HEADERS = {
         "X-Frame-Options",
         "Strict-Transport-Security",
         "Referrer-Policy",
+        "Cross-Origin-Opener-Policy",
+        "Cross-Origin-Resource-Policy",
     )
 }
-# helmet() sends all four by default. An option naming a header is not evaluated.
+# helmet() sends these headers by default. Named options are not evaluated.
 HELMET_OPTIONS = {
     "noSniff": "X-Content-Type-Options",
     "xContentTypeOptions": "X-Content-Type-Options",
@@ -193,6 +195,8 @@ HELMET_OPTIONS = {
     "hsts": "Strict-Transport-Security",
     "strictTransportSecurity": "Strict-Transport-Security",
     "referrerPolicy": "Referrer-Policy",
+    "crossOriginOpenerPolicy": "Cross-Origin-Opener-Policy",
+    "crossOriginResourcePolicy": "Cross-Origin-Resource-Policy",
 }
 
 
@@ -205,6 +209,10 @@ def header_accepted(name, value):
     if name == "Strict-Transport-Security":
         match = re.search(r"(?:^|;)\s*max-age\s*=\s*\"?(\d+)", value)
         return bool(match) and int(match[1]) > 0
+    if name == "Cross-Origin-Opener-Policy":
+        return value == "same-origin"
+    if name == "Cross-Origin-Resource-Policy":
+        return value in {"same-origin", "same-site"}
     # Browsers apply the last listed value they support; only the last is read.
     return value.split(",")[-1].strip() in {
         "no-referrer",
@@ -293,6 +301,8 @@ def header_observations(path, text, code):
                     for target in node.targets
                     if isinstance(target, ast.Subscript)
                 ]
+            elif isinstance(node, ast.Dict):
+                pairs = list(zip(node.keys, node.values))
             elif (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
@@ -1513,6 +1523,18 @@ def describe(files, budget, checks=(), paths=()):
     traits = {"frontend": [], "templates": [], "persistence": [], "authentication": []}
     keys = {"persistence": "kind", "authentication": "mechanism"}
     cloud_login = []
+    identity = {"identity_providers": [], "oauth_grants": []}
+    seen_identity = set()
+    for check in checks:
+        if check["rule"] != "AUTH-SSO" or origin(check["file"]) not in OWN_CODE:
+            continue
+        for key, records in check.get("identity_profile", {}).items():
+            for record in records:
+                row = {**record, "file": check["file"]}
+                signature = (key, tuple(sorted(row.items())))
+                if signature not in seen_identity:
+                    identity[key].append(row)
+                    seen_identity.add(signature)
 
     def add(trait, kind, name, path, line=None):
         row = {"technology": name, "file": path}
@@ -1580,6 +1602,7 @@ def describe(files, budget, checks=(), paths=()):
                 )
     return {
         **traits,
+        **identity,
         "login": login_summary(traits["authentication"]),
         "password_hashing": password_hashing(checks),
         "sql_queries": sql_queries(checks),
