@@ -66,9 +66,9 @@ Tests pin the exact behavior.
   architecture traits with their evidence: login through SSO, passwords or both,
   authentication mechanisms, the hash a password reaches, single-page app or
   server-side templates, persistence, how SQL query text is built, deployment
-  targets, and how CI logs in to a cloud. The profile is context only and never
-  changes score or grade; a trait that is not recognized is reported as such, not as
-  absent.
+  targets, how CI logs in to a cloud, lockfiles, exact dependency versions and the
+  update tool. The profile is context only and never changes score or grade; a trait
+  that is not recognized is reported as such, not as absent.
 
 - **REQ-11 — Security headers as positive evidence.** Browser security headers
   other than CSP count only as positive evidence. A missing, disabled, or

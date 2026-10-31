@@ -14,7 +14,7 @@ from pathlib import Path
 import re
 from urllib.parse import urlsplit
 
-from score_reporting import container_build_file
+from score_reporting import container_build_file, origin
 
 # A download piped to an interpreter, also through sudo or `sh -c "$(curl ...)"`.
 PIPE_TO_SHELL = re.compile(
@@ -33,6 +33,77 @@ def document(text):
         return result if isinstance(result, dict) else None
     except (ValueError, RecursionError):
         return None
+
+
+NPM_LOCK = re.compile(
+    r"package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?"
+)
+PYTHON_LOCK = re.compile(r"uv\.lock|poetry\.lock|pdm\.lock|pylock(?:\.[\w.-]+)?\.toml")
+PYPROJECT_DEPENDENCIES = re.compile(
+    r"(?m)^[ \t]*dependencies[ \t]*=[ \t]*\[\s*[\"']|^\[tool\.poetry\.dependencies\]"
+)
+# Where a project keeps its own manifests; fixtures and vendored copies do not count.
+OWN_CODE = {"source", "build"}
+
+
+def lockfiles(paths):
+    return [
+        {"technology": Path(path).name, "file": path}
+        for path in paths
+        if origin(path) in OWN_CODE
+        and (
+            NPM_LOCK.fullmatch(Path(path).name)
+            or PYTHON_LOCK.fullmatch(Path(path).name)
+            or Path(path).name == "Pipfile.lock"
+        )
+    ]
+
+
+def manifests_without_lock(paths, files):
+    """Manifests with dependencies and no lockfile beside them or at a root above.
+
+    A pyproject.toml with a build backend may be a library, which leaves its
+    versions to the consuming project, so it needs no lockfile here.
+    """
+
+    def directories(pattern):
+        return {
+            str(Path(path).parent)
+            for path in paths
+            if pattern.fullmatch(Path(path).name)
+        }
+
+    def locked(path, found):
+        return any(str(parent) in found for parent in Path(path).parents)
+
+    npm, python = directories(NPM_LOCK), directories(PYTHON_LOCK)
+    requirements = directories(re.compile(r"requirements[^/]*\.txt"))
+    present = set(paths)
+    missing = []
+    for path in paths:
+        name = Path(path).name
+        if origin(path) not in OWN_CODE:
+            continue
+        text = files.get(path, {}).get("text", "")
+        if name == "package.json":
+            manifest = document(text) or {}
+            if not locked(path, npm) and any(
+                isinstance(manifest.get(field), dict) and manifest[field]
+                for field in ("dependencies", "devDependencies", "optionalDependencies")
+            ):
+                missing.append(path)
+        elif name == "Pipfile":
+            if path + ".lock" not in present:
+                missing.append(path)
+        elif name == "pyproject.toml":
+            if (
+                PYPROJECT_DEPENDENCIES.search(text)
+                and "[build-system]" not in text
+                and not locked(path, python)
+                and str(Path(path).parent) not in requirements
+            ):
+                missing.append(path)
+    return missing
 
 
 def line_of(text, name):

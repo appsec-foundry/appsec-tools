@@ -1088,7 +1088,7 @@
       "area": "supply-chain",
       "severity": "medium",
       "title": "Python install requirements are not exactly pinned",
-      "criteria": "Inspect active requirement lines joined across backslash continuations. Floating requirements, HTTP sources, --extra-index-url, --trusted-host and editable VCS sources without a full commit violate this check. An exact version with a SHA-256 hash is a positive declaration. Includes, other options, local paths and unhashed pins remain unclear.",
+      "criteria": "Inspect active requirement lines joined across backslash continuations. Floating requirements, HTTP sources, --extra-index-url, --trusted-host and editable VCS sources without a full commit violate this check. An exact version is a positive declaration; a SHA-256 hash also binds the downloaded file. Includes, other options and local paths remain unclear.",
       "next_action": "Use reviewed exact versions and hashes for reproducible application installation; inspect included constraints and package indexes.",
       "examples": [
         {
@@ -1122,9 +1122,9 @@
         {
           "file": "requirements.txt",
           "source": "example-package==1.0.0\n",
-          "outcome": "unclear",
-          "expected_score": null,
-          "expected_grade": null
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
         },
         {
           "file": "requirements.txt",
@@ -1845,7 +1845,7 @@
       "id": "DEP-UPDATE-CONFIG",
       "positive_only": true,
       "kind": "path",
-      "pattern": "^(?:\\.github/(?:dependabot\\.ya?ml|renovate\\.json5?)|\\.gitlab/renovate\\.json5?|renovate\\.json5?|\\.renovaterc(?:\\.json)?)$",
+      "pattern": "^(?:\\.github/dependabot\\.ya?ml|(?:\\.(?:github|gitlab|gitea|forgejo|config)/)?renovate\\.json5?|\\.renovaterc(?:\\.json5?)?)$",
       "area": "supply-chain",
       "severity": "low",
       "title": "Dependency update configuration",
@@ -1865,7 +1865,110 @@
           "expected_grade": null
         },
         {
+          "file": ".github/renovate.json5",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": ".renovaterc.json5",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
           "file": "src/renovate.json",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "DEP-LOCK",
+      "kind": "dependency-lock",
+      "area": "supply-chain",
+      "severity": "medium",
+      "title": "Dependency manifest has no lockfile",
+      "criteria": "A package.json with dependencies, a Pipfile, and a pyproject.toml with dependencies but no build backend need a lockfile of their ecosystem beside them or in a directory above, which covers workspaces. The file list decides; lockfile content is not read. A pyproject.toml with a build backend may be a library and stays unassessed. A present lockfile earns no credit, and tests, fixtures and vendored copies are skipped.",
+      "next_action": "Commit the lockfile and install from it, for example with npm ci or uv sync --locked.",
+      "examples": [
+        {
+          "file": "package.json",
+          "source": "{\"dependencies\":{\"example\":\"^1.0.0\"}}",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "package.json",
+          "source": "{\"dependencies\":{\"example\":\"^1.0.0\"}}",
+          "paths": ["yarn.lock"],
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "packages/app/package.json",
+          "source": "{\"dependencies\":{\"example\":\"^1.0.0\"}}",
+          "paths": ["pnpm-lock.yaml"],
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "package.json",
+          "source": "{\"dependencies\":{\"example\":\"^1.0.0\"}}",
+          "paths": ["uv.lock"],
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "package.json",
+          "source": "{\"name\":\"example\"}",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "Pipfile",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "Pipfile",
+          "paths": ["Pipfile.lock"],
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "pyproject.toml",
+          "source": "[project]\nname = \"example\"\ndependencies = [\n  \"example\",\n]\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "pyproject.toml",
+          "source": "[project]\nname = \"example\"\ndependencies = [\n  \"example\",\n]\n",
+          "paths": ["uv.lock"],
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "pyproject.toml",
+          "source": "[build-system]\nrequires = [\"setuptools\"]\n[project]\nname = \"example\"\ndependencies = [\"example\"]\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "pyproject.toml",
+          "source": "[project]\nname = \"example\"\ndependencies = []\n",
           "outcome": "not_applicable",
           "expected_score": null,
           "expected_grade": null
@@ -2354,7 +2457,7 @@
       ]
     }
   ],
-  "rule_version": 8,
+  "rule_version": 9,
   "change_relevance": {
     "version": 7,
     "documentation_extensions": [

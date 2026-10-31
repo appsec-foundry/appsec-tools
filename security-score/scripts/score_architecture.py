@@ -29,8 +29,10 @@ from score_infrastructure import (
     install_observations,
     line_of,
     lockfile_observations,
+    lockfiles,
     logical_lines,
     manifest_source_observations,
+    OWN_CODE,
     release_observations,
     script_lines,
     terraform_iam_observations,
@@ -38,7 +40,7 @@ from score_infrastructure import (
     terraform_module_observations,
     terraform_public_observations,
 )
-from score_reporting import source_priority
+from score_reporting import origin, source_priority
 
 
 UNTRUSTED_CONTEXT = re.compile(
@@ -399,6 +401,10 @@ def npm_observations(kind, path, text, files):
     return rows
 
 
+EXACT_REQUIREMENT = re.compile(r"[\w.-]+(?:\[[\w,.-]+\])?==[^\s*]+")
+EXACT_NPM_VERSION = re.compile(r"=?v?\d+\.\d+\.\d+(?:[-+][\w.+-]+)?")
+
+
 def requirement_observations(text):
     """Options are unclear unless they add a plaintext, untrusted or mutable source."""
     rows = []
@@ -417,14 +423,14 @@ def requirement_observations(text):
                 if vcs and not re.search(r"@[0-9a-fA-F]{40}(?:[#&\s]|$)", value)
                 else "unclear"
             )
-        elif not re.match(r"[\w.-]+(?:\[[\w,.-]+\])?==[^\s*]+", value):
+        elif not EXACT_REQUIREMENT.match(value):
             status = "violated"
         else:
-            status = (
-                "satisfied"
-                if re.search(r"--hash=sha256:[0-9a-fA-F]{64}", value)
-                else "unclear"
+            hashed = re.search(r"--hash=sha256:[0-9a-fA-F]{64}", value)
+            rows.append(
+                (number, "satisfied", "sha256 hash" if hashed else "exact version")
             )
+            continue
         rows.append((number, status))
     return rows
 
@@ -914,6 +920,8 @@ NPM_TRAITS = (
             "keycloak-connect",
             "@auth0/auth0-react",
             "@auth0/auth0-spa-js",
+            "passport-google-oauth20",
+            "@react-oauth/google",
         ),
     ),
     ("authentication", "saml", ("passport-saml", "@node-saml/passport-saml")),
@@ -1030,6 +1038,22 @@ LOGIN_CONFIGURATION = (
         r"\bCredentialsProvider\s*\(",
     ),
 )
+# Sign-in endpoints of identity providers; code that names one starts a federated login.
+SSO_ENDPOINTS = tuple(
+    (name, re.compile(pattern))
+    for name, pattern in (
+        ("Google sign-in", r"accounts\.google\.com/o/oauth2"),
+        ("Microsoft sign-in", r"login\.microsoftonline\.com/[\w.-]{1,100}/oauth2"),
+        ("GitHub sign-in", r"github\.com/login/oauth/authorize"),
+        ("GitLab sign-in", r"gitlab\.com/oauth/authorize"),
+        ("Apple sign-in", r"appleid\.apple\.com/auth/authorize"),
+        ("Okta", r"\.okta\.com/oauth2/"),
+        ("Auth0", r"\.auth0\.com/authorize"),
+        ("Keycloak", r"/protocol/openid-connect/auth\b"),
+        ("Amazon Cognito", r"\.amazoncognito\.com/oauth2/authorize"),
+    )
+)
+COMMENT_LINE = re.compile(r"[ \t]*(?://|#|/?\*)")
 # A password read from a request body indicates a local password login.
 JS_PASSWORD_INPUT = re.compile(
     r"\b(?:req|request|ctx\.request)\.body\s*(?:\??\.\s*|\[\s*['\"])(?:password|passwd)\b"
@@ -1118,6 +1142,67 @@ def sql_queries(checks):
     }
 
 
+def sso_endpoints(text):
+    """Provider sign-in endpoints named outside comment lines, with their first line."""
+    found = []
+    for name, pattern in SSO_ENDPOINTS:
+        for match in pattern.finditer(text):
+            start = text.rfind("\n", 0, match.start()) + 1
+            if not COMMENT_LINE.match(text, start):
+                found.append((name, text.count("\n", 0, start) + 1))
+                break
+    return found
+
+
+def exact_versions(files, budget):
+    """How many direct dependencies name one version; context, not a control."""
+    counts = {"npm": Counter(), "Python": Counter()}
+
+    def count(ecosystem, exact):
+        counts[ecosystem]["direct"] += 1
+        counts[ecosystem]["exact"] += bool(exact)
+
+    for path, source in sorted(files.items()):
+        budget.check()
+        name = Path(path).name
+        if origin(path) not in OWN_CODE:
+            continue
+        if name == "package.json":
+            manifest = document(source["text"]) or {}
+            for field in ("dependencies", "devDependencies", "optionalDependencies"):
+                values = manifest.get(field)
+                for value in values.values() if isinstance(values, dict) else ():
+                    if isinstance(value, str) and not value.startswith(
+                        ("file:", "link:", "workspace:")
+                    ):
+                        count("npm", EXACT_NPM_VERSION.fullmatch(value))
+        elif name.startswith("requirements") and Path(path).suffix == ".txt":
+            for _, value in logical_lines(source["text"]):
+                value = re.sub(r"(?:^|\s)#.*", "", value).strip()
+                if value and not value.startswith("-"):
+                    count("Python", EXACT_REQUIREMENT.match(value))
+    return [
+        {"ecosystem": ecosystem, "exact": row["exact"], "direct": row["direct"]}
+        for ecosystem, row in counts.items()
+        if row["direct"]
+    ]
+
+
+def dependency_updates(checks):
+    """Which tool a recognized update configuration belongs to."""
+    return sorted(
+        (
+            {
+                "technology": "Renovate" if "renovate" in row["file"] else "Dependabot",
+                "file": row["file"],
+            }
+            for row in checks
+            if row["rule"] == "DEP-UPDATE-CONFIG"
+        ),
+        key=lambda row: row["file"],
+    )
+
+
 def password_hashing(checks):
     """Which recognized hash a password reaches, from the PASSWORD-HASH check."""
     rows = [
@@ -1169,6 +1254,9 @@ def describe(files, budget, checks=(), paths=()):
         for mechanism, name, suffixes, pattern in LOGIN_CONFIGURATION:
             if suffix in suffixes and re.search(pattern, source["text"]):
                 add("authentication", mechanism, name, path)
+        if origin(path) == "source":
+            for name, line in sso_endpoints(source["text"]):
+                add("authentication", "federated", name, path, line)
         if ci_file(path):
             cloud_login.extend(cloud_login_rows(path, source["text"]))
         if Path(path).name == "package.json":
@@ -1223,5 +1311,8 @@ def describe(files, budget, checks=(), paths=()):
         "sql_queries": sql_queries(checks),
         "deployment": deployment_rows(files, paths),
         "cloud_login": cloud_login,
+        "lockfiles": lockfiles(paths),
+        "exact_versions": exact_versions(files, budget),
+        "dependency_updates": dependency_updates(checks),
         "interpretation": "Declared packages, imports and selected code patterns only; their presence gives no score credit, and an unrecognized trait may still exist. CSP delivery, authorization, DB privileges and deployment controls require wider evidence.",
     }

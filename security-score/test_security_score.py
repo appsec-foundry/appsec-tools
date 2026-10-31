@@ -23,12 +23,14 @@ sys.path.insert(0, str(SCRIPTS))
 import score as cli  # noqa: E402
 import score_architecture as architecture  # noqa: E402
 import score_core as core  # noqa: E402
+import score_infrastructure as infrastructure  # noqa: E402
 import score_sources as sources  # noqa: E402
 import score_remote as remote  # noqa: E402
 import score_remote_sources as remote_sources  # noqa: E402
 import score_relevance as relevance  # noqa: E402
 import score_update  # noqa: E402
 import score_version  # noqa: E402
+import score_calculation  # noqa: E402
 import score_reporting as reporting  # noqa: E402
 import score_style as style  # noqa: E402
 
@@ -234,7 +236,7 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(len(result["findings"]), 12)
         self.assertEqual(
             cli.render(result, details=True).count(
-                "Static pattern candidates; exploitability unverified."
+                "Findings are static pattern matches; exploitability unverified."
             ),
             1,
         )
@@ -528,7 +530,7 @@ class ScoreTests(unittest.TestCase):
                 "requirements.txt",
                 "example==1.0 # --hash=sha256:" + digest,
                 "PY-DEPENDENCIES",
-                "unclear",
+                "satisfied",
             ),
             (
                 "headers.py",
@@ -1425,7 +1427,7 @@ class ScoreTests(unittest.TestCase):
                 )
                 self.assertIn("PY-EXEC", output.getvalue())
                 self.assertIn("app.py:1", output.getvalue())
-                self.assertIn("1 candidate", output.getvalue())
+                self.assertIn("1 finding", output.getvalue())
                 self.assertNotIn("\033", output.getvalue())
                 self.assertIn("Reading selected sources...", errors.getvalue())
             else:
@@ -1484,6 +1486,77 @@ class ScoreTests(unittest.TestCase):
             len(result["findings"]),
         )
 
+    def test_topic_scores_show_the_arithmetic_behind_them(self):
+        self.write("app.py", "eval(payload)\n")
+        _, result, _ = self.invoke()
+        block = " ".join(
+            topic_block(cli.render(result, details=True), "Architecture").split()
+        )
+        self.assertIn("Score: 100 - 25 = 75, capped at 59 by a high finding", block)
+        self.assertIn("(-25)", block)
+
+    def test_repeated_findings_show_only_the_counted_points(self):
+        self.write("app.py", "eval(payload)\n" * 5)
+        _, result, _ = self.invoke()
+        block = " ".join(
+            topic_block(cli.render(result, details=True), "Architecture").split()
+        )
+        self.assertIn("Score: 100 - 75 = 25", block)
+        self.assertIn("(-75)", block)
+        self.assertIn("(+4 more)", block)
+        self.assertNotIn("capped", block)
+
+    def test_deductions_above_100_are_shown_as_floored(self):
+        self.write(
+            "app.py",
+            "eval(payload)\n" * 3 + "subprocess.run(cmd, shell=True)\n" * 2,
+        )
+        _, result, _ = self.invoke()
+        block = " ".join(
+            topic_block(cli.render(result, details=True), "Architecture").split()
+        )
+        self.assertRegex(block, r"^Architecture\s+0/100")
+        self.assertIn("Score: 100 - 125, floored at 0", block)
+
+    def test_topics_with_several_scored_areas_explain_each_area(self):
+        self.write(
+            "app.py", "eval(payload)\neval(other)\ncursor.execute('SELECT ' + value)\n"
+        )
+        _, result, _ = self.invoke()
+        block = " ".join(
+            topic_block(cli.render(result, details=True), "Architecture").split()
+        )
+        self.assertIn(
+            "Score: execution 100 - 50 = 50; injection 100 - 25 = 75, "
+            "capped at 59 by a high finding. The lowest area counts.",
+            block,
+        )
+
+    def test_hidden_finding_types_keep_their_points_visible(self):
+        self.write(
+            "app.py",
+            "eval(payload)\nsubprocess.run(cmd, shell=True)\ncursor.execute('SELECT ' + value)\n",
+        )
+        self.write("script.js", "eval(payload);\n")
+        _, result, _ = self.invoke()
+        block = " ".join(
+            topic_block(cli.render(result, details=True), "Architecture").split()
+        )
+        self.assertRegex(block, r"\+1 more finding types \(-\d+\)")
+
+    def test_score_legend_follows_the_catalog_values(self):
+        self.write("app.py", "eval(payload)\n")
+        _, result, _ = self.invoke()
+        details = " ".join(cli.render(result, details=True).split())
+        scoring = score_calculation.POLICY["scoring"]
+        self.assertIn(
+            f"at most {scoring['counted_instances']} per rule: "
+            f"critical {scoring['weights']['critical']}, ",
+            details,
+        )
+        self.assertIn(f"high {scoring['severity_caps']['high']}, ", details)
+        self.assertIn("OK lines add no points", details)
+
     def test_topic_examples_are_bounded_without_dropping_findings(self):
         self.write(
             "app.py",
@@ -1513,7 +1586,7 @@ class ScoreTests(unittest.TestCase):
         details = cli.render(result, details=True)
         frontend = topic_block(details, "Frontend")
         architecture = topic_block(details, "Architecture")
-        self.assertRegex(frontend, r"^Frontend\s+79/100\s.*1 candidate")
+        self.assertRegex(frontend, r"^Frontend\s+79/100\s.*1 finding")
         self.assertRegex(frontend, r"(?m)^  MEDIUM\s+.*\n.*JS-HTML . bad\.js:1$")
         self.assertRegex(
             frontend,
@@ -2286,6 +2359,162 @@ class ScoreTests(unittest.TestCase):
                 ("local-password", "next-auth credentials"),
             ],
         )
+
+    def test_sign_in_endpoint_in_code_is_recognized_as_sso(self):
+        self.write("routes/login.js", "\nconst { email, password } = req.body;\n")
+        self.write(
+            "src/login.component.ts",
+            "// comment\nconst url = 'https://accounts.google.com/o/oauth2/v2/auth'\n",
+        )
+        profile = self.invoke()[1]["architecture"]
+        self.assertEqual(profile["login"], "both")
+        self.assertIn(
+            {
+                "technology": "Google sign-in",
+                "file": "src/login.component.ts",
+                "mechanism": "federated",
+                "line": 2,
+            },
+            profile["authentication"],
+        )
+
+    def test_sign_in_endpoints_in_comments_and_tests_are_not_sso(self):
+        endpoint = "https://accounts.google.com/o/oauth2/v2/auth"
+        self.write("routes/login.js", "\nconst { email, password } = req.body;\n")
+        self.write("src/note.ts", f"// see {endpoint}\n * {endpoint}\n")
+        self.write("src/note.py", f"# see {endpoint}\n")
+        self.write("test/login.spec.ts", f"const url = '{endpoint}'\n")
+        self.write("frontend/src/assets/lib.min.js", f"var url='{endpoint}'\n")
+        self.assertEqual(self.invoke()[1]["architecture"]["login"], "password")
+
+    def test_commented_endpoint_does_not_hide_a_later_one(self):
+        endpoint = "https://github.com/login/oauth/authorize"
+        self.assertEqual(
+            architecture.sso_endpoints(f"// {endpoint}\nconst url = '{endpoint}'\n"),
+            [("GitHub sign-in", 2)],
+        )
+
+    def test_crafted_comments_keep_the_sign_in_search_bounded(self):
+        started = time.monotonic()
+        text = "// accounts.google.com/o/oauth2\n" * 15000
+        self.assertEqual(architecture.sso_endpoints(text), [])
+        self.assertLess(time.monotonic() - started, 2)
+
+    def test_manifest_without_a_lockfile_is_a_finding(self):
+        self.write("package.json", '{"dependencies":{"example":"^1.0.0"}}')
+        result = self.invoke()[1]
+        finding = next(row for row in result["findings"] if row["rule"] == "DEP-LOCK")
+        self.assertEqual(finding["file"], "package.json")
+        self.assertEqual(finding["severity"], "medium")
+
+    def test_workspace_lockfile_covers_nested_manifests(self):
+        for lock in ("yarn.lock", "pnpm-lock.yaml", "bun.lockb"):
+            with self.subTest(lock=lock):
+                self.write(lock, "")
+                self.write(
+                    "packages/app/package.json", '{"dependencies":{"a":"^1.0.0"}}'
+                )
+                rules = {row["rule"] for row in self.invoke()[1]["findings"]}
+                self.assertNotIn("DEP-LOCK", rules)
+                (self.repo / lock).unlink()
+
+    def test_lockfile_of_a_sibling_project_does_not_cover_a_manifest(self):
+        self.write("web/yarn.lock", "")
+        self.write("api/package.json", '{"dependencies":{"a":"^1.0.0"}}')
+        rules = {row["rule"] for row in self.invoke()[1]["findings"]}
+        self.assertIn("DEP-LOCK", rules)
+
+    def test_lockfile_alone_gives_no_grade(self):
+        self.write("pyproject.toml", '[project]\ndependencies = ["example"]\n')
+        self.write("uv.lock", "version = 1\n")
+        result = self.invoke()[1]
+        self.assertEqual(result["verdict"], "undetermined")
+        self.assertIsNone(result["grade"])
+        self.assertEqual(result["architecture"]["lockfiles"][0]["file"], "uv.lock")
+
+    def test_fixture_manifests_need_no_lockfile(self):
+        manifest = '{"dependencies":{"example":"^1.0.0"}}'
+        self.write("test/fixtures/app/package.json", manifest)
+        self.write("vendor/lib/package.json", manifest)
+        self.write("lib/__fixtures__/app/package.json", manifest)
+        rules = {row["rule"] for row in self.invoke()[1]["findings"]}
+        self.assertNotIn("DEP-LOCK", rules)
+
+    def test_malformed_manifest_needs_no_lockfile(self):
+        self.write("package.json", "{not json")
+        self.write("pyproject.toml", "\n" * 1000 + "dependencies = [")
+        rules = {row["rule"] for row in self.invoke()[1]["findings"]}
+        self.assertNotIn("DEP-LOCK", rules)
+
+    def test_crafted_pyproject_keeps_the_lock_check_bounded(self):
+        started = time.monotonic()
+        text = "\n" * 500_000 + "dependencies =" + " " * 10_000
+        missing = infrastructure.manifests_without_lock(
+            ["pyproject.toml"], {"pyproject.toml": {"text": text}}
+        )
+        self.assertEqual(missing, [])
+        self.assertLess(time.monotonic() - started, 2)
+
+    def test_python_app_with_requirements_needs_no_extra_lockfile(self):
+        self.write("pyproject.toml", '[project]\ndependencies = ["example"]\n')
+        self.write("requirements.txt", "example==1.0\n")
+        rules = {row["rule"] for row in self.invoke()[1]["findings"]}
+        self.assertNotIn("DEP-LOCK", rules)
+
+    def test_exact_requirement_counts_as_pinned_and_names_the_kind_of_pin(self):
+        digest = "a" * 64
+        self.write("requirements.txt", f"a==1.0\nb==2.0 --hash=sha256:{digest}\n")
+        result = self.invoke()[1]
+        self.assertEqual(result["findings"], [])
+        block = " ".join(
+            topic_block(cli.render(result, details=True), "Dependencies & CI").split()
+        )
+        self.assertIn("Requirement pinned: exact version, sha256 hash", block)
+
+    def test_dependency_profile_names_locks_versions_and_update_tool(self):
+        self.write(
+            "package.json",
+            '{"dependencies":{"a":"1.2.3","b":"^1.0.0","c":"file:../c"}}',
+        )
+        self.write("package-lock.json", '{"lockfileVersion":3,"packages":{}}')
+        self.write("requirements.txt", "a==1.0\nb>=2\n-e .\n")
+        self.write("renovate.json", "{}\n")
+        result = self.invoke()[1]
+        profile = result["architecture"]
+        self.assertEqual(
+            profile["exact_versions"],
+            [
+                {"ecosystem": "npm", "exact": 1, "direct": 2},
+                {"ecosystem": "Python", "exact": 1, "direct": 2},
+            ],
+        )
+        self.assertEqual(
+            profile["dependency_updates"],
+            [{"technology": "Renovate", "file": "renovate.json"}],
+        )
+        block = " ".join(
+            topic_block(cli.render(result, details=True), "Dependencies & CI").split()
+        )
+        self.assertIn("Lockfile package-lock.json", block)
+        self.assertIn(
+            "Exact versions npm 1 of 2, Python 1 of 2 direct dependencies", block
+        )
+        self.assertIn("Updates Renovate", block)
+
+    def test_dependabot_is_named_and_a_missing_tool_stays_unrecognized(self):
+        self.write(".github/dependabot.yml", "version: 2\n")
+        self.write("requirements.txt", "a==1.0\n")
+        result = self.invoke()[1]
+        block = " ".join(
+            topic_block(cli.render(result, details=True), "Dependencies & CI").split()
+        )
+        self.assertIn("Updates Dependabot", block)
+        self.assertIn("Lockfile none recognized", block)
+
+    def test_repository_without_dependencies_has_no_dependency_profile(self):
+        self.write("app.py", "eval(payload)\n")
+        details = cli.render(self.invoke()[1], details=True)
+        self.assertNotIn("Lockfile", details)
 
     def test_repository_paths_skip_generated_directories(self):
         self.assertEqual(
@@ -3142,6 +3371,27 @@ class RemoteTests(unittest.TestCase):
         self.assertEqual(
             result["coverage"]["selection_limits"], {"truncated repository listing": 1}
         )
+
+    def scan_manifest_listing(self, **listing):
+        source = b'{"dependencies":{"example":"^1.0.0"}}'
+        entry = self.entry(path="package.json", size=len(source))
+        with (
+            mock.patch.object(remote, "host_settings", return_value=([], "a" * 40)),
+            mock.patch.object(
+                remote,
+                "get",
+                side_effect=[(self.listing([entry], **listing), 200), (source, 200)],
+            ),
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            cli.main(["https://github.com/example/project", "--json"])
+        return {row["rule"] for row in json.loads(output.getvalue())["findings"]}
+
+    def test_absent_lockfile_counts_only_for_a_complete_listing(self):
+        self.assertIn("DEP-LOCK", self.scan_manifest_listing())
+
+    def test_cut_listing_cannot_prove_a_lockfile_is_missing(self):
+        self.assertNotIn("DEP-LOCK", self.scan_manifest_listing(truncated=True))
 
     def test_gitlab_pagination_leaves_time_to_download_retained_sources(self):
         budget, listing_budget = sources.Budget(), sources.Budget()

@@ -577,8 +577,13 @@ def verify_rules():
                 findings, checks = settings_checks(
                     [{**example, "reason": "Isolated example."}]
                 )
-            elif rule["kind"] == "path":
-                findings, checks = scan_paths([example["file"]], [], [])
+            elif rule["kind"] in {"path", "dependency-lock"}:
+                findings, checks = scan_paths(
+                    [example["file"], *example.get("paths", [])],
+                    [],
+                    [],
+                    {example["file"]: {"text": example.get("source", "")}},
+                )
                 checks.append(
                     {
                         "rule": rule["id"],
@@ -682,7 +687,13 @@ def run(options):
         scan(after, budget, findings, checks)
         paths = repository_paths(after, exclusions)
         if scope["kind"] == "repository":
-            scan_paths(paths, findings, checks)
+            # An absent lockfile proves nothing once the file listing was cut short.
+            listed = not any(
+                row["file"] == "repository-tree"
+                and row["reason"] != "excluded or unsupported"
+                for row in exclusions
+            )
+            scan_paths(paths, findings, checks, after if listed else None)
         architecture = describe(after, budget, checks, paths)
     except (SourceError, ScanLimit) as error:
         scan_error = str(error)

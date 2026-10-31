@@ -257,8 +257,8 @@ class JuiceShopE2ETests(unittest.TestCase):
         )
         # helmet.noSniff() and helmet.frameguard() in server.ts are positive evidence.
         self.assertRegex(output, r"(?m)^ {12}WEB-HEADERS . server\.ts:\d+")
-        counts = re.findall(r"(?m)^[A-Z].*?(\d+) candidates?$", output)
-        total = re.search(r"\d+ files? checked . (\d+) candidates?", output)
+        counts = re.findall(r"(?m)^[A-Z].*?(\d+) findings?$", output)
+        total = re.search(r"\d+ files? checked . (\d+) findings?", output)
         self.assertIsNotNone(total)
         self.assertEqual(sum(map(int, counts)), int(total[1]))
         for debug_fragment in (

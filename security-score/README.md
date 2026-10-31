@@ -42,13 +42,14 @@ With `--details` (excerpt from a Juice Shop scan):
 ```text
 Security score · 0/100 (partial)
 Scope: https://github.com/juice-shop/juice-shop @ 717f5efa886b
-Static pattern candidates; exploitability unverified.
+Findings are static pattern matches; exploitability unverified.
 Partial result: subscores describe recognized evidence only; no repository grade is available.
 
-Repository               79/100  ████████░░  2 candidates
-  MEDIUM    Default branch protection reported disabled
+Repository               79/100  ████████░░  2 findings
+  Score: 100 - 20 = 80, capped at 79 by a medium finding
+  MEDIUM    Default branch protection reported disabled (-10)
             HOST-DEFAULT-BRANCH-PROTECTION · host API
-  MEDIUM    Required reviews reported disabled
+  MEDIUM    Required reviews reported disabled (-10)
             HOST-REQUIRED-REVIEWS · host API
   OK        Security policy present
             REPO-SECURITY-POLICY · SECURITY.md:1
@@ -56,21 +57,23 @@ Repository               79/100  ████████░░  2 candidates
 Authentication          not assessed
   No recognized control evidence from the available checks.
 
-Architecture              0/100  ░░░░░░░░░░  19 candidates
-  HIGH      Constructed SQL passed to a query call
+Architecture              0/100  ░░░░░░░░░░  19 findings
+  Score: execution 100 - 100 = 0; injection 100 - 75 = 25. The lowest area counts.
+  HIGH      Constructed SQL passed to a query call (-75)
             JS-SQL · routes/login.ts:34 (+12 more)
-  HIGH      JavaScript code evaluation
+  HIGH      JavaScript code evaluation (-75)
             JS-EVAL · lib/xml.ts:12 (+4 more)
-  HIGH      JavaScript command execution through exec
+  HIGH      JavaScript command execution through exec (-25)
             JS-SHELL · scripts/package.mjs:20
   OK        Data-only parsing with JSON.parse
             JS-EVAL · frontend/src/app/Services/basket.service.ts:98 (+44 more)
   OK        Literal SQL text passed to a query call
             JS-SQL · data/static/codefixes/loginAdminChallenge_3.ts:15 (+4 more)
   Profile (context only, adds no score credit):
-    Login           passwords (no SSO recognized)
+    Login           SSO and passwords
     Password hash   none recognized
-    Authentication  local passwords (password from request), JWT (express-jwt, jsonwebtoken)
+    Authentication  local passwords (password from request), SSO (OIDC/OAuth) (Google sign-in), JWT
+                    (express-jwt, jsonwebtoken)
     Frontend        single-page app (@angular/core), server-side templates (hbs, pug)
     Persistence     SQL (sequelize, sqlite3)
     SQL queries     concatenated or interpolated in 13 of 33 query calls, 14 unresolved
@@ -78,14 +81,26 @@ Architecture              0/100  ░░░░░░░░░░  19 candidates
     Deployment      AWS, Docker Compose, Terraform
     Cloud login     none recognized
 ...
-Secrets                   5/100  ░░░░░░░░░░  5 candidates
-  HIGH      Credential in a recognized format
+Dependencies & CI         0/100  ░░░░░░░░░░  31 findings
+  Score: 100 - 117, floored at 0
+  HIGH      CI step pipes a download to an interpreter (-25)
+            CI-REMOTE-SCRIPT · .github/workflows/ci.yml:374
+...
+  Profile (context only, adds no score credit):
+    Lockfile        none recognized
+    Exact versions  npm 6 of 176 direct dependencies
+    Updates         none recognized
+
+Secrets                   5/100  ░░░░░░░░░░  5 findings
+  Score: 100 - 95 = 5
+  HIGH      Credential in a recognized format (-75)
             SECRET-TOKEN · lib/insecurity.ts:21 (+2 more)
-  MEDIUM    Credential or key file in the repository
+  MEDIUM    Credential or key file in the repository (-20)
             SECRET-FILE · ctf.key:1 (+1 more)
 
-Cryptography             59/100  ██████░░░░  1 candidate
-  HIGH      Predictable random value for a named secret
+Cryptography             59/100  ██████░░░░  1 finding
+  Score: 100 - 25 = 75, capped at 59 by a high finding
+  HIGH      Predictable random value for a named secret (-25)
             JS-RANDOM · lib/insecurity.ts:53
 
 Deployment & transport  not assessed
@@ -93,8 +108,13 @@ Deployment & transport  not assessed
             IAC-USER · Dockerfile:39 (+1 more)
 
 Coverage
-  965 files checked · 87 candidates · scan incomplete
+  965 files checked · 89 findings · scan incomplete
 ```
+
+Every area starts at 100. A rule deducts points per occurrence, up to three
+occurrences, and the worst severity also limits the score, as in the `Score:`
+lines above. The number in brackets is what a finding costs. A closing note in
+the output repeats the current values.
 
 This scan hit a limit, so its exit status is `1` and there is no grade.
 
@@ -150,13 +170,14 @@ own [scoring policy](references/compatibility.md).
 | Authentication | JWT verification options, password hashing, cookie flags, credentialed CORS, Django and Flask session and host settings; no rules for login flows or access control |
 | Architecture | Code execution, SQL injection, and unsafe deserialization patterns |
 | Frontend | HTML output sinks, framework bypasses, Content Security Policy, and other security headers (positive evidence only) |
-| Dependencies & CI | Package sources and indexes, lockfile sources and integrity, Maven, Gradle, Cargo and `pyproject.toml` sources, install scripts, committed binaries, Action, image, GitLab include and Terraform module pinning, CI permissions, script injection, privileged pull request checkouts, downloads in CI and container builds |
+| Dependencies & CI | Package sources and indexes, missing lockfiles, exactly pinned Python requirements, lockfile sources and integrity, Maven, Gradle, Cargo and `pyproject.toml` sources, install scripts, committed binaries, Action, image, GitLab include and Terraform module pinning, CI permissions, script injection, privileged pull request checkouts, downloads in CI and container builds |
 | Secrets | Credential and key files by name, Terraform state, and credentials in formats with a fixed prefix |
 | Cryptography | Weak hashes and predictable random values |
 | Deployment & transport | Debug mode, container host privileges, TLS verification, and Terraform: open administrative ports, public storage and databases, wildcard IAM |
 
-Each topic shows the lowest area score within it and up to three findings with
-file and line. Below them, `OK` lines show up to two kinds of positive evidence,
+Each topic shows the lowest area score within it, how that score came about, and
+up to three findings with file, line and points deducted. Below them, `OK` lines
+show up to two kinds of positive evidence,
 such as literal SQL text or pinned Actions, with a location and how often it
 occurs. Positive evidence adds no points and does not offset findings. Some rules
 can only report positive evidence, such as security headers, SBOM or provenance
@@ -165,8 +186,11 @@ make a topic or repository assessable.
 Architecture also shows a profile: SSO, passwords or both, the hash a password
 reaches, authentication mechanisms, single-page app or server-side templates,
 persistence, whether SQL queries are built by concatenation, deployment targets,
-and whether CI logs in to a cloud through OIDC or a stored key. The profile is
-context and adds no points.
+and whether CI logs in to a cloud through OIDC or a stored key. SSO counts when a
+package, a setting or a provider's sign-in URL in the code shows it; whether it is
+switched on stays open. Dependencies & CI shows a similar profile: lockfiles, how
+many direct dependencies name an exact version, and Renovate or Dependabot. Both
+profiles are context and add no points.
 `--json` and `--yaml` contain every finding and the full calculation.
 
 ### Exit status
@@ -259,7 +283,7 @@ From a clone, use `./security-score` instead of the URL.
 
 ## Limits
 
-- The rules recognize static patterns. Findings are candidates, not confirmed
+- The rules recognize static patterns. Findings are pattern matches, not confirmed
   vulnerabilities.
 - Not checked: login flows, access control, business logic, and known
   vulnerabilities in dependencies.

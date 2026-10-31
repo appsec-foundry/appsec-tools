@@ -9,7 +9,7 @@ import hashlib
 from pathlib import Path
 import re
 import textwrap
-from score_infrastructure import ci_file
+from score_infrastructure import ci_file, manifests_without_lock
 from score_reporting import container_build_file, source_priority
 
 from score_calculation import (
@@ -67,6 +67,7 @@ def validate_policy():
         "container-hardening",
         "host",
         "path",
+        "dependency-lock",
         "secret-token",
         "ci-script",
         "install-command",
@@ -878,7 +879,7 @@ def applies(rule, path):
         return suffix in JS_EXTENSIONS or path.endswith(".component.html")
     if kind in {"csp", "headers"}:
         return suffix in JS_EXTENSIONS | {".py", ".json", ".conf", ".config"}
-    if kind in {"host", "path"}:
+    if kind in {"host", "path", "dependency-lock"}:
         return False
     if kind == "secret-token":
         return True
@@ -910,17 +911,28 @@ def applies(rule, path):
     return container_build_file(Path(path).name)
 
 
-def scan_paths(paths, findings, checks):
-    """Rules that read only a path; the file's content is neither needed nor loaded."""
+def scan_paths(paths, findings, checks, files=None):
+    """Rules decided by the file list: a path alone, or a lockfile beside a manifest.
+
+    Without files the lockfile rule stays silent, as for an incomplete listing.
+    """
     for rule in RULES:
-        if rule["kind"] != "path":
-            continue
-        pattern = re.compile(rule["pattern"])
-        ignored = re.compile(rule.get("exclude", "(?!)"))
         status = "satisfied" if rule.get("positive_only") else "violated"
-        for path in paths:
-            if not pattern.search(path) or ignored.search(path):
-                continue
+        if rule["kind"] == "path":
+            pattern = re.compile(rule["pattern"])
+            ignored = re.compile(rule.get("exclude", "(?!)"))
+            matches = [
+                path
+                for path in paths
+                if pattern.search(path) and not ignored.search(path)
+            ]
+            evidence = "Recognized by its path; the file's content was not read."
+        elif rule["kind"] == "dependency-lock":
+            matches = [] if files is None else manifests_without_lock(paths, files)
+            evidence = "No lockfile beside this manifest or in a directory above it."
+        else:
+            continue
+        for path in matches:
             checks.append(
                 {
                     "rule": rule["id"],
@@ -939,7 +951,7 @@ def scan_paths(paths, findings, checks):
                         "title": rule["title"],
                         "file": path,
                         "line": 1,
-                        "evidence": "Recognized by its path; the file's content was not read.",
+                        "evidence": evidence,
                         "next_action": rule["next_action"],
                     }
                 )

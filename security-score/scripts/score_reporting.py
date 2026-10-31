@@ -4,7 +4,7 @@ from collections import Counter
 from pathlib import PurePosixPath
 import textwrap
 
-from score_calculation import calculate, has_unknown
+from score_calculation import CAPS, COUNTED_INSTANCES, WEIGHTS, calculate, has_unknown
 from score_style import Style, safe
 
 
@@ -33,6 +33,8 @@ def origin(path):
         "example",
         "fixtures",
         "fixture",
+        "__fixtures__",
+        "testdata",
         "codefixes",
         "samples",
         "sample",
@@ -144,7 +146,7 @@ POSITIVE_REASONS = {
     "PY-SQL": "Literal SQL text passed to a query call",
     "PY-YAML": "Safe YAML loader used",
     "PY-DEBUG": "Debug mode explicitly disabled",
-    "PY-DEPENDENCIES": "Requirement pinned with a sha256 hash",
+    "PY-DEPENDENCIES": "Requirement pinned",
     "JS-EVAL": "Data-only parsing with JSON.parse",
     "JS-SQL": "Literal SQL text passed to a query call",
     "NPM-SOURCES": "Git dependency pinned to a full commit",
@@ -201,6 +203,10 @@ HOST_REASONS = {
 }
 
 
+def area_index(row):
+    return row["score"] if row["score"] is not None else row.get("observed_score")
+
+
 def subcategories(result):
     """Use the lowest recognized area index in each topic, never a fresh score."""
     definitions = list(SUBCATEGORIES)
@@ -214,15 +220,13 @@ def subcategories(result):
     topics = []
     for identity, title, areas in definitions:
         rows = [row for row in result["areas"] if row["area"] in areas]
-        values = [
-            row["score"] if row["score"] is not None else row.get("observed_score")
-            for row in rows
-        ]
+        values = [area_index(row) for row in rows]
         topics.append(
             {
                 "id": identity,
                 "title": title,
                 "areas": areas,
+                "rows": rows,
                 "index": min(
                     (value for value in values if value is not None), default=None
                 ),
@@ -290,12 +294,55 @@ def entry(style, tag, text, detail):
     return lines
 
 
+def arithmetic(row):
+    """Spell out an area index from the breakdown that produced it."""
+    deduction, index = row["deduction"], area_index(row)
+    if deduction > 100:
+        return f"100 - {deduction}, floored at 0"
+    text = f"100 - {deduction} = {100 - deduction}"
+    if index == 100 - deduction:
+        return text
+    severity = next(
+        item["severity"] for item in row["breakdown"] if item["severity_cap"] == index
+    )
+    return f"{text}, capped at {index} by a {severity} finding"
+
+
+def score_explanation(style, topic):
+    rows = [row for row in topic["rows"] if row["breakdown"]]
+    if len(rows) == 1:
+        return note(style, f"Score: {arithmetic(rows[0])}")
+    if not rows:
+        return []
+    sums = "; ".join(
+        f"{row['area'].replace('-', ' ')} {arithmetic(row)}" for row in rows
+    )
+    return note(style, f"Score: {sums}. The lowest area counts.")
+
+
+def score_legend():
+    """State the formula from the same catalog values the arithmetic uses."""
+    weights = ", ".join(f"{name} {points}" for name, points in WEIGHTS.items())
+    caps = ", ".join(f"{name} {limit}" for name, limit in CAPS.items())
+    return (
+        f"Each area starts at 100 and loses points per occurrence, at most "
+        f"{COUNTED_INSTANCES} per rule: {weights}. The worst severity also limits "
+        f"the score: {caps}. OK lines add no points. A topic shows its lowest area, "
+        "the repository score the lowest of all. "
+        "Every finding and the calculation: --json."
+    )
+
+
 def topic_examples(style, topic):
     lines = []
-    candidates = topic["findings"]
-    if candidates:
+    findings = topic["findings"]
+    if findings:
+        points = Counter()
+        for row in topic["rows"]:
+            for item in row["breakdown"]:
+                points[item["rule"]] += item["deduction"]
         groups = {}
-        for finding in candidates:
+        for finding in findings:
             groups.setdefault(finding["rule"], []).append(finding)
         ranked = sorted(
             groups.items(),
@@ -313,13 +360,14 @@ def topic_examples(style, topic):
             lines += entry(
                 style,
                 style.tag(first["severity"], LABEL_WIDTH),
-                safe(HOST_REASONS.get(rule, first["title"])),
+                f"{safe(HOST_REASONS.get(rule, first['title']))} (-{points[rule]})",
                 f"{rule} {style.dot} {location(first)}{more}",
             )
         if len(ranked) > 3:
+            hidden = sum(points[rule] for rule, _ in ranked[3:])
             lines += note(
                 style,
-                f"+{len(ranked) - 3} more finding types; every occurrence is in --json.",
+                f"+{len(ranked) - 3} more finding types (-{hidden}); every occurrence is in --json.",
             )
     # Positive evidence follows the findings; it never offsets them in the index.
     positive = {}
@@ -351,7 +399,7 @@ def topic_examples(style, topic):
             reason,
             f"{rule} {style.dot} {location(rows[0])}{more}",
         )
-    if not candidates and not positive:
+    if not findings and not positive:
         lines += note(
             style,
             "No recognized token, cookie or password hash check; login flows and access control are not assessed."
@@ -370,9 +418,9 @@ def topic_header(style, topic, width):
     count = len(topic["findings"])
     unclear = any(has_unknown(row) for row in topic["checks"])
     if count:
-        summary = plural(count, "candidate")
+        summary = plural(count, "finding")
     elif topic["checks"]:
-        summary = "no candidates" + ("; some checks unclear" if unclear else "")
+        summary = "no findings" + ("; some checks unclear" if unclear else "")
     else:
         summary = ""
     return f"{title}  {score}  {style.bar(index)}  " + style.paint(summary, "dim")
@@ -477,12 +525,36 @@ def architecture_profile(style, architecture):
             ),
         ),
     )
+    return profile_rows(style, rows)
+
+
+def profile_rows(style, rows):
     lines = note(style, "Profile (context only, adds no score credit):")
     for label, text in rows:
         lines += wrapped(
             text or "none recognized", style.width, " " * 20, f"    {label:<16}"
         )
     return lines
+
+
+def dependency_profile(style, architecture):
+    """Lockfiles, exact versions and update tools, shown once a project has any."""
+
+    def names(trait):
+        return ", ".join(
+            sorted({safe(row["technology"]) for row in architecture.get(trait, [])})
+        )
+
+    versions = ", ".join(
+        f"{row['ecosystem']} {row['exact']} of {row['direct']}"
+        for row in architecture.get("exact_versions", [])
+    )
+    rows = (
+        ("Lockfile", names("lockfiles")),
+        ("Exact versions", versions and f"{versions} direct dependencies"),
+        ("Updates", names("dependency_updates")),
+    )
+    return profile_rows(style, rows) if any(text for _, text in rows) else []
 
 
 def render_repository(result, summary, style=None):
@@ -497,7 +569,9 @@ def render_repository(result, summary, style=None):
         + f" {style.dot} "
         + style.paint(summary, band, "bold"),
         f"Scope: {safe(scope['repository'])}{revision}",
-        *note(style, "Static pattern candidates; exploitability unverified.", ""),
+        *note(
+            style, "Findings are static pattern matches; exploitability unverified.", ""
+        ),
     ]
     if partial:
         lines += note(
@@ -509,6 +583,7 @@ def render_repository(result, summary, style=None):
     width = max(len(topic["title"]) for topic in topics)
     for topic in topics:
         lines += ["", topic_header(style, topic, width)]
+        lines += score_explanation(style, topic)
         lines += topic_examples(style, topic)
         if topic["id"] == "architecture":
             lines += architecture_profile(style, result.get("architecture", {}))
@@ -516,13 +591,15 @@ def render_repository(result, summary, style=None):
                 style,
                 "Basis: selected execution, SQL and deserialization patterns; no full architectural review.",
             )
+        if topic["id"] == "dependencies":
+            lines += dependency_profile(style, result.get("architecture") or {})
 
-    candidates = len(result["findings"])
+    count = len(result["findings"])
     lines += [
         "",
         style.paint("Coverage", "bold"),
         f"  {plural(result['coverage'].get('files_checked', 0), 'file')} checked {style.dot} "
-        f"{plural(candidates, 'candidate')} {style.dot} "
+        f"{plural(count, 'finding')} {style.dot} "
         f"{COVERAGE_STATUS.get(result['verdict'], result['verdict'])}",
     ]
     exclusions = {}
@@ -564,12 +641,5 @@ def render_repository(result, summary, style=None):
     for warning in result["warnings"]:
         if not warning.startswith("Coverage is limited to the bundled rule catalog;"):
             lines += note(style, safe(warning))
-    lines += [
-        "",
-        *note(
-            style,
-            "Topic score = lowest recognized area index. Every finding and the calculation: --json.",
-            "",
-        ),
-    ]
+    lines += ["", *note(style, score_legend(), "")]
     return "\n".join(lines)
