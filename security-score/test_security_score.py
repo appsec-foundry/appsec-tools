@@ -1090,7 +1090,9 @@ class ScoreTests(unittest.TestCase):
             }
         ).encode()
         with (
-            mock.patch.object(remote, "host_settings", return_value=([], "a" * 40)),
+            mock.patch.object(
+                remote, "host_settings", return_value=([], "a" * 40, False)
+            ),
             mock.patch.object(remote, "get", side_effect=[(listing, 200), (None, 404)]),
             contextlib.redirect_stdout(output),
             contextlib.redirect_stderr(errors),
@@ -3179,7 +3181,7 @@ class RemoteTests(unittest.TestCase):
                 ({"security_and_analysis": {"secret_scanning": {"status": []}}}, None),
             ],
         ):
-            settings, _ = remote.host_settings(
+            settings, _, _ = remote.host_settings(
                 "github.com", "example/project", sources.Budget()
             )
         self.assertTrue(all(row["status"] == "unknown" for row in settings))
@@ -3188,7 +3190,9 @@ class RemoteTests(unittest.TestCase):
         for revision in ([], "../main", "a" * 41, "a" * 40 + "?path=other", 123):
             with (
                 self.subTest(revision=revision),
-                mock.patch.object(remote, "host_settings", return_value=([], revision)),
+                mock.patch.object(
+                    remote, "host_settings", return_value=([], revision, False)
+                ),
                 mock.patch.object(remote, "get") as get,
                 contextlib.redirect_stdout(io.StringIO()) as output,
                 contextlib.redirect_stderr(io.StringIO()) as errors,
@@ -3223,7 +3227,9 @@ class RemoteTests(unittest.TestCase):
             with (
                 self.subTest(status_code=status_code),
                 mock.patch.object(remote_sources, "MAX_PARALLEL", 1),
-                mock.patch.object(remote, "host_settings", return_value=([], "a" * 40)),
+                mock.patch.object(
+                    remote, "host_settings", return_value=([], "a" * 40, False)
+                ),
                 mock.patch.object(
                     remote,
                     "get",
@@ -3305,7 +3311,7 @@ class RemoteTests(unittest.TestCase):
 
                     with (
                         mock.patch.object(
-                            remote, "host_settings", return_value=([], "a" * 40)
+                            remote, "host_settings", return_value=([], "a" * 40, False)
                         ),
                         mock.patch.object(remote, "get", side_effect=fetch),
                         mock.patch.object(remote_sources, "MAX_PARALLEL", 1),
@@ -3352,7 +3358,9 @@ class RemoteTests(unittest.TestCase):
     def test_truncated_tree_yields_an_explicitly_incomplete_indication(self):
         source = b"eval(payload)\n"
         with (
-            mock.patch.object(remote, "host_settings", return_value=([], "a" * 40)),
+            mock.patch.object(
+                remote, "host_settings", return_value=([], "a" * 40, False)
+            ),
             mock.patch.object(
                 remote,
                 "get",
@@ -3376,7 +3384,9 @@ class RemoteTests(unittest.TestCase):
         source = b'{"dependencies":{"example":"^1.0.0"}}'
         entry = self.entry(path="package.json", size=len(source))
         with (
-            mock.patch.object(remote, "host_settings", return_value=([], "a" * 40)),
+            mock.patch.object(
+                remote, "host_settings", return_value=([], "a" * 40, False)
+            ),
             mock.patch.object(
                 remote,
                 "get",
@@ -3747,7 +3757,7 @@ class RemoteTests(unittest.TestCase):
         with mock.patch.object(
             remote, "json_get", return_value=({}, "not readable (HTTP 403)")
         ):
-            settings, revision = remote.host_settings(
+            settings, revision, _ = remote.host_settings(
                 "github.com", "example/project", sources.Budget()
             )
         self.assertIsNone(revision)
@@ -3771,8 +3781,8 @@ class RemoteTests(unittest.TestCase):
             ([], None),
         ]
         with mock.patch.object(remote, "json_get", side_effect=responses):
-            settings, revision = remote.host_settings(
-                "github.com", "example/project", sources.Budget()
+            settings, revision, _ = remote.host_settings(
+                "github.com", "example/project", sources.Budget(), "isolated-test-value"
             )
         self.assertEqual([row["status"] for row in settings[:2]], ["set", "set"])
         self.assertEqual(revision, "a" * 40)
@@ -3785,8 +3795,8 @@ class RemoteTests(unittest.TestCase):
             *([rules] if branch.get("protected") is True else []),
         ]
         with mock.patch.object(remote, "json_get", side_effect=responses) as get:
-            settings, _ = remote.host_settings(
-                "github.com", "example/project", sources.Budget()
+            settings, _, _ = remote.host_settings(
+                "github.com", "example/project", sources.Budget(), "isolated-test-value"
             )
         return {row["setting"]: row["status"] for row in settings}, get
 
@@ -3876,7 +3886,7 @@ class RemoteTests(unittest.TestCase):
             "json_get",
             side_effect=[(project, None), (branch, None), (rules, None)],
         ):
-            settings, revision = remote.host_settings(
+            settings, revision, _ = remote.host_settings(
                 "gitlab.com", "group/project", sources.Budget(), "isolated-test-value"
             )
         self.assertEqual(
@@ -3895,7 +3905,7 @@ class RemoteTests(unittest.TestCase):
             "json_get",
             side_effect=[(project, None), (branch, None), (rules, None)],
         ):
-            settings, _ = remote.host_settings(
+            settings, _, _ = remote.host_settings(
                 "gitlab.com", "group/project", sources.Budget(), "isolated-test-value"
             )
         self.assertEqual(
@@ -3916,7 +3926,7 @@ class RemoteTests(unittest.TestCase):
         output = io.StringIO()
         with (
             mock.patch.object(
-                remote, "host_settings", return_value=(settings, "a" * 40)
+                remote, "host_settings", return_value=(settings, "a" * 40, False)
             ),
             mock.patch.object(
                 remote,
@@ -3956,6 +3966,7 @@ class RemoteTests(unittest.TestCase):
                 return_value=(
                     [remote.setting("default_branch_protection", True)],
                     "a" * 40,
+                    False,
                 ),
             ),
             mock.patch.object(
@@ -4120,6 +4131,208 @@ class RemoteTests(unittest.TestCase):
             "https://gitlab.com/api/v4/projects/group%2Fteam%2Fproject/repository/blobs/"
             + "b" * 40
             + "/raw",
+        )
+
+    def request(self, url, status, headers, token=None):
+        """Run the real request path against a fake response with these headers."""
+        connection, response = mock.Mock(), mock.Mock(status=status)
+        response.getheader.side_effect = headers.get
+        response.read.side_effect = [b"{}", b""]
+        connection.getresponse.return_value = response
+        with (
+            mock.patch.object(
+                remote,
+                "public_addresses",
+                return_value=[(socket.AF_INET, 1, 6, "", ("8.8.8.8", 443))],
+            ),
+            mock.patch.object(remote.socket, "socket", return_value=mock.Mock()),
+            mock.patch.object(
+                remote.http.client, "HTTPSConnection", return_value=connection
+            ),
+        ):
+            result = remote.get(
+                url, sources.Budget(), token=token, token_host="api.github.com"
+            )
+        return result, connection
+
+    def refusal(self, status, headers, token=None):
+        with self.assertRaises(remote.RateLimited) as caught:
+            self.request(
+                "https://api.github.com/repos/example/project", status, headers, token
+            )
+        return str(caught.exception)
+
+    def test_rate_limit_names_the_wait_and_the_way_out(self):
+        message = self.refusal(
+            403,
+            {
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": str(int(time.time()) + 1790),
+            },
+        )
+        self.assertIn("GitHub API rate limit reached (HTTP 403)", message)
+        self.assertIn("Retry in about 30 minutes", message)
+        self.assertIn("--token-env", message)
+        self.assertNotIn("token permissions", message)
+        self.assertIn("No score", message)
+
+    def test_rate_limit_with_a_token_does_not_suggest_a_token(self):
+        message = self.refusal(
+            403, {"X-RateLimit-Remaining": "0"}, "isolated-test-value"
+        )
+        self.assertIn("Retry later", message)
+        self.assertNotIn("--token-env", message)
+        self.assertNotIn("isolated-test-value", message)
+
+    def test_rate_limit_honors_retry_after_on_both_status_codes(self):
+        for status in (403, 429):
+            with self.subTest(status=status):
+                self.assertIn(
+                    "Retry in about 1 minute,",
+                    self.refusal(status, {"Retry-After": "30"}),
+                )
+
+    def test_gitlab_style_reset_header_is_understood(self):
+        message = self.refusal(
+            429,
+            {
+                "RateLimit-Remaining": "0",
+                "RateLimit-Reset": str(int(time.time()) + 600),
+            },
+        )
+        self.assertIn("Retry in about 10 minutes", message)
+
+    def test_unusable_rate_limit_headers_fall_back_to_retry_later(self):
+        for value in ("soon", "١٢٣", "-5", "9" * 40, "Wed, 21 Oct 2026 07:28:00 GMT"):
+            with self.subTest(value=value):
+                message = self.refusal(
+                    429, {"Retry-After": value, "X-RateLimit-Reset": value}
+                )
+                self.assertIn("Retry later", message)
+                self.assertNotIn(value, message)
+
+    def test_past_reset_time_never_shows_a_negative_wait(self):
+        message = self.refusal(
+            403, {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "1000"}
+        )
+        self.assertIn("Retry in about 1 minute,", message)
+
+    def test_refusal_with_quota_left_stays_access_denied(self):
+        result, _ = self.request(
+            "https://api.github.com/repos/example/project",
+            403,
+            {"X-RateLimit-Remaining": "42"},
+        )
+        self.assertEqual(result, (None, 403))
+
+    def test_access_denied_only_mentions_token_permissions_with_a_token(self):
+        self.assertNotIn("token permissions", str(remote.source_error(403, "Source")))
+        self.assertIn(
+            "token permissions", str(remote.source_error(403, "Source", "value"))
+        )
+
+    def test_rate_limited_optional_metadata_stays_unknown(self):
+        error = remote.RateLimited("limit", 403)
+        with mock.patch.object(remote, "get", side_effect=error):
+            document, reason = remote.json_get(
+                "https://api.github.com/x", sources.Budget(), None, "api.github.com"
+            )
+        self.assertEqual((document, reason), ({}, "API rate limit reached"))
+
+    def test_rate_limited_scan_reports_the_wait_without_a_traceback(self):
+        error = remote.RateLimited("GitHub API rate limit reached (HTTP 403).", 403)
+        output, errors = io.StringIO(), io.StringIO()
+        with (
+            mock.patch.object(remote, "get", side_effect=error),
+            contextlib.redirect_stdout(output),
+            contextlib.redirect_stderr(errors),
+        ):
+            status = cli.main(["https://github.com/example/project", "--json"])
+        self.assertEqual(status, 1)
+        self.assertEqual(output.getvalue(), "")
+        self.assertIn("GitHub API rate limit reached", errors.getvalue())
+        self.assertNotIn("Traceback", errors.getvalue())
+
+    def test_anonymous_scan_skips_the_admin_only_protection_request(self):
+        responses = [
+            ({"default_branch": "main"}, None),
+            ({"protected": True, "commit": {"sha": "a" * 40}}, None),
+            ([], None),
+        ]
+        with mock.patch.object(remote, "json_get", side_effect=responses) as get:
+            settings, _, _ = remote.host_settings(
+                "github.com", "example/project", sources.Budget()
+            )
+        urls = [call.args[0] for call in get.call_args_list]
+        self.assertFalse(any(url.endswith("/protection") for url in urls))
+        status = {row["setting"]: row for row in settings}["required_reviews"]
+        self.assertEqual(status["status"], "unknown")
+        self.assertIn("need a token", status["reason"])
+
+    def scanned_urls(self, private):
+        source = b"x = 1\n"
+        urls = []
+
+        def fetch(url, budget, **options):
+            urls.append(url)
+            if url.endswith("/repos/example/project"):
+                document = {"default_branch": "main", "private": private}
+            elif url.endswith("/branches/main"):
+                document = {"protected": False, "commit": {"sha": "a" * 40}}
+            elif "/git/trees/" in url:
+                return self.listing([self.entry(size=len(source))]), 200
+            else:
+                return source, 200
+            return json.dumps(document).encode(), 200
+
+        with (
+            mock.patch.dict(os.environ, {"ISOLATED_READ_TOKEN": "isolated-test-value"}),
+            mock.patch.object(remote, "get", side_effect=fetch),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            cli.main(
+                [
+                    "https://github.com/example/project",
+                    "--json",
+                    "--token-env",
+                    "ISOLATED_READ_TOKEN",
+                ]
+            )
+        return urls
+
+    def test_token_scan_of_a_public_repository_downloads_from_the_raw_host(self):
+        urls = self.scanned_urls(private=False)
+        self.assertTrue(any("raw.githubusercontent.com" in url for url in urls))
+        self.assertFalse(any("/git/blobs/" in url for url in urls))
+
+    def test_token_scan_of_a_private_repository_stays_on_the_api(self):
+        urls = self.scanned_urls(private=True)
+        self.assertTrue(any("/git/blobs/" in url for url in urls))
+        self.assertFalse(any("raw.githubusercontent.com" in url for url in urls))
+
+    def test_unknown_visibility_stays_on_the_api(self):
+        with mock.patch.object(
+            remote,
+            "json_get",
+            side_effect=[
+                ({"default_branch": "main"}, None),
+                ({"protected": False, "commit": {"sha": "a" * 40}}, None),
+            ],
+        ):
+            public = remote.host_settings(
+                "github.com", "example/project", sources.Budget(), "value"
+            )[2]
+        self.assertFalse(public)
+
+    def test_token_never_reaches_the_raw_host(self):
+        _, connection = self.request(
+            "https://raw.githubusercontent.com/example/project/" + "a" * 40 + "/app.py",
+            200,
+            {},
+            "isolated-test-value",
+        )
+        self.assertNotIn(
+            "Authorization", connection.request.call_args.kwargs["headers"]
         )
 
     def test_missing_inaccessible_and_rate_limited_repositories_have_clear_errors(self):

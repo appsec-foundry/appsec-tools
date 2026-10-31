@@ -7,11 +7,13 @@ from functools import lru_cache
 import http.client
 import ipaddress
 import json
+import math
 import os
 import re
 import socket
 import ssl
 import threading
+import time
 from urllib.parse import quote, urlsplit
 
 from score_core import RULES
@@ -96,6 +98,50 @@ def interrupt_socket(sock, expired=None):
         pass
 
 
+class RateLimited(RemoteError):
+    pass
+
+
+def header_number(headers, name):
+    """Header values come from the network: accept short plain decimals only."""
+    value = headers(name)
+    if value and len(value) <= 16 and value.isascii() and value.isdecimal():
+        return int(value)
+    return None
+
+
+def rate_limited(status, headers):
+    remaining = headers("X-RateLimit-Remaining") or headers("RateLimit-Remaining")
+    return status == 429 or (
+        status == 403 and (remaining == "0" or headers("Retry-After") is not None)
+    )
+
+
+def rate_limit_error(host, status, headers, authenticated):
+    delay = header_number(headers, "Retry-After")
+    reset = header_number(headers, "X-RateLimit-Reset") or header_number(
+        headers, "RateLimit-Reset"
+    )
+    if delay is None and reset is not None:
+        delay = reset - time.time()
+    if delay is None:
+        wait = "Retry later"
+    else:
+        minutes = max(1, math.ceil(delay / 60))
+        wait = f"Retry in about {minutes} minute{'' if minutes == 1 else 's'}"
+    advice = (
+        ""
+        if authenticated
+        else ", or pass a read-only token with --token-env NAME for a higher limit"
+    )
+    name = "GitLab" if host == "gitlab.com" else "GitHub"
+    return RateLimited(
+        f"{name} API rate limit reached (HTTP {status}). {wait}{advice}. "
+        "No score is available.",
+        status,
+    )
+
+
 def get(
     url,
     budget,
@@ -167,6 +213,13 @@ def get(
                 "Repository metadata or source redirected; redirects are not followed and no score is available."
             )
         if response.status != 200:
+            if rate_limited(response.status, response.getheader):
+                raise rate_limit_error(
+                    host,
+                    response.status,
+                    response.getheader,
+                    bool(token and host == token_host),
+                )
             return None, response.status
         length = response.getheader("Content-Length")
         if length is not None and (
@@ -244,7 +297,9 @@ class SourceReader:
             connections=self.local.connections,
         )
         if data is None:
-            raise source_error(status, "Repository file listing or selected source")
+            raise source_error(
+                status, "Repository file listing or selected source", self.token
+            )
         return data
 
     def close(self):
@@ -253,13 +308,18 @@ class SourceReader:
                 connection.close()
 
 
-def source_error(status, subject):
+def source_error(status, subject, token=None):
     if status == 404:
         reason = "not found or not accessible (HTTP 404); check the repository URL and access token"
     elif status == 401:
         reason = "authentication failed (HTTP 401); check the selected token"
     elif status in {403, 429}:
-        reason = f"access denied or API rate limit reached (HTTP {status}); check token permissions or retry later"
+        advice = (
+            "check token permissions or retry later"
+            if token
+            else "retry later, or pass a read-only token with --token-env NAME"
+        )
+        reason = f"access denied or API rate limit reached (HTTP {status}); {advice}"
     elif not status:
         reason = "connection failed; check network access and retry"
     else:
@@ -271,13 +331,17 @@ def json_get(url, budget, token, token_host, expected=dict, *, required=False):
     try:
         request_budget = budget if required else budget.portion(0.1)
         data, status = get(url, request_budget, token=token, token_host=token_host)
-    except SourceError:
+    except SourceError as error:
         if required:
             raise
-        return {}, "optional host metadata unavailable or timed out"
+        return {}, (
+            "API rate limit reached"
+            if isinstance(error, RateLimited)
+            else "optional host metadata unavailable or timed out"
+        )
     if data is None:
         if required:
-            raise source_error(status, "Repository source")
+            raise source_error(status, "Repository source", token)
         return (
             {},
             f"not readable (HTTP {status})" if status else "connection unavailable",
@@ -389,16 +453,19 @@ def host_settings(host, project, budget, token=None, *, require_source=False):
             else ({}, error)
         )
         protected = branch_doc.get("protected")
-        protection, protection_error = (
-            json_get(
+        if protected is not True:
+            protection, protection_error = {}, branch_error
+        elif not token:
+            # This endpoint needs admin rights, so an anonymous call only costs quota.
+            protection = {}
+            protection_error = "Classic protection details need a token."
+        else:
+            protection, protection_error = json_get(
                 api + "/branches/" + quote(branch, safe="") + "/protection",
                 budget,
                 token,
                 "api.github.com",
             )
-            if protected is True
-            else ({}, branch_error)
-        )
         reviews = protection.get("required_pull_request_reviews")
         required_reviews = (
             reviews.get("required_approving_review_count")
@@ -459,6 +526,7 @@ def host_settings(host, project, budget, token=None, *, require_source=False):
             if isinstance(branch_doc.get("commit"), dict)
             else None
         )
+        public = document.get("private") is False
 
     else:
         api = "https://gitlab.com/api/v4/projects/" + quote(project, safe="")
@@ -505,8 +573,9 @@ def host_settings(host, project, budget, token=None, *, require_source=False):
             if isinstance(branch_doc.get("commit"), dict)
             else None
         )
+        public = False
 
-    return settings, revision
+    return settings, revision, public
 
 
 def read_token(name):
@@ -541,7 +610,7 @@ def select_remote(options, budget):
             "Use a local checkout for Git comparisons, or supply the selected PR/MR patch separately."
         )
     token = read_token(options.token_env)
-    settings, revision = host_settings(
+    settings, revision, public = host_settings(
         host, project, budget, token, require_source=True
     )
     if revision is None:
@@ -567,7 +636,8 @@ def select_remote(options, budget):
             revision,
             source_budget,
             read,
-            authenticated=token is not None,
+            # Public files come from the raw host: no API quota, no token in transit.
+            authenticated=token is not None and not public,
         )
     finally:
         read.close()

@@ -224,6 +224,15 @@ security-score https://github.com/example/private-project --token-env GITHUB_REA
 A missing repository and a private one without access can both return HTTP 404,
 so the error message cannot always tell them apart.
 
+Without a token, GitHub allows 60 API requests per hour per IP address, shared
+with everything else on that address. A scan uses three or four of them, because
+files come from `raw.githubusercontent.com`, which does not count. A token raises
+the limit to 5,000 per hour. For a public repository it goes only to the API; file
+downloads stay on the raw host without the token. A private repository uses one
+API request per file. When a limit is reached, the error says how long to wait.
+The tool never picks up a token on its own: `GITHUB_TOKEN` and `gh` logins are used
+only if you name the variable with `--token-env`.
+
 ### Changes
 
 Choose one comparison per call:
