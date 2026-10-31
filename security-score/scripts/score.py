@@ -71,6 +71,7 @@ from score_style import Style, safe
 from score_architecture import describe
 from score_relevance import VERSION as RELEVANCE_VERSION, analyze as analyze_relevance
 from score_remote import (
+    NetworkStats,
     host_settings,
     read_token,
     repository_url,
@@ -722,6 +723,8 @@ def run(options):
         return analyzer_score(options, budget)
     if options.analyzer:
         raise SourceError("--analyzer requires --engine analyzer.")
+    if options.details and not options.quiet:
+        budget.network = NetworkStats()
     remote = remote_identity(options)
     if options.details:
         announce(options, f"Preparing scan: {len(rules)} selected checks...")
@@ -1003,6 +1006,8 @@ def run(options):
             )
         except SourceError:
             result["warnings"].append("Overview skipped: the time budget ran out.")
+    if budget.network is not None:
+        result["network"] = budget.network.snapshot()
     return result, (0 if complete else 1) if change else {
         "scored": 0,
         "undetermined": 2,
@@ -1107,7 +1112,23 @@ def execute(argv):
                 for rule in relevance_rules
             )
         else:
-            output = render(result, options.details, Style.detect(sys.stdout))
+            style = Style.detect(sys.stdout)
+            output = render(result, options.details, style)
+            if "network" in result:
+                network = result["network"]
+                rows = [
+                    f"Network: {network['requests']:,} HTTP requests "
+                    f"{style.dot} {network['response_body_bytes']:,} response body bytes read"
+                ]
+                for row in network["hosts"]:
+                    rows.append(
+                        f"  {row['host']}: {row['requests']:,} requests "
+                        f"{style.dot} {row['response_body_bytes']:,} bytes"
+                    )
+                rows.append(
+                    "  Excludes unread bodies, HTTP headers, uploads, DNS and TLS/TCP overhead."
+                )
+                output += "\n\n" + "\n".join(rows)
             if "duration_seconds" in result:
                 output += f"\n\nDuration: {result['duration_seconds']:.2f} s"
         print(output)

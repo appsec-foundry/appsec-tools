@@ -29,6 +29,34 @@ HOSTS = {
 MAX_DOWNLOAD = 24 * 1024 * 1024
 
 
+class NetworkStats:
+    """Per-scan counters shared by metadata requests and source workers."""
+
+    def __init__(self):
+        self.hosts = {}
+        self.lock = threading.Lock()
+
+    def record(self, host, body_bytes):
+        with self.lock:
+            row = self.hosts.setdefault(host, {"requests": 0, "response_body_bytes": 0})
+            row["requests"] += 1
+            row["response_body_bytes"] += body_bytes
+
+    def snapshot(self):
+        with self.lock:
+            hosts = [{"host": host, **row} for host, row in sorted(self.hosts.items())]
+        return {
+            "requests": sum(row["requests"] for row in hosts),
+            "response_body_bytes": sum(row["response_body_bytes"] for row in hosts),
+            "hosts": hosts,
+            "measurement": (
+                "HTTP GET attempts and response body bytes read, including discarded "
+                "partial or oversized reads. Excludes unread bodies, HTTP headers, "
+                "uploads, DNS and TLS/TCP overhead."
+            ),
+        }
+
+
 @lru_cache(maxsize=1)
 def tls_context():
     return ssl.create_default_context()
@@ -164,6 +192,7 @@ def get(
         raise SourceError("Rejected repository metadata or source destination.")
     connection = connections.get(host) if connections is not None else None
     raw_socket, reusable, deadline = None, False, None
+    attempted, body_bytes = False, 0
     expired = threading.Event()
     try:
         if connection is None or connection.sock is None:
@@ -206,6 +235,7 @@ def get(
             else:
                 headers["Authorization"] = "Bearer " + token
         path = parsed.path + ("?" + parsed.query if parsed.query else "")
+        attempted = True
         connection.request("GET", path, headers=headers)
         response = connection.getresponse()
         if response.status in {301, 302, 303, 307, 308}:
@@ -237,7 +267,12 @@ def get(
             budget.check()
             if connection.sock:
                 connection.sock.settimeout(min(5, budget.remaining()))
-            chunk = response.read(16384)
+            try:
+                chunk = response.read(16384)
+            except http.client.IncompleteRead as error:
+                body_bytes += len(error.partial)
+                raise
+            body_bytes += len(chunk)
             if not chunk:
                 break
             if len(data) + len(chunk) > limit:
@@ -261,6 +296,8 @@ def get(
         budget.check()
         return None, 0
     finally:
+        if attempted and budget.network is not None:
+            budget.network.record(host, body_bytes)
         if deadline is not None:
             deadline.cancel()
             deadline.join()

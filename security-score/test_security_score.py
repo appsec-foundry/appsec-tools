@@ -116,6 +116,10 @@ class ScoreTests(unittest.TestCase):
         detail_status, detailed, _ = self.invoke("--details")
         self.assertEqual(status, detail_status)
         self.assertNotIn("duration_seconds", plain)
+        self.assertNotIn("network", plain)
+        self.assertEqual(detailed["network"]["requests"], 0)
+        self.assertEqual(detailed["network"]["response_body_bytes"], 0)
+        self.assertEqual(detailed["network"]["hosts"], [])
         self.assertIsInstance(detailed["duration_seconds"], (int, float))
         self.assertGreaterEqual(detailed["duration_seconds"], 0)
         self.assertEqual(plain["score"], detailed["score"])
@@ -3863,6 +3867,211 @@ class ScoreTests(unittest.TestCase):
         self.assertNotRegex(
             cli.render(result, details=True), r"[\x00-\x09\x0b-\x1f\x7f-\x9f]"
         )
+
+
+class NetworkUsageTests(unittest.TestCase):
+    def test_real_http_path_counts_read_bytes_and_failed_attempts(self):
+        budget = sources.Budget()
+        budget.network = remote.NetworkStats()
+        cases = (
+            (200, None, [b"abc", b"de", b""], 10, 5, None),
+            (404, None, [], 10, 0, None),
+            (302, None, [], 10, 0, sources.SourceError),
+            (200, "1000", [], 10, 0, sources.SourceError),
+            (200, None, [b"abcdef"], 5, 6, sources.SourceError),
+            (200, "5", [b"ab", b""], 10, 2, sources.SourceError),
+            (200, None, [b"abc", OSError("private diagnostic")], 10, 3, None),
+            (200, None, [remote.http.client.IncompleteRead(b"abc")], 10, 3, None),
+        )
+        for status, length, chunks, limit, size, error in cases:
+            with self.subTest(status=status, length=length, size=size):
+                before = budget.network.snapshot()
+                connection = mock.Mock()
+                response = mock.Mock(status=status)
+                response.getheader.return_value = length
+                response.read.side_effect = chunks
+                connection.getresponse.return_value = response
+                args = (
+                    "https://api.github.com/repos/example/project",
+                    budget.portion(0.9),
+                )
+                kwargs = {"connections": {"api.github.com": connection}, "limit": limit}
+                if error:
+                    with self.assertRaises(error):
+                        remote.get(*args, **kwargs)
+                else:
+                    remote.get(*args, **kwargs)
+                after = budget.network.snapshot()
+                self.assertEqual(after["requests"] - before["requests"], 1)
+                self.assertEqual(
+                    after["response_body_bytes"] - before["response_body_bytes"], size
+                )
+        self.assertEqual(len(budget.network.snapshot()["hosts"]), 1)
+        with self.assertRaises(sources.SourceError):
+            remote.get("https://unapproved.invalid/private", budget)
+        self.assertEqual(budget.network.snapshot(), after)
+        with mock.patch.object(
+            remote, "public_addresses", side_effect=sources.SourceError("unavailable")
+        ):
+            with self.assertRaises(sources.SourceError):
+                remote.get("https://api.github.com/repos/example/project", budget)
+        self.assertEqual(budget.network.snapshot(), after)
+
+    def test_parallel_readers_share_counts_and_keep_only_host_aggregates(self):
+        budget = sources.Budget()
+        budget.network = remote.NetworkStats()
+        reader = remote.SourceReader(
+            budget.portion(0.9), "synthetic-token", "api.github.com"
+        )
+        barrier = threading.Barrier(8)
+
+        def fetch(index):
+            connection = mock.Mock()
+            response = mock.Mock(status=200)
+            response.getheader.return_value = None
+            response.read.side_effect = [b"abc", b""]
+            connection.getresponse.return_value = response
+            host = "api.github.com" if index % 2 else "raw.githubusercontent.com"
+            reader.local.connections = {host: connection}
+            barrier.wait(timeout=5)
+            return reader(f"https://{host}/private-path", limit=10)
+
+        with remote_sources.ThreadPoolExecutor(max_workers=8) as executor:
+            self.assertEqual(list(executor.map(fetch, range(8))), [b"abc"] * 8)
+        reader.close()
+        result = budget.network.snapshot()
+        self.assertEqual((result["requests"], result["response_body_bytes"]), (8, 24))
+        self.assertEqual(
+            result["hosts"],
+            [
+                {"host": host, "requests": 4, "response_body_bytes": 12}
+                for host in ("api.github.com", "raw.githubusercontent.com")
+            ],
+        )
+        self.assertNotIn("synthetic-token", json.dumps(result))
+        self.assertNotIn("private-path", json.dumps(result))
+
+    def test_cli_counts_metadata_sources_and_overview_without_extra_requests(self):
+        revision = "a" * 40
+        api = "/repos/example/project"
+        source = b"eval(payload)\n"
+        documents = {
+            ("api.github.com", api): {"default_branch": "main", "private": False},
+            ("api.github.com", api + "/branches/main"): {
+                "protected": False,
+                "commit": {"sha": revision},
+            },
+            ("api.github.com", api + f"/git/trees/{revision}?recursive=1"): {
+                "truncated": False,
+                "tree": [
+                    {
+                        "path": "app.py",
+                        "type": "blob",
+                        "mode": "100644",
+                        "sha": "b" * 40,
+                        "size": len(source),
+                    }
+                ],
+            },
+            ("api.github.com", api + f"/commits?sha={revision}&per_page=100"): [],
+            ("api.github.com", api + "/branches?per_page=100"): [],
+        }
+        bodies = {key: json.dumps(value).encode() for key, value in documents.items()}
+        bodies[("raw.githubusercontent.com", f"/example/project/{revision}/app.py")] = (
+            source
+        )
+        calls = []
+
+        def connect(host, **kwargs):
+            connection = mock.Mock()
+
+            def respond():
+                key = (host, connection.request.call_args.args[1])
+                calls.append(key)
+                body = bodies[key]
+                response = mock.Mock(status=200)
+                response.getheader.return_value = str(len(body))
+                response.read.side_effect = [body, b""]
+                return response
+
+            connection.getresponse.side_effect = respond
+            return connection
+
+        baseline = None
+        for flags in (
+            ["--json"],
+            ["--details", "--json"],
+            ["--details"],
+            ["--details", "--yaml"],
+            ["--details", "--quiet"],
+        ):
+            with (
+                self.subTest(flags=flags),
+                mock.patch.object(
+                    remote,
+                    "public_addresses",
+                    return_value=[(2, 1, 6, "", ("8.8.8.8", 443))],
+                ),
+                mock.patch.object(remote.socket, "socket", return_value=mock.Mock()),
+                mock.patch.object(
+                    remote.http.client, "HTTPSConnection", side_effect=connect
+                ),
+                contextlib.redirect_stdout(io.StringIO()) as output,
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                calls.clear()
+                status = cli.main(["https://github.com/example/project", *flags])
+                if "--quiet" in flags:
+                    self.assertEqual(output.getvalue(), "59\n")
+                    self.assertEqual(len(calls), 4)
+                    continue
+                if "--json" not in flags:
+                    self.assertEqual(len(calls), 6)
+                    self.assertEqual(status, baseline[0])
+                    if "--yaml" in flags:
+                        self.assertIn(
+                            '"network":\n  "requests": 6\n', output.getvalue()
+                        )
+                        self.assertIn(
+                            f'"response_body_bytes": {sum(len(bodies[key]) for key in calls)}',
+                            output.getvalue(),
+                        )
+                    else:
+                        self.assertIn(
+                            f"Network: 6 HTTP requests · {sum(len(bodies[key]) for key in calls):,} response body bytes read",
+                            output.getvalue(),
+                        )
+                        self.assertIn("  api.github.com: 5 requests", output.getvalue())
+                        self.assertIn(
+                            "  raw.githubusercontent.com: 1 requests", output.getvalue()
+                        )
+                        self.assertRegex(
+                            output.getvalue(), r"Duration: \d+\.\d{2} s\n$"
+                        )
+                    continue
+                result = json.loads(output.getvalue())
+                summary = (
+                    status,
+                    result["score"],
+                    result["observed_score"],
+                    result["grade"],
+                    result["findings"],
+                )
+                if baseline is None:
+                    baseline = summary
+                    self.assertNotIn("network", result)
+                    self.assertEqual(len(calls), 4)
+                else:
+                    self.assertEqual(summary, baseline)
+                    self.assertEqual(result["network"]["requests"], 6)
+                    self.assertEqual(len(calls), 6)
+                    self.assertEqual(
+                        result["network"]["response_body_bytes"],
+                        sum(len(bodies[key]) for key in calls),
+                    )
+                    self.assertEqual(
+                        [row["requests"] for row in result["network"]["hosts"]], [5, 1]
+                    )
 
 
 class RemoteTests(unittest.TestCase):

@@ -65,6 +65,7 @@ class RemoteError(SourceError):
 class Budget:
     def __init__(self, seconds=60):
         self.deadline = time.monotonic() + seconds
+        self.network = None
 
     def check(self):
         if time.monotonic() >= self.deadline:
@@ -82,6 +83,7 @@ class Budget:
         now = time.monotonic()
         child = Budget(0)
         child.deadline = now + max(0, self.deadline - now) * fraction
+        child.network = self.network
         return child
 
 

@@ -7,7 +7,8 @@ Tests pin the exact behavior.
 - **REQ-01 — Standalone and deterministic.** The default engine uses only the
   bundled rules, without AppSec Analyzer or model calls. The same sources, rules,
   and settings give the same security result, and each result names its rule and
-  scoring versions; observational timing metadata is excluded from this guarantee.
+  scoring versions; observational timing and network metadata are excluded from
+  this guarantee.
 
 - **REQ-02 — Repositories and changes.** Scan local checkouts and GitHub.com or
   GitLab.com repository URLs, including the repository-host security settings for
@@ -139,3 +140,10 @@ Tests pin the exact behavior.
 - **REQ-22 — Detailed scan progress.** Detailed text mode reports preparation,
   file-check progress and major scan stages on stderr. Progress must not corrupt
   structured output, quiet output, findings or exit statuses.
+
+- **REQ-23 — Network usage in details.** Internal scans with `--details` report
+  HTTP request attempts and response body bytes read, in total and per host,
+  including metadata and overview requests and discarded reads. State the
+  measurement boundaries, expose no credentials or request paths, and add no
+  requests or changes to scoring, exit status, plain output or quiet output;
+  JSON/YAML with details includes the counters as `network`.

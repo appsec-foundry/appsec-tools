@@ -294,6 +294,20 @@ API request per file. When a limit is reached, the error says how long to wait.
 The tool never picks up a token on its own: `GITHUB_TOKEN` and `gh` logins are used
 only if you name the variable with `--token-env`.
 
+With `--details`, a closing `Network:` block reports HTTP request attempts and
+download volume, in total and per host. This includes host settings, file
+listings, selected files and the overview's commits and branches; failed HTTP
+attempts count too. Local scans report zero HTTP requests. Measuring adds no
+requests. JSON/YAML with details includes the same counters under `network`,
+with exact byte counts in `response_body_bytes`.
+
+The byte count measures response body bytes actually read, including partial or
+oversized reads discarded by the scan. It excludes unread bodies (including
+rejected HTTP error responses), HTTP headers, uploads, DNS and TLS/TCP overhead;
+it is not total traffic on the network interface. A connection that fails before
+an HTTP request can be attempted does not count as a request. These counters
+cover the internal engine; the optional Analyzer engine is not instrumented.
+
 ### Changes
 
 Choose one comparison per call:
