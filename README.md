@@ -1,8 +1,40 @@
 # appsec-analyzer-tools
 
-Standalone supplementary tools for [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer):
+Small command-line tools that go with
+[appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer). Each tool
+lives in its own directory and is installed and used on its own. The core
+application is developed in the appsec-analyzer repository.
 
-- [Requirement Harvester](requirement-harvester/README.md) reads requirements from configured HTTPS pages and exports OSCAL YAML.
-- [Security Score](security-score/README.md) assesses repositories and the security relevance of changes.
+All tools need Python 3.10 or newer, `pipx`, and Git with SSH access to GitHub.
 
-Each tool has its own directory with instructions, dependencies, and tests. The core application is developed in the [appsec-analyzer repository](https://github.com/appsec-foundry/appsec-analyzer).
+## Security Score
+
+Scans a repository and gives it a security score from 0 to 100 and a grade from
+A to F. It also rates how security-relevant a single change is. The checks are
+fixed rules; no LLM is involved. The scanned code is never run.
+
+```console
+$ security-score /path/to/repository
+59/100 (E)
+```
+
+Works on a local directory or a GitHub/GitLab URL. `--details` shows what was
+found, per topic and with file and line.
+
+[Read more](security-score/README.md)
+
+## Requirement Harvester
+
+Reads security requirements from websites and wikis and writes them to an
+[OSCAL](https://pages.nist.gov/OSCAL/) catalog in YAML. A configuration file
+says which pages to read and how requirements are recognized on them. No LLM is
+involved.
+
+```console
+$ requirement-harvester run --config examples/tss-web.yaml
+{"status": "complete", "requirements": 116, "catalogs": 1, "dry-run": false}
+```
+
+appsec-analyzer cannot import the OSCAL catalog directly yet.
+
+[Read more](requirement-harvester/README.md)

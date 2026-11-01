@@ -1,13 +1,13 @@
 # Security Score
 
-Gives a repository a quick security score from 0 to 100 with a grade from A to
-F, based on static checks of source code, dependencies, CI, container and
-Terraform files, and repository settings. For a change, such as a commit or staged files, it
-rates the security relevance instead: `high`, `medium`, `low`, or `unclear`.
+Scans a repository and gives it a security score from 0 to 100 and a grade
+from A to F. It looks at source code, dependencies, CI, container and Terraform
+files, and repository settings. For a change, such as a commit or staged files,
+it rates the security relevance instead: `high`, `medium`, `low`, or `unclear`.
 
-The checks are bundled, deterministic rules. No LLM and no AppSec Analyzer are
-needed. The score is a quick indication: 100 means the checks found nothing,
-not that the code is secure.
+The checks are fixed rules, so the same input always gives the same result. No
+LLM and no AppSec Analyzer are needed. The score is a quick indication: 100
+means the checks found nothing, not that the code is secure.
 
 ## Quick start
 
@@ -19,7 +19,7 @@ pipx install "git+ssh://git@github.com/appsec-foundry/appsec-analyzer-tools.git#
 security-score /path/to/repository             # score
 security-score /path/to/repository --details   # overview, subscores and findings per topic
 security-score /path/to/repository --details --checks authentication,tls,headers
-security-score /path/to/repository --quite     # only the number, without progress
+security-score /path/to/repository --quiet     # only the number, without progress
 security-score https://github.com/juice-shop/juice-shop
 security-score /path/to/repository --staged    # relevance of staged changes
 ```
@@ -39,116 +39,27 @@ $ security-score /path/to/repository
 `59/100 (partial)` instead of a grade means that some checks were inconclusive
 or a limit was reached. The number then covers only the recognized evidence.
 
-With `--details` (historical excerpt from a Juice Shop scan with rule version 9;
-current rules also recognize its imported MD5 password hashing and OAuth implicit flow):
+With `--details`, the report starts with an overview of the repository, then
+lists the score and findings per topic. This is the top of a scan of
+[Juice Shop](https://github.com/juice-shop/juice-shop), an intentionally
+insecure training application, so the low score is expected:
 
-```text
-Security score · 0/100 (partial)
-Scope: https://github.com/juice-shop/juice-shop @ 717f5efa886b
-Findings are static pattern matches; exploitability unverified.
-Partial result: subscores describe recognized evidence only; no repository grade is available.
+![security-score --details on Juice Shop](docs/details-juice-shop.png)
 
-Overview
-  Technology (context only, adds no score credit):
-    Languages       TypeScript 638, CSS 83, HTML 81, Terraform 11, JavaScript 7, Python 3, +1 more
-    Files           1468 listed (330 assets, 37 build, 161 examples, 659 source, 281 tests), 962
-                    read, 139140 lines read
-    Frameworks      Angular, Express, Socket.IO
-    Test tools      Cypress, Vitest
-    Runtimes        Node.js 20.19.2 (infrastructure/Dockerfile:1), Node.js 22 - 26
-                    (package.json:211), Node.js 24 (Dockerfile:1)
-    Package tools   npm
-  Technology risks (context only, adds no score credit):
-    Runtimes        Node.js 20.19.2: end of life (infrastructure/Dockerfile:1, +1 more)
-  Development (context only, adds no score credit):
-    Branches        12
-    Commits         last 9 commits on default branch: 0 with a pull/merge request marker, 1 other
-                    merge, 8 without marker; 4 authors; latest 2026-10-23
-    Process files   contributing guide, pull request template
-    CI              GitHub Actions (16 files); runs on pull or merge requests and tests
-    Quality tools   ESLint
-    Security tools  CodeQL
+- `0/100 (partial)` is the overall result. Partial means that some topics
+  could not be assessed, so there is no grade.
+- *Overview* describes the repository. It is context only and adds no points.
+- Each topic below it (here Repository and Authentication) has its own
+  score. `Score: 100 - 85 = 15` shows how it came about. Each finding shows
+  its rule ID, file, line and the points it deducted. `OK` lines are positive
+  evidence and add no points.
 
-Repository               79/100  ████████░░  2 findings
-  Score: 100 - 20 = 80, capped at 79 by a medium finding
-  MEDIUM    Default branch protection reported disabled (-10)
-            HOST-DEFAULT-BRANCH-PROTECTION · host API
-  MEDIUM    Required reviews reported disabled (-10)
-            HOST-REQUIRED-REVIEWS · host API
-  OK        Security policy present
-            REPO-SECURITY-POLICY · SECURITY.md:1
-
-Authentication          not assessed
-  No recognized control evidence from the available checks.
-
-Architecture              0/100  ░░░░░░░░░░  19 findings
-  Score: execution 100 - 100 = 0; injection 100 - 75 = 25. The lowest area counts.
-  HIGH      Constructed SQL passed to a query call (-75)
-            JS-SQL · routes/login.ts:34 (+12 more)
-  HIGH      JavaScript code evaluation (-75)
-            JS-EVAL · lib/xml.ts:12 (+4 more)
-  HIGH      JavaScript command execution through exec (-25)
-            JS-SHELL · scripts/package.mjs:20
-  OK        Data-only parsing with JSON.parse
-            JS-EVAL · frontend/src/app/Services/basket.service.ts:98 (+44 more)
-  OK        Literal SQL text passed to a query call
-            JS-SQL · data/static/codefixes/loginAdminChallenge_3.ts:15 (+4 more)
-  Profile (context only, adds no score credit):
-    Login           SSO and passwords
-    Password hash   none recognized
-    Authentication  local passwords (password from request), SSO (OIDC/OAuth) (Google sign-in), JWT
-                    (express-jwt, jsonwebtoken)
-    Frontend        single-page app (@angular/core), server-side templates (hbs, pug)
-    Persistence     SQL (sequelize, sqlite3)
-    SQL queries     concatenated or interpolated in 13 of 33 query calls, 14 unresolved
-                    (routes/login.ts:34)
-    Deployment      AWS, Docker Compose, Terraform
-    Cloud login     none recognized
-...
-Dependencies & CI         0/100  ░░░░░░░░░░  31 findings
-  Score: 100 - 117, floored at 0
-  HIGH      CI step pipes a download to an interpreter (-25)
-            CI-REMOTE-SCRIPT · .github/workflows/ci.yml:374
-...
-  Profile (context only, adds no score credit):
-    Lockfile        none recognized
-    Exact versions  npm 6 of 176 direct dependencies
-    Updates         none recognized
-
-Secrets                   5/100  ░░░░░░░░░░  5 findings
-  Score: 100 - 95 = 5
-  HIGH      Credential in a recognized format (-75)
-            SECRET-TOKEN · lib/insecurity.ts:21 (+2 more)
-  MEDIUM    Credential or key file in the repository (-20)
-            SECRET-FILE · ctf.key:1 (+1 more)
-
-Cryptography             59/100  ██████░░░░  1 finding
-  Score: 100 - 25 = 75, capped at 59 by a high finding
-  HIGH      Predictable random value for a named secret (-25)
-            JS-RANDOM · lib/insecurity.ts:53
-
-Deployment & transport  not assessed
-  OK        Non-root container user declared
-            IAC-USER · Dockerfile:39 (+1 more)
-
-Coverage
-  965 files checked · 89 findings · scan incomplete
-```
-
-Every area starts at 100. A rule deducts points per occurrence, up to three
-occurrences, and the worst severity also limits the score, as in the `Score:`
-lines above. The number in brackets is what a finding costs. A closing note in
-the output repeats the current values.
-
-This scan hit a limit, so its exit status is `1` and there is no grade.
-
-Current `--details` output also shows an identity profile under Authentication:
-recognized servers, endpoint roles, and grants marked `requested`, `configured`
-or `supported`. For Juice Shop it recognizes Google at
-`https://accounts.google.com` and the requested `implicit` flow. Server origins
-omit credentials, paths and query parameters. The last line shows the elapsed
-scan time, for example `Duration: 8.42 s`; JSON/YAML with `--details` includes
-`duration_seconds` instead.
+The report continues in the same layout with Architecture, Frontend,
+Dependencies & CI, Secrets, Cryptography and Deployment & transport, and ends
+with a coverage line. Under Authentication it also lists the identity servers
+and grants it recognized. Server origins omit credentials, paths and query
+parameters. A closing line shows the scan time, for example `Duration: 8.42 s`;
+JSON/YAML with `--details` includes `duration_seconds` instead.
 
 Only the number, for scripts and CI. Always check the exit status as well;
 here, `2` marks a partial result:
