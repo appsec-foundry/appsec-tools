@@ -13,8 +13,8 @@ GitHub.
 Install from a clone, which also contains the example configurations:
 
 ```sh
-git clone git@github.com:appsec-foundry/appsec-analyzer-tools.git
-cd appsec-analyzer-tools/requirement-harvester
+git clone git@github.com:appsec-foundry/appsec-tools.git
+cd appsec-tools/requirement-harvester
 pipx install .
 ```
 
@@ -40,7 +40,7 @@ unchanged, and records the error in the report.
 To install without a clone:
 
 ```sh
-pipx install "git+ssh://git@github.com/appsec-foundry/appsec-analyzer-tools.git#subdirectory=requirement-harvester"
+pipx install "git+ssh://git@github.com/appsec-foundry/appsec-tools.git#subdirectory=requirement-harvester"
 ```
 
 ## Configure your own source

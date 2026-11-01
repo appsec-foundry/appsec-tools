@@ -14,7 +14,7 @@ means the checks found nothing, not that the code is secure.
 Requires Python 3.10+, `pipx`, and Git with SSH access to GitHub.
 
 ```sh
-pipx install "git+ssh://git@github.com/appsec-foundry/appsec-analyzer-tools.git#subdirectory=security-score"
+pipx install "git+ssh://git@github.com/appsec-foundry/appsec-tools.git#subdirectory=security-score"
 
 security-score /path/to/repository             # score
 security-score /path/to/repository --details   # overview, subscores and findings per topic
@@ -296,7 +296,7 @@ To repair a stale or broken installation:
 
 ```sh
 pipx install --force --pip-args="--upgrade --force-reinstall --no-cache-dir" \
-  "git+ssh://git@github.com/appsec-foundry/appsec-analyzer-tools.git#subdirectory=security-score"
+  "git+ssh://git@github.com/appsec-foundry/appsec-tools.git#subdirectory=security-score"
 ```
 
 From a clone, use `./security-score` instead of the URL.
