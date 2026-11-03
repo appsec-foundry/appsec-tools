@@ -10,9 +10,11 @@ Tests pin the exact behavior.
   scoring versions; observational timing and network metadata are excluded from
   this guarantee.
 
-- **REQ-02 — Repositories and changes.** Scan local checkouts and GitHub.com or
-  GitLab.com repository URLs, including the repository-host security settings for
-  URLs. Analyze changes (staged, unstaged, commits, revision ranges, patches) and
+- **REQ-02 — Repositories and changes.** Scan local checkouts and HTTPS repository
+  URLs on GitHub.com, GitLab.com, and explicitly selected self-managed GitLab
+  instances, including repository-host security settings. Authenticate private
+  GitLab reads through an explicitly selected token environment variable.
+  Analyze changes (staged, unstaged, commits, revision ranges, patches) and
   state the compared versions. Checks cover data access, frontend output, CSP and
   other browser security headers, token verification, password hashing, session and
   CORS settings, credentials, hardening including container privileges, a narrow set

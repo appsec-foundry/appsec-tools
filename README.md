@@ -46,11 +46,13 @@ per topic, with rule, file and line. Click the excerpt for the full screenshot:
 A URL scan also checks settings only the host knows, such as branch protection
 and required reviews; those are the two findings under Repository. Only files
 the tool can check are downloaded: the Juice Shop scan fetched 962 files in about
-14 seconds. GitLab.com URLs work the same way. For a private repository, pass the
-name of the environment variable that holds a read-only token:
+14 seconds. GitLab.com and self-managed GitLab URLs work the same way. For a
+private repository, pass the name of the environment variable that holds a
+read-only token:
 
 ```sh
 security-score https://github.com/example/private-project --token-env GITHUB_READ_TOKEN
+security-score https://gitlab.company.example/team/project --token-env GITLAB_READ_TOKEN
 ```
 
 Local directories and single changes work too:

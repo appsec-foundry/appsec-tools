@@ -69,7 +69,7 @@ def tree_entries(host, project, revision, budget, read, *, exclusions=None):
             )
         return entries[:MAX_FILES]
     base = (
-        f"https://gitlab.com/api/v4/projects/{quote(project, safe='')}/repository/tree"
+        f"https://{host}/api/v4/projects/{quote(project, safe='')}/repository/tree"
     )
     entries, metadata_bytes = [], 0
     for page in range(1, MAX_FILES // 100 + 2):
@@ -178,7 +178,7 @@ def select_files(host, project, revision, budget, read, *, authenticated=False):
         elif host == "github.com":
             url = f"https://api.github.com/repos/{project}/git/blobs/{oid}"
         else:
-            url = f"https://gitlab.com/api/v4/projects/{quote(project, safe='')}/repository/blobs/{oid}/raw"
+            url = f"https://{host}/api/v4/projects/{quote(project, safe='')}/repository/blobs/{oid}/raw"
         try:
             data = read(url, limit=MAX_FILE, accept="application/vnd.github.raw+json")
         except BudgetExceeded:

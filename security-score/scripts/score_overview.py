@@ -632,18 +632,25 @@ def remote_history(options, revision, budget):
         branches_url = f"{api}/branches?per_page={BRANCH_PAGE}"
     else:
         api, token_host, parse = (
-            "https://gitlab.com/api/v4/projects/" + quote(project, safe=""),
-            "gitlab.com",
+            f"https://{host}/api/v4/projects/" + quote(project, safe=""),
+            host,
             gitlab_commit,
         )
         commits_url = (
             f"{api}/repository/commits?ref_name={revision}&per_page={COMMIT_SAMPLE}"
         )
         branches_url = f"{api}/repository/branches?per_page={BRANCH_PAGE}"
-    commits, reason = json_get(commits_url, budget, token, token_host, list)
+    destination = (
+        {"gitlab_host": host} if host not in {"github.com", "gitlab.com"} else {}
+    )
+    commits, reason = json_get(
+        commits_url, budget, token, token_host, list, **destination
+    )
     if reason:
         raise SourceError(reason)
-    branches, reason = json_get(branches_url, budget, token, token_host, list)
+    branches, reason = json_get(
+        branches_url, budget, token, token_host, list, **destination
+    )
     rows = [parse(row) for row in commits if isinstance(row, dict)]
     count = None if reason else len(branches)
     return rows, revision, f"{count}+" if count == BRANCH_PAGE else count

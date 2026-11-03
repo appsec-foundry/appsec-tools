@@ -82,8 +82,23 @@ remain. A directory without `.git` or a rate limit shows as `unavailable`.
 
 ## Repository URLs
 
-HTTPS URLs on GitHub.com and GitLab.com are supported, including nested GitLab
-groups. URLs must not contain credentials, query strings, or fragments.
+HTTPS URLs on GitHub.com, GitLab.com and self-managed GitLab instances are
+supported, including nested GitLab groups. Other HTTPS hosts are treated as
+GitLab. The host and optional port come directly from the repository URL;
+there is no separate host option. URLs must not contain credentials, query
+strings, or fragments.
+
+```sh
+security-score https://gitlab.company.example:8443/team/project --token-env GITLAB_READ_TOKEN --details
+```
+
+For a private GitLab project, provide a token with `read_api` and project access
+through the named environment variable. It is sent only to the selected
+HTTPS origin. RFC 1918 private IPv4 and IPv6 unique-local addresses are supported
+for self-managed GitLab; loopback, link-local and metadata destinations remain
+blocked. TLS verification stays enabled. Trust an internal CA through the system
+trust store or `SSL_CERT_FILE`. The optional Analyzer engine supports GitHub.com
+and GitLab.com URLs only.
 
 The tool does not clone the repository. It lists the files at one commit and
 downloads only files it can check. If a large repository does not fit into the
@@ -102,8 +117,9 @@ public repository it goes only to the API; file downloads stay on the raw host
 without the token. A private repository uses one API request per file. When a
 limit is reached, the error says how long to wait.
 
-The tool never picks up a token on its own: `GITHUB_TOKEN` and `gh` logins are used
-only if you name the variable with `--token-env`.
+The tool reads a token only from the environment variable named with
+`--token-env`. It does not use `gh` or `glab` logins, and does not automatically
+read `GITHUB_TOKEN` or `GITLAB_TOKEN`.
 
 ### Network usage
 

@@ -54,10 +54,21 @@ security-score /path/to/repository --base main --head HEAD
 security-score https://github.com/example/private-project --token-env GITHUB_READ_TOKEN
 ```
 
-URLs work for GitHub.com and GitLab.com, and public repositories need no token.
-For a private repository, put a read-only token in an environment variable and
-pass the name of the variable. For SSH URLs and self-hosted servers, scan a local
-checkout.
+URLs work for GitHub.com, GitLab.com and self-managed GitLab instances. Other
+HTTPS hosts are treated as GitLab; the host and optional port come from the
+repository URL. Public repositories need no token. For a private repository,
+put a read-only token in an environment variable and pass its name:
+
+```sh
+security-score https://gitlab.company.example/team/project --token-env GITLAB_READ_TOKEN --details
+```
+
+The GitLab token needs `read_api` and access to the project. The tool reads files
+and host settings through the API without cloning. Internal GitLab addresses
+and custom HTTPS ports are supported; loopback and link-local addresses remain
+blocked. For an internal certificate authority, use your system trust store or
+set `SSL_CERT_FILE` to its CA bundle. SSH URLs and other Git providers need a
+local checkout. Self-managed GitLab URLs use the internal engine.
 
 ## Reading the result
 
@@ -109,7 +120,7 @@ pipx install --force --pip-args="--upgrade --force-reinstall --no-cache-dir" \
 Run from `security-score/`:
 
 ```sh
-python3 -B -m unittest test_security_score test_security_controls -v  # offline tests
+python3 -B -m unittest test_security_score test_security_controls test_gitlab_remote -v  # offline tests
 python3 -B -m unittest test_packaging -v                              # build and install a wheel
 python3 scripts/score.py --verify-rules                               # rule examples
 ```

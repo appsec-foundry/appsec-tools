@@ -27,6 +27,10 @@ HOSTS = {
     "gitlab.com",
 }
 MAX_DOWNLOAD = 24 * 1024 * 1024
+PRIVATE_NETWORKS = tuple(
+    ipaddress.ip_network(value)
+    for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")
+)
 
 
 class NetworkStats:
@@ -62,21 +66,60 @@ def tls_context():
     return ssl.create_default_context()
 
 
+def gitlab_destination(authority):
+    """Parse the exact HTTPS authority selected by an operator's repository URL."""
+    try:
+        parsed = urlsplit("https://" + authority)
+        host, port = parsed.hostname, parsed.port or 443
+    except ValueError:
+        raise SourceError("Invalid GitLab host or port.") from None
+    if (
+        not host
+        or "%" in host
+        or any(ord(char) < 33 or ord(char) > 126 for char in authority)
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path
+        or parsed.query
+        or parsed.fragment
+        or not 1 <= port <= 65535
+    ):
+        raise SourceError("Invalid GitLab host or port.")
+    try:
+        address = ipaddress.ip_address(host)
+        name = f"[{host}]" if address.version == 6 else host
+    except ValueError:
+        if not re.fullmatch(
+            r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*"
+            r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", host
+        ):
+            raise SourceError("Invalid GitLab host or port.") from None
+        name = host
+    if authority not in {name, f"{name}:{port}"}:
+        raise SourceError("Use a canonical GitLab host and port.")
+    return host, port
+
+
 def repository_url(value):
     if any(ord(char) < 33 or ord(char) > 126 for char in value):
         raise SourceError(
             "Repository URLs must not contain control characters or whitespace."
         )
-    parsed = urlsplit(value)
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        raise SourceError("Invalid HTTPS repository URL.") from None
     if (
         parsed.scheme != "https"
-        or parsed.netloc not in {"github.com", "gitlab.com"}
         or parsed.query
         or parsed.fragment
     ):
         raise SourceError(
             "Use a canonical HTTPS GitHub/GitLab repository URL without credentials, query, or fragment."
         )
+    host, _ = gitlab_destination(parsed.netloc)
+    if host in {"github.com", "gitlab.com"} and parsed.netloc != host:
+        raise SourceError("Use the canonical GitHub.com or GitLab.com HTTPS URL.")
     path = parsed.path.rstrip("/")
     path = path[:-4] if path.endswith(".git") else path
     parts = path[1:].split("/")
@@ -93,13 +136,13 @@ def repository_url(value):
     return parsed.netloc, "/".join(parts)
 
 
-def public_addresses(host, budget):
+def public_addresses(host, budget, *, port=443, allow_private=False):
     complete = threading.Event()
     result = []
 
     def lookup():
         try:
-            result.extend(socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM))
+            result.extend(socket.getaddrinfo(host, port, type=socket.SOCK_STREAM))
         except OSError:
             pass
         finally:
@@ -109,10 +152,16 @@ def public_addresses(host, budget):
     if not complete.wait(timeout=min(5, budget.remaining())) or not result:
         budget.check()
         raise SourceError(
-            "Cannot resolve the selected public Git host within the time limit."
+            "Cannot resolve the selected Git host within the time limit."
         )
-    if any(not ipaddress.ip_address(row[4][0]).is_global for row in result):
-        raise SourceError("Git host resolved to a non-public network destination.")
+    for row in result:
+        address = ipaddress.ip_address(row[4][0])
+        address = getattr(address, "ipv4_mapped", None) or address
+        private = allow_private and any(
+            address in network for network in PRIVATE_NETWORKS
+        )
+        if address.is_multicast or not (address.is_global or private):
+            raise SourceError("Git host resolved to a disallowed network destination.")
     return result
 
 
@@ -162,7 +211,11 @@ def rate_limit_error(host, status, headers, authenticated):
         if authenticated
         else ", or pass a read-only token with --token-env NAME for a higher limit"
     )
-    name = "GitLab" if host == "gitlab.com" else "GitHub"
+    name = (
+        "GitHub"
+        if host in {"api.github.com", "raw.githubusercontent.com"}
+        else "GitLab"
+    )
     return RateLimited(
         f"{name} API rate limit reached (HTTP {status}). {wait}{advice}. "
         "No score is available.",
@@ -179,29 +232,46 @@ def get(
     limit=MAX_DOWNLOAD,
     accept="application/json",
     connections=None,
+    gitlab_host=None,
 ):
     """Pin the checked IP at connect time, keep TLS host verification, and bound reads."""
     parsed = urlsplit(url)
     host = parsed.hostname
+    selected_gitlab = gitlab_host is not None and parsed.netloc == gitlab_host
     if (
         parsed.scheme != "https"
-        or host not in HOSTS
-        or parsed.netloc != host
+        or (gitlab_host is not None and not selected_gitlab)
+        or not (selected_gitlab or (host in HOSTS and parsed.netloc == host))
         or parsed.fragment
+        or any(ord(char) < 33 or ord(char) > 126 for char in url)
     ):
         raise SourceError("Rejected repository metadata or source destination.")
-    connection = connections.get(host) if connections is not None else None
+    if selected_gitlab:
+        host, port = gitlab_destination(gitlab_host)
+        if not parsed.path.startswith("/api/v4/projects/"):
+            raise SourceError("Rejected GitLab API destination.")
+    else:
+        port = 443
+    authority = parsed.netloc
+    connection = connections.get(authority) if connections is not None else None
     raw_socket, reusable, deadline = None, False, None
     attempted, body_bytes = False, 0
     expired = threading.Event()
     try:
         if connection is None or connection.sock is None:
-            addresses = public_addresses(host, budget)
+            addresses = (
+                public_addresses(host, budget, port=port, allow_private=True)
+                if selected_gitlab
+                else public_addresses(host, budget)
+            )
             if connection is not None:
                 connection.close()
             for address in addresses:
                 connection = http.client.HTTPSConnection(
-                    host, timeout=min(5, budget.remaining()), context=tls_context()
+                    host,
+                    port=port,
+                    timeout=min(5, budget.remaining()),
+                    context=tls_context(),
                 )
                 raw_socket = socket.socket(address[0], socket.SOCK_STREAM)
                 try:
@@ -229,8 +299,8 @@ def get(
             "Accept": accept,
             "Accept-Encoding": "identity",
         }
-        if token and host == token_host:
-            if host == "gitlab.com":
+        if token and authority == token_host:
+            if host == "gitlab.com" or selected_gitlab:
                 headers["PRIVATE-TOKEN"] = token
             else:
                 headers["Authorization"] = "Bearer " + token
@@ -248,7 +318,7 @@ def get(
                     host,
                     response.status,
                     response.getheader,
-                    bool(token and host == token_host),
+                    bool(token and authority == token_host),
                 )
             return None, response.status
         length = response.getheader("Content-Length")
@@ -290,14 +360,14 @@ def get(
             raise SourceError("Remote response ended before its declared length.")
         reusable = connections is not None and connection.sock is not None
         if reusable:
-            connections[host] = connection
+            connections[authority] = connection
         return bytes(data), 200
     except (OSError, http.client.HTTPException, ssl.SSLError):
         budget.check()
         return None, 0
     finally:
         if attempted and budget.network is not None:
-            budget.network.record(host, body_bytes)
+            budget.network.record(authority, body_bytes)
         if deadline is not None:
             deadline.cancel()
             deadline.join()
@@ -305,7 +375,7 @@ def get(
             if connection is not None:
                 connection.close()
             if connections is not None:
-                connections.pop(host, None)
+                connections.pop(authority, None)
         if raw_socket is not None:
             raw_socket.close()
 
@@ -313,8 +383,9 @@ def get(
 class SourceReader:
     """Reuse each worker's checked TLS connections for one bounded selection."""
 
-    def __init__(self, budget, token, token_host):
+    def __init__(self, budget, token, token_host, *, gitlab_host=None):
         self.budget, self.token, self.token_host = budget, token, token_host
+        self.destination = {"gitlab_host": gitlab_host} if gitlab_host else {}
         self.local = threading.local()
         self.caches = []
         self.lock = threading.Lock()
@@ -332,6 +403,7 @@ class SourceReader:
             limit=limit,
             accept=accept,
             connections=self.local.connections,
+            **self.destination,
         )
         if data is None:
             raise source_error(
@@ -364,10 +436,15 @@ def source_error(status, subject, token=None):
     return RemoteError(f"{subject}: {reason}. No score is available.", status)
 
 
-def json_get(url, budget, token, token_host, expected=dict, *, required=False):
+def json_get(
+    url, budget, token, token_host, expected=dict, *, required=False, gitlab_host=None
+):
     try:
         request_budget = budget if required else budget.portion(0.1)
-        data, status = get(url, request_budget, token=token, token_host=token_host)
+        destination = {"gitlab_host": gitlab_host} if gitlab_host else {}
+        data, status = get(
+            url, request_budget, token=token, token_host=token_host, **destination
+        )
     except SourceError as error:
         if required:
             raise
@@ -417,11 +494,16 @@ def setting(name, value=None, reason=None):
     }
 
 
-def gitlab_reviews(api, branch, protected, budget, token):
+def gitlab_reviews(api, branch, protected, budget, token, *, host="gitlab.com"):
     if not token or not isinstance(branch, str) or not branch:
         return None, "Approval policies require authenticated project-rule evidence."
     rules, error = json_get(
-        api + "/approval_rules?per_page=100", budget, token, "gitlab.com", expected=list
+        api + "/approval_rules?per_page=100",
+        budget,
+        token,
+        host,
+        expected=list,
+        **({"gitlab_host": host} if host != "gitlab.com" else {}),
     )
     for rule in rules if isinstance(rules, list) else []:
         if (
@@ -566,9 +648,10 @@ def host_settings(host, project, budget, token=None, *, require_source=False):
         public = document.get("private") is False
 
     else:
-        api = "https://gitlab.com/api/v4/projects/" + quote(project, safe="")
+        api = f"https://{host}/api/v4/projects/" + quote(project, safe="")
+        destination = {"gitlab_host": host} if host != "gitlab.com" else {}
         document, error = json_get(
-            api, budget, token, "gitlab.com", required=require_source
+            api, budget, token, host, required=require_source, **destination
         )
         branch = document.get("default_branch")
         branch_doc, branch_error = (
@@ -576,14 +659,15 @@ def host_settings(host, project, budget, token=None, *, require_source=False):
                 api + "/repository/branches/" + quote(branch, safe=""),
                 budget,
                 token,
-                "gitlab.com",
+                host,
                 required=require_source,
+                **destination,
             )
             if isinstance(branch, str) and branch
             else ({}, error)
         )
         reviews, review_error = gitlab_reviews(
-            api, branch, branch_doc.get("protected"), budget, token
+            api, branch, branch_doc.get("protected"), budget, token, host=host
         )
         settings = [
             setting(
@@ -660,12 +744,15 @@ def select_remote(options, budget):
         raise SourceError(
             "Repository host returned an invalid commit ID; no score is available."
         )
-    token_host = "api.github.com" if host == "github.com" else "gitlab.com"
+    token_host = "api.github.com" if host == "github.com" else host
+    destination = (
+        {"gitlab_host": host} if host not in {"github.com", "gitlab.com"} else {}
+    )
 
     # Stop network selection before the overall deadline, leaving time to scan
     # the sources already available and publish their observed pattern index.
     source_budget = budget.portion(0.7)
-    read = SourceReader(source_budget, token, token_host)
+    read = SourceReader(source_budget, token, token_host, **destination)
     try:
         files, exclusions = select_files(
             host,

@@ -514,6 +514,8 @@ def analyzer_score(options, budget):
     is_url = options.repo.startswith("https://")
     if is_url:
         host, project = repository_url(options.repo)
+        if host not in {"github.com", "gitlab.com"}:
+            raise SourceError("Self-managed GitLab URLs require the internal engine.")
         root = None
         target = "https://" + host + "/" + project + ".git"
     else:
