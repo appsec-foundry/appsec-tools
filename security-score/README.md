@@ -56,12 +56,35 @@ security-score https://github.com/example/private-project --token-env GITHUB_REA
 
 URLs work for GitHub.com, GitLab.com and self-managed GitLab instances. Other
 HTTPS hosts are treated as GitLab; the host and optional port come from the
-repository URL. Public repositories need no token. For a private repository,
-put a read-only token in an environment variable and pass its name:
+repository URL. Public repositories need no token. To select a token explicitly,
+put it in an environment variable and pass its name:
 
 ```sh
 security-score https://gitlab.company.example/team/project --token-env GITLAB_READ_TOKEN --details
 ```
+
+For automatic selection, create `~/.config/security-score/token-hosts.json`
+(or `$XDG_CONFIG_HOME/security-score/token-hosts.json`):
+
+```json
+{
+  "https://gitlab.company.example": "GIT_TOKEN",
+  "https://api.github.com": "GITHUB_TOKEN"
+}
+```
+
+This file contains environment variable names, not token values. Set the named
+variables before running the tool. You can then omit `--token-env`:
+
+```sh
+security-score https://gitlab.company.example/team/project --details
+```
+
+Automatic reads start anonymously. On HTTP 401, 403 or 404, the tool retries the
+request once with the token assigned to that exact HTTPS origin. An origin
+includes its port; configure `https://gitlab.company.example:8443` separately
+when needed. `--token-env NAME` overrides the mapping and uses that token from
+the first request. Without a matching mapping, access stays anonymous.
 
 The GitLab token needs `read_api` and access to the project. The tool reads files
 and host settings through the API without cloning. Internal GitLab addresses
@@ -120,7 +143,7 @@ pipx install --force --pip-args="--upgrade --force-reinstall --no-cache-dir" \
 Run from `security-score/`:
 
 ```sh
-python3 -B -m unittest test_security_score test_security_controls test_gitlab_remote -v  # offline tests
+python3 -B -m unittest test_security_score test_security_controls test_gitlab_remote test_auto_token -v  # offline tests
 python3 -B -m unittest test_packaging -v                              # build and install a wheel
 python3 scripts/score.py --verify-rules                               # rule examples
 ```

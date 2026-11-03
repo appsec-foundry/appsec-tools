@@ -117,9 +117,41 @@ public repository it goes only to the API; file downloads stay on the raw host
 without the token. A private repository uses one API request per file. When a
 limit is reached, the error says how long to wait.
 
-The tool reads a token only from the environment variable named with
-`--token-env`. It does not use `gh` or `glab` logins, and does not automatically
-read `GITHUB_TOKEN` or `GITLAB_TOKEN`.
+`--token-env NAME` selects a token explicitly and uses it from the first request,
+overriding any automatic configuration. The variable name is arbitrary, such as
+`GIT_TOKEN`, `GITLAB_TOKEN` or `GITHUB_READ_TOKEN`.
+
+For automatic selection, create the user file
+`~/.config/security-score/token-hosts.json`. An absolute `XDG_CONFIG_HOME`
+changes that location to `$XDG_CONFIG_HOME/security-score/token-hosts.json`.
+Project files are not searched for credentials.
+
+```json
+{
+  "https://gitlab.company.example": "GIT_TOKEN",
+  "https://gitlab.company.example:8443": "OTHER_GIT_TOKEN",
+  "https://api.github.com": "GITHUB_TOKEN"
+}
+```
+
+Keys are exact HTTPS API origins and values are environment variable names,
+never token values. For GitHub.com repositories, use the API origin
+`https://api.github.com`. Other hosts and ports receive no credential from that
+mapping. The default HTTPS port 443 and an omitted port identify the same origin.
+
+Without an explicit `--token-env`, API reads start anonymously. HTTP 401, 403 or
+404 triggers at most one retry with the mapped token. Subsequent requests in the
+same scan reuse it only at that API origin, including overview requests with
+`--details`. Public GitHub source downloads remain anonymous. Redirects, TLS
+failures and other network failures do not trigger token selection. If the
+mapped variable is missing or invalid when needed, authentication fails with a
+diagnostic. Malformed or ambiguous configuration is rejected; an explicit
+`--token-env` bypasses that configuration.
+
+There is no automatic selection from environment names alone or from `gh` or
+`glab` logins. Local scans do not read the host mapping. The optional Analyzer
+continues to manage its own repository-source authentication; the mapping covers
+this tool's API requests.
 
 ### Network usage
 
@@ -182,7 +214,7 @@ repository grade; `--checks all` preserves the default behavior.
 | `--details`, `--detail` | Repository overview, subscores and findings per topic; for changes, the signals grouped by rule. |
 | `--quiet`, `--quite` | Print only the number, or nothing if there is none. Cannot be combined with `--json`, `--yaml`, change analysis, `--list-rules`, or `--verify-rules`. |
 | `--json`, `--yaml` | Structured output with all findings and the calculation. With `--details` it also contains the `overview`. |
-| `--token-env NAME` | Environment variable that holds the API token for a repository URL. |
+| `--token-env NAME` | Explicit API token environment variable for a repository URL; overrides automatic host mappings. |
 | `--timeout SECONDS` | Time budget from 0.1 to 120 seconds; default 60. |
 | `--engine analyzer` | Use a separately installed AppSec Analyzer instead of the bundled rules; repository scans only. `--analyzer PATH` sets the absolute path of a trusted executable; otherwise it is taken from `PATH`. See [compatibility](compatibility.md). |
 | `--list-rules` | Show the bundled rules. |

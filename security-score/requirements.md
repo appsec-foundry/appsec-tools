@@ -149,3 +149,9 @@ Tests pin the exact behavior.
   measurement boundaries, expose no credentials or request paths, and add no
   requests or changes to scoring, exit status, plain output or quiet output;
   JSON/YAML with details includes the counters as `network`.
+
+- **REQ-24 — Automatic host-bound credentials.** An explicit `--token-env`
+  selection takes precedence. Otherwise, remote reads start anonymously and may
+  retry once with a token environment variable configured by the user for that
+  exact HTTPS origin when authentication is needed. Never use credential mappings
+  from the scanned repository or send a token to another origin.

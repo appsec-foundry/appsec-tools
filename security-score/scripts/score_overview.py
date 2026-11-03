@@ -16,7 +16,7 @@ from urllib.parse import quote
 from score_architecture import COMMENT_LINE
 from score_core import GRADLE_BUILD_FILES, JS_EXTENSIONS
 from score_infrastructure import OWN_CODE, ci_file, document, line_of, logical_lines
-from score_remote import json_get, read_token, repository_url
+from score_remote import json_get, repository_url, select_token
 from score_reporting import container_build_file, origin, source_priority
 from score_sources import SourceError, git
 
@@ -621,7 +621,11 @@ def gitlab_commit(row):
 def remote_history(options, revision, budget):
     """One page of commits and one of branches: two API requests per --details run."""
     host, project = repository_url(options.repo)
-    token = read_token(options.token_env)
+    token = (
+        options._remote_token
+        if hasattr(options, "_remote_token")
+        else select_token(host, options.token_env)
+    )
     if host == "github.com":
         api, token_host, parse = (
             "https://api.github.com/repos/" + project,

@@ -73,7 +73,7 @@ from score_relevance import VERSION as RELEVANCE_VERSION, analyze as analyze_rel
 from score_remote import (
     NetworkStats,
     host_settings,
-    read_token,
+    select_token,
     repository_url,
     select_remote,
     settings_checks,
@@ -173,7 +173,7 @@ def parser():
     )
     result.add_argument(
         "--token-env",
-        help="Environment variable holding an operator-selected read-only GitHub/GitLab API token; URL requests only",
+        help="Explicit read-only API token environment variable; overrides automatic host mappings; URL requests only",
     )
     result.add_argument(
         "--list-rules",
@@ -555,7 +555,7 @@ def analyzer_score(options, budget):
                 )
     announce(options, "Running the selected Analyzer variant...")
     settings = (
-        host_settings(host, project, budget, read_token(options.token_env))[0]
+        host_settings(host, project, budget, select_token(host, options.token_env))[0]
         if is_url
         else []
     )

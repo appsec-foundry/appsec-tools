@@ -9,6 +9,7 @@ import ipaddress
 import json
 import math
 import os
+from pathlib import Path
 import re
 import socket
 import ssl
@@ -27,6 +28,7 @@ HOSTS = {
     "gitlab.com",
 }
 MAX_DOWNLOAD = 24 * 1024 * 1024
+MAX_TOKEN_CONFIG = 64 * 1024
 PRIVATE_NETWORKS = tuple(
     ipaddress.ip_network(value)
     for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")
@@ -395,7 +397,7 @@ class SourceReader:
             self.local.connections = {}
             with self.lock:
                 self.caches.append(self.local.connections)
-        data, status = get(
+        data, status = credential_get(
             url,
             self.budget,
             token=self.token,
@@ -442,7 +444,7 @@ def json_get(
     try:
         request_budget = budget if required else budget.portion(0.1)
         destination = {"gitlab_host": gitlab_host} if gitlab_host else {}
-        data, status = get(
+        data, status = credential_get(
             url, request_budget, token=token, token_host=token_host, **destination
         )
     except SourceError as error:
@@ -712,6 +714,139 @@ def read_token(name):
     return token
 
 
+def token_origin(value):
+    """Normalize only an HTTPS origin, without credentials or repository paths."""
+    try:
+        parsed = urlsplit(value)
+        host = parsed.hostname
+        port = parsed.port if parsed.port is not None else 443
+    except (ValueError, TypeError):
+        raise SourceError(
+            "Invalid HTTPS origin in user token-hosts configuration."
+        ) from None
+    if (
+        parsed.scheme != "https"
+        or not host
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or not 1 <= port <= 65535
+        or any(ord(char) < 33 or ord(char) > 126 for char in value)
+    ):
+        raise SourceError("Invalid HTTPS origin in user token-hosts configuration.")
+    gitlab_destination(parsed.netloc)
+    name = f"[{host}]" if ":" in host else host
+    return "https://" + name + (f":{port}" if port != 443 else "")
+
+
+def token_hosts():
+    """Read a bounded user-owned mapping; never discover configuration in a repo."""
+    configured = os.environ.get("XDG_CONFIG_HOME", "")
+    directory = Path(configured) if configured else None
+    if directory is None or not directory.is_absolute():
+        directory = Path.home() / ".config"
+    path = directory / "security-score" / "token-hosts.json"
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(MAX_TOKEN_CONFIG + 1)
+    except FileNotFoundError:
+        return {}
+    except OSError:
+        raise SourceError("Cannot read user token-hosts.json configuration.") from None
+    if len(raw) > MAX_TOKEN_CONFIG:
+        raise SourceError(
+            "User token-hosts.json exceeds the 64 KiB configuration limit."
+        )
+
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate origin")
+            result[key] = value
+        return result
+
+    try:
+        document = json.loads(raw, object_pairs_hook=unique)
+    except (ValueError, UnicodeError, RecursionError):
+        raise SourceError("Invalid user token-hosts.json configuration.") from None
+    if not isinstance(document, dict) or len(document) > 256:
+        raise SourceError(
+            "User token-hosts.json must map up to 256 HTTPS origins to environment variable names."
+        )
+    result = {}
+    for origin, name in document.items():
+        if not isinstance(name, str) or not re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*", name
+        ):
+            raise SourceError(
+                "User token-hosts.json must contain environment variable names, not tokens."
+            )
+        normalized = token_origin(origin)
+        if normalized in result:
+            raise SourceError(
+                "Ambiguous HTTPS origin in user token-hosts.json configuration."
+            )
+        result[normalized] = name
+    return result
+
+
+class AutomaticToken:
+    """Load one configured environment variable lazily for one API authority."""
+
+    def __init__(self, name, authority):
+        self.name, self.authority = name, authority
+        self._value = None
+        self._lock = threading.Lock()
+
+    def current(self, authority):
+        return self._value if authority == self.authority else None
+
+    def activate(self, authority):
+        if authority != self.authority:
+            return False
+        with self._lock:
+            if self._value is None:
+                self._value = read_token(self.name)
+        return True
+
+
+def select_token(host, name=None):
+    if name is not None:
+        return read_token(name)
+    authority = "api.github.com" if host == "github.com" else host
+    configured = token_hosts().get(token_origin("https://" + authority))
+    if configured is None:
+        return None
+    return AutomaticToken(configured, authority)
+
+
+def credential_get(url, budget, *, token=None, token_host=None, **kwargs):
+    """Retry an anonymous authentication failure once at the configured origin."""
+    if not isinstance(token, AutomaticToken):
+        return get(url, budget, token=token, token_host=token_host, **kwargs)
+    authority = urlsplit(url).netloc
+    matched = authority == token_host == token.authority
+    current = token.current(authority) if matched else None
+    try:
+        data, status = get(url, budget, token=current, token_host=token_host, **kwargs)
+    except RateLimited as error:
+        if error.status != 403 or current is not None or not matched:
+            raise
+        token.activate(authority)
+        return get(
+            url, budget, token=token.current(authority), token_host=token_host, **kwargs
+        )
+    if data is None and status in {401, 403, 404} and current is None and matched:
+        token.activate(authority)
+        return get(
+            url, budget, token=token.current(authority), token_host=token_host, **kwargs
+        )
+    return data, status
+
+
 def select_remote(options, budget):
     host, project = repository_url(options.repo)
     if any(
@@ -730,7 +865,8 @@ def select_remote(options, budget):
         raise SourceError(
             "Use a local checkout for Git comparisons, or supply the selected PR/MR patch separately."
         )
-    token = read_token(options.token_env)
+    token = select_token(host, options.token_env)
+    options._remote_token = token
     settings, revision, public = host_settings(
         host, project, budget, token, require_source=True
     )
@@ -761,7 +897,7 @@ def select_remote(options, budget):
             source_budget,
             read,
             # Public files come from the raw host: no API quota, no token in transit.
-            authenticated=token is not None and not public,
+            authenticated=bool(token) and not public,
         )
     finally:
         read.close()
