@@ -57,7 +57,11 @@ class GitLabRemoteTests(unittest.TestCase):
                 self.assertNotIn("secret", errors.getvalue())
 
     def test_private_addresses_are_limited_to_the_selected_gitlab_instance(self):
-        for address in ("10.23.4.5", "172.20.1.2", "192.168.2.3", "fd12::8"):
+        for address in (
+            "10.23.4.5", "172.20.1.2", "192.168.2.3", "fd12::8",
+            "100.64.1.31", "100.64.0.1", "100.127.255.254",
+            "::ffff:100.64.1.31",
+        ):
             rows = [(socket.AF_INET, 1, 6, "", (address, 8443))]
             with self.subTest(address=address), mock.patch.object(
                 remote.socket, "getaddrinfo", return_value=rows
@@ -74,6 +78,7 @@ class GitLabRemoteTests(unittest.TestCase):
         for address in (
             "127.0.0.1", "169.254.169.254", "100.100.100.200", "0.0.0.0",
             "224.0.0.1", "::1", "::", "fe80::1", "ff02::1", "::ffff:127.0.0.1",
+            "::ffff:100.100.100.200",
         ):
             rows = [(socket.AF_INET, 1, 6, "", ("10.23.4.5", 8443)),
                     (socket.AF_INET, 1, 6, "", (address, 8443))]
@@ -83,7 +88,7 @@ class GitLabRemoteTests(unittest.TestCase):
                 with self.assertRaises(sources.SourceError):
                     remote.public_addresses("gitlab.internal", sources.Budget(), port=8443, allow_private=True)
 
-    def request(self, url=None, *, status=200, token_host=None, body=b"{}", tls_error=False):
+    def request(self, url=None, *, status=200, token_host=None, body=b"{}", tls_error=False, address="10.23.4.5"):
         response = mock.Mock(status=status)
         response.getheader.return_value = None
         response.read.side_effect = [body, b""]
@@ -92,7 +97,7 @@ class GitLabRemoteTests(unittest.TestCase):
         raw_socket = mock.Mock()
         if tls_error:
             connection._context.wrap_socket.side_effect = ssl.SSLCertVerificationError("isolated TLS failure")
-        rows = [(socket.AF_INET, 1, 6, "", ("10.23.4.5", 8443))]
+        rows = [(socket.AF_INET, 1, 6, "", (address, 8443))]
         with (
             mock.patch.object(remote.socket, "getaddrinfo", return_value=rows),
             mock.patch.object(remote.socket, "socket", return_value=raw_socket),
@@ -124,6 +129,19 @@ class GitLabRemoteTests(unittest.TestCase):
         headers = connection.request.call_args.kwargs["headers"]
         self.assertNotIn("PRIVATE-TOKEN", headers)
         self.assertNotIn("Authorization", headers)
+
+    def test_shared_address_space_connects_to_selected_gitlab_with_tls_and_token(self):
+        result, connection, raw, factory = self.request(address="100.64.1.31")
+        self.assertEqual(result, (b"{}", 200))
+        raw.connect.assert_called_once_with(("100.64.1.31", 8443))
+        connection._context.wrap_socket.assert_called_once_with(
+            raw, server_hostname="gitlab.internal"
+        )
+        self.assertTrue(factory.call_args.kwargs["context"].check_hostname)
+        self.assertEqual(
+            connection.request.call_args.kwargs["headers"]["PRIVATE-TOKEN"],
+            self.TOKEN,
+        )
 
     def test_request_cannot_escape_the_selected_origin_or_api(self):
         for url in (

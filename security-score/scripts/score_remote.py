@@ -31,8 +31,13 @@ MAX_DOWNLOAD = 24 * 1024 * 1024
 MAX_TOKEN_CONFIG = 64 * 1024
 PRIVATE_NETWORKS = tuple(
     ipaddress.ip_network(value)
-    for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")
+    for value in (
+        "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+        "100.64.0.0/10", "fc00::/7",
+    )
 )
+# Alibaba ECS metadata is inside RFC 6598 shared address space.
+METADATA_ADDRESSES = {ipaddress.ip_address("100.100.100.200")}
 
 
 class NetworkStats:
@@ -162,7 +167,11 @@ def public_addresses(host, budget, *, port=443, allow_private=False):
         private = allow_private and any(
             address in network for network in PRIVATE_NETWORKS
         )
-        if address.is_multicast or not (address.is_global or private):
+        if (
+            address in METADATA_ADDRESSES
+            or address.is_multicast
+            or not (address.is_global or private)
+        ):
             raise SourceError("Git host resolved to a disallowed network destination.")
     return result
 

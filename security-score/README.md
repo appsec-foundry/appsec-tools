@@ -87,8 +87,9 @@ when needed. `--token-env NAME` overrides the mapping and uses that token from
 the first request. Without a matching mapping, access stays anonymous.
 
 The GitLab token needs `read_api` and access to the project. The tool reads files
-and host settings through the API without cloning. Internal GitLab addresses
-and custom HTTPS ports are supported; loopback and link-local addresses remain
+and host settings through the API without cloning. Internal GitLab addresses,
+including shared address space `100.64.0.0/10`, and custom HTTPS ports are
+supported; loopback, link-local and cloud metadata addresses remain
 blocked. For an internal certificate authority, use your system trust store or
 set `SSL_CERT_FILE` to its CA bundle. SSH URLs and other Git providers need a
 local checkout. Self-managed GitLab URLs use the internal engine.

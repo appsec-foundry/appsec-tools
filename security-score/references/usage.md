@@ -94,8 +94,9 @@ security-score https://gitlab.company.example:8443/team/project --token-env GITL
 
 For a private GitLab project, provide a token with `read_api` and project access
 through the named environment variable. It is sent only to the selected
-HTTPS origin. RFC 1918 private IPv4 and IPv6 unique-local addresses are supported
-for self-managed GitLab; loopback, link-local and metadata destinations remain
+HTTPS origin. RFC 1918 private IPv4, [RFC 6598 shared address space](https://www.rfc-editor.org/rfc/rfc6598)
+(`100.64.0.0/10`) and IPv6 unique-local addresses are supported for self-managed
+GitLab. Loopback, link-local and metadata destinations remain
 blocked. TLS verification stays enabled. Trust an internal CA through the system
 trust store or `SSL_CERT_FILE`. The optional Analyzer engine supports GitHub.com
 and GitLab.com URLs only.
