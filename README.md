@@ -1,5 +1,7 @@
 # appsec-tools
 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 Command-line tools that go with
 [appsec-analyzer](https://github.com/appsec-foundry/appsec-analyzer). Each tool
 lives in its own directory, is installed on its own, and runs without
