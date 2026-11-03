@@ -31,6 +31,7 @@ class AutomaticTokenTests(unittest.TestCase):
         patcher = mock.patch.dict(
             os.environ,
             {"XDG_CONFIG_HOME": str(self.configuration), "GIT_TOKEN": self.TOKEN},
+            clear=True,
         )
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -40,9 +41,46 @@ class AutomaticTokenTests(unittest.TestCase):
         self.path.write_text(json.dumps(data or {self.ORIGIN: "GIT_TOKEN"}))
 
     def test_missing_mapping_keeps_public_requests_anonymous(self):
+        for configured in (False, True):
+            if configured:
+                self.configure({"https://other.internal:8443": "OTHER_TOKEN"})
+            with self.subTest(configured=configured), mock.patch.object(remote, "read_token") as load:
+                token = remote.select_token(self.HOST)
+                self.assertIsInstance(token, remote.AutomaticToken)
+                self.assertEqual(token.name, "GIT_TOKEN")
+                with mock.patch.object(remote, "get", return_value=(b"{}", 200)) as get:
+                    remote.credential_get(
+                        self.ORIGIN + "/api/v4/projects/group%2Fproject",
+                        sources.Budget(), token=token, token_host=self.HOST,
+                    )
+                load.assert_not_called()
+                self.assertIsNone(get.call_args.kwargs["token"])
+
+    def test_missing_fallback_keeps_authentication_failures_anonymous(self):
+        os.environ.pop("GIT_TOKEN")
         self.assertIsNone(remote.select_token(self.HOST))
-        self.configure({"https://other.internal:8443": "GIT_TOKEN"})
-        self.assertIsNone(remote.select_token(self.HOST))
+        for status in (401, 403, 404):
+            with self.subTest(status=status), mock.patch.object(remote, "get", return_value=(None, status)) as get:
+                self.assertEqual(
+                    remote.credential_get(
+                        self.ORIGIN + "/api/v4/projects/group%2Fproject",
+                        sources.Budget(), token=remote.select_token(self.HOST), token_host=self.HOST,
+                    ),
+                    (None, status),
+                )
+                get.assert_called_once()
+                self.assertIsNone(get.call_args.kwargs["token"])
+
+    def test_host_mapping_takes_precedence_over_git_token(self):
+        self.configure({self.ORIGIN: "CUSTOM_TOKEN"})
+        os.environ["CUSTOM_TOKEN"] = "isolated-mapped-token"
+        token = remote.select_token(self.HOST)
+        with mock.patch.object(remote, "get", side_effect=[(None, 404), (b"{}", 200)]) as get:
+            remote.credential_get(
+                self.ORIGIN + "/api/v4/projects/group%2Fproject",
+                sources.Budget(), token=token, token_host=self.HOST,
+            )
+        self.assertEqual(get.call_args.kwargs["token"], "isolated-mapped-token")
 
     def test_mapping_contains_a_name_and_does_not_load_token_before_a_challenge(self):
         self.configure()
@@ -72,22 +110,24 @@ class AutomaticTokenTests(unittest.TestCase):
                 remote.select_token(self.HOST, "MISSING_EXPLICIT_TOKEN")
 
     def test_authentication_failure_retries_once_then_reuses_the_selected_token(self):
-        self.configure()
-        for status in (401, 403, 404):
-            with self.subTest(status=status):
-                token = remote.select_token(self.HOST)
-                with mock.patch.object(
-                    remote, "get", side_effect=[(None, status), (b"{}", 200), (b"[]", 200)]
-                ) as get:
-                    for _ in range(2):
-                        remote.credential_get(
-                            self.ORIGIN + "/api/v4/projects/group%2Fproject",
-                            sources.Budget(), token=token, token_host=self.HOST,
-                        )
-                self.assertEqual(get.call_count, 3)
-                self.assertIsNone(get.call_args_list[0].kwargs["token"])
-                self.assertEqual(get.call_args_list[1].kwargs["token"], self.TOKEN)
-                self.assertEqual(get.call_args_list[2].kwargs["token"], self.TOKEN)
+        for configured in (False, True):
+            if configured:
+                self.configure()
+            for status in (401, 403, 404):
+                with self.subTest(configured=configured, status=status):
+                    token = remote.select_token(self.HOST)
+                    with mock.patch.object(
+                        remote, "get", side_effect=[(None, status), (b"{}", 200), (b"[]", 200)]
+                    ) as get:
+                        for _ in range(2):
+                            remote.credential_get(
+                                self.ORIGIN + "/api/v4/projects/group%2Fproject",
+                                sources.Budget(), token=token, token_host=self.HOST,
+                            )
+                    self.assertEqual(get.call_count, 3)
+                    self.assertIsNone(get.call_args_list[0].kwargs["token"])
+                    self.assertEqual(get.call_args_list[1].kwargs["token"], self.TOKEN)
+                    self.assertEqual(get.call_args_list[2].kwargs["token"], self.TOKEN)
 
     def test_bad_token_never_causes_a_retry_loop(self):
         self.configure()
@@ -104,20 +144,35 @@ class AutomaticTokenTests(unittest.TestCase):
 
     def test_unrelated_hosts_and_ports_cannot_trigger_token_loading(self):
         self.configure()
+        self.check_unrelated_hosts_and_ports()
+
+    def test_fallback_cannot_load_or_send_credentials_at_another_origin(self):
+        self.check_unrelated_hosts_and_ports()
+
+    def check_unrelated_hosts_and_ports(self):
         token = remote.select_token(self.HOST)
-        with mock.patch.object(remote, "read_token") as load:
-            for authority in ("other.internal:8443", "gitlab.internal:9443", "gitlab.internal.evil:8443"):
-                with mock.patch.object(remote, "get", return_value=(None, 401)) as get:
-                    remote.credential_get(
-                        f"https://{authority}/api/v4/projects/group%2Fproject",
-                        sources.Budget(), token=token, token_host=authority,
-                    )
-                    self.assertEqual(get.call_count, 1)
-                    self.assertIsNone(get.call_args.kwargs["token"])
-            load.assert_not_called()
+        for active in (False, True):
+            if active:
+                token.activate(self.HOST)
+            with self.subTest(active=active), mock.patch.object(remote, "read_token") as load:
+                for authority in ("other.internal:8443", "gitlab.internal:9443", "gitlab.internal.evil:8443"):
+                    with mock.patch.object(remote, "get", return_value=(None, 401)) as get:
+                        remote.credential_get(
+                            f"https://{authority}/api/v4/projects/group%2Fproject",
+                            sources.Budget(), token=token, token_host=authority,
+                        )
+                        self.assertEqual(get.call_count, 1)
+                        self.assertIsNone(get.call_args.kwargs["token"])
+                load.assert_not_called()
 
     def test_github_mapping_authorizes_only_the_api_and_never_the_raw_host(self):
         self.configure({"https://api.github.com": "GIT_TOKEN"})
+        self.check_github_api_credentials()
+
+    def test_github_fallback_authorizes_only_the_api_and_never_the_raw_host(self):
+        self.check_github_api_credentials()
+
+    def check_github_api_credentials(self):
         token = remote.select_token("github.com")
         with mock.patch.object(remote, "get", side_effect=[(None, 404), (b"{}", 200), (None, 404)]) as get:
             remote.credential_get(
@@ -133,6 +188,7 @@ class AutomaticTokenTests(unittest.TestCase):
         self.assertIsNone(get.call_args_list[2].kwargs["token"])
 
     def test_mapping_a_web_origin_does_not_authorize_a_different_api_origin(self):
+        os.environ.pop("GIT_TOKEN")
         self.configure({"https://github.com": "GIT_TOKEN"})
         self.assertIsNone(remote.select_token("github.com"))
 
@@ -166,6 +222,12 @@ class AutomaticTokenTests(unittest.TestCase):
 
     def test_tls_redirect_server_and_rate_limit_failures_do_not_select_a_token(self):
         self.configure()
+        self.check_non_authentication_failures()
+
+    def test_non_authentication_failures_do_not_select_the_fallback(self):
+        self.check_non_authentication_failures()
+
+    def check_non_authentication_failures(self):
         for failure in ((None, 0), (None, 500), (None, 429), sources.SourceError("redirect rejected")):
             token = remote.select_token(self.HOST)
             with mock.patch.object(remote, "read_token") as load:
@@ -194,6 +256,7 @@ class AutomaticTokenTests(unittest.TestCase):
         self.configure({self.ORIGIN: "ISOLATED_MISSING_TOKEN"})
         with mock.patch.dict(os.environ, {}, clear=True):
             os.environ["XDG_CONFIG_HOME"] = str(self.configuration)
+            os.environ["GIT_TOKEN"] = self.TOKEN
             token = remote.select_token(self.HOST)
             with mock.patch.object(remote, "get", return_value=(b"{}", 200)):
                 remote.credential_get(self.ORIGIN + "/api/v4/projects/x", sources.Budget(), token=token, token_host=self.HOST)
@@ -225,12 +288,12 @@ class AutomaticTokenTests(unittest.TestCase):
     def test_project_config_is_ignored_and_relative_xdg_paths_use_the_home_directory(self):
         project = self.root / "project"
         (project / "security-score").mkdir(parents=True)
-        (project / "security-score/token-hosts.json").write_text(json.dumps({self.ORIGIN: "GIT_TOKEN"}))
+        (project / "security-score/token-hosts.json").write_text(json.dumps({self.ORIGIN: "PROJECT_TOKEN"}))
         previous = Path.cwd()
         try:
             os.chdir(project)
             with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": "."}), mock.patch.object(remote.Path, "home", return_value=self.root / "isolated-home"):
-                self.assertIsNone(remote.select_token(self.HOST))
+                self.assertEqual(remote.select_token(self.HOST).name, "GIT_TOKEN")
         finally:
             os.chdir(previous)
 
@@ -244,13 +307,19 @@ class AutomaticTokenTests(unittest.TestCase):
 
     def test_remote_cli_authenticates_only_after_a_challenge_and_keeps_details_on_same_session(self):
         self.configure()
+        self.check_remote_cli_authentication(challenge=401)
+
+    def test_remote_cli_uses_git_token_after_404_without_host_configuration(self):
+        self.check_remote_cli_authentication()
+
+    def check_remote_cli_authentication(self, challenge=404):
         calls = []
         source = b"requests.get(url, verify=True)\n"
 
         def get(url, budget, **kwargs):
             calls.append((url, kwargs.get("token")))
             if kwargs.get("token") is None:
-                return None, 401
+                return None, challenge
             path = urlsplit(url).path
             if path.endswith("/repository/branches/main"):
                 data = {"protected": True, "commit": {"id": "a" * 40}}
@@ -277,6 +346,37 @@ class AutomaticTokenTests(unittest.TestCase):
         self.assertIsNone(calls[0][1])
         self.assertTrue(all(token == self.TOKEN for _, token in calls[1:]))
         self.assertNotIn(self.TOKEN, output.getvalue() + errors.getvalue())
+
+    def test_rejected_fallback_stops_after_one_retry_without_exposing_the_token(self):
+        output, errors = io.StringIO(), io.StringIO()
+        with mock.patch.object(remote, "get", return_value=(None, 404)) as get:
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                status = cli.main([self.ORIGIN + "/group/project", "--json"])
+        self.assertEqual(status, 1)
+        self.assertEqual(get.call_count, 2)
+        self.assertIsNone(get.call_args_list[0].kwargs["token"])
+        self.assertEqual(get.call_args_list[1].kwargs["token"], self.TOKEN)
+        self.assertEqual(output.getvalue(), "")
+        self.assertIn("HTTP 404", errors.getvalue())
+        self.assertNotIn(self.TOKEN, errors.getvalue())
+
+    def test_invalid_fallback_is_checked_only_on_authentication_failure(self):
+        for invalid in ("", "invalid\r\nheader"):
+            os.environ["GIT_TOKEN"] = invalid
+            token = remote.select_token(self.HOST)
+            with self.subTest(invalid=repr(invalid)):
+                with mock.patch.object(remote, "get", return_value=(b"{}", 200)):
+                    remote.credential_get(
+                        self.ORIGIN + "/api/v4/projects/group%2Fproject",
+                        sources.Budget(), token=token, token_host=self.HOST,
+                    )
+                with mock.patch.object(remote, "get", return_value=(None, 404)) as get:
+                    with self.assertRaisesRegex(sources.SourceError, "missing or invalid"):
+                        remote.credential_get(
+                            self.ORIGIN + "/api/v4/projects/group%2Fproject",
+                            sources.Budget(), token=token, token_host=self.HOST,
+                        )
+                    get.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -927,7 +927,9 @@ def select_token(host, name=None):
     authority = "api.github.com" if host == "github.com" else host
     configured = token_hosts().get(token_origin("https://" + authority))
     if configured is None:
-        return None
+        if "GIT_TOKEN" not in os.environ:
+            return None
+        configured = "GIT_TOKEN"
     return AutomaticToken(configured, authority)
 
 

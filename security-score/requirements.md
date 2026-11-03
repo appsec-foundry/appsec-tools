@@ -13,7 +13,7 @@ Tests pin the exact behavior.
 - **REQ-02 — Repositories and changes.** Scan local checkouts and HTTPS repository
   URLs on GitHub.com, GitLab.com, and explicitly selected self-managed GitLab
   instances, including repository-host security settings. Authenticate private
-  GitLab reads through an explicitly selected token environment variable.
+  GitLab reads through explicit or automatic token environment variable selection.
   Analyze changes (staged, unstaged, commits, revision ranges, patches) and
   state the compared versions. Checks cover data access, frontend output, CSP and
   other browser security headers, token verification, password hashing, session and
@@ -153,7 +153,9 @@ Tests pin the exact behavior.
 - **REQ-24 — Automatic host-bound credentials.** An explicit `--token-env`
   selection takes precedence. Otherwise, remote reads start anonymously and may
   retry once with a token environment variable configured by the user for that
-  exact HTTPS origin when authentication is needed. Never use credential mappings
+  exact HTTPS origin when authentication is needed, falling back to `GIT_TOKEN`
+  if no mapping matches and that variable is set. Bind either automatic selection
+  to the selected repository's HTTPS API origin; never use credential mappings
   from the scanned repository or send a token to another origin.
 
 - **REQ-25 — Proxy support.** Honor user-configured HTTP proxies and host

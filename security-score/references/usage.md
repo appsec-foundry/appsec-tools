@@ -127,7 +127,16 @@ limit is reached, the error says how long to wait.
 overriding any automatic configuration. The variable name is arbitrary, such as
 `GIT_TOKEN`, `GITLAB_TOKEN` or `GITHUB_READ_TOKEN`.
 
-For automatic selection, create the user file
+Without `--token-env`, the tool starts anonymously. On HTTP 401, 403 or 404 it
+retries once with the token mapped to the selected HTTPS API origin, or with
+`GIT_TOKEN` if no mapping matches and that environment variable is set. An
+exported `GIT_TOKEN` therefore needs no configuration file:
+
+```sh
+security-score https://gitlab.company.example/team/project --details
+```
+
+To assign different tokens to specific hosts, create the user file
 `~/.config/security-score/token-hosts.json`. An absolute `XDG_CONFIG_HOME`
 changes that location to `$XDG_CONFIG_HOME/security-score/token-hosts.json`.
 Project files are not searched for credentials.
@@ -145,17 +154,18 @@ never token values. For GitHub.com repositories, use the API origin
 `https://api.github.com`. Other hosts and ports receive no credential from that
 mapping. The default HTTPS port 443 and an omitted port identify the same origin.
 
-Without an explicit `--token-env`, API reads start anonymously. HTTP 401, 403 or
-404 triggers at most one retry with the mapped token. Subsequent requests in the
-same scan reuse it only at that API origin, including overview requests with
-`--details`. Public GitHub source downloads remain anonymous. Redirects, TLS
-failures and other network failures do not trigger token selection. If the
-mapped variable is missing or invalid when needed, authentication fails with a
-diagnostic. Malformed or ambiguous configuration is rejected; an explicit
-`--token-env` bypasses that configuration.
+HTTP 401, 403 or 404 triggers at most one retry with the mapped or fallback token.
+Subsequent requests in the same scan reuse it only at that API origin, including
+overview requests with `--details`. Public GitHub source downloads remain
+anonymous. Redirects, TLS failures and other network failures do not trigger
+token selection. A missing or invalid explicitly selected variable fails
+immediately; a mapped variable fails only when authentication is needed. Neither
+failure falls back to `GIT_TOKEN`. An invalid `GIT_TOKEN` fallback also fails only
+when authentication is needed. Malformed or ambiguous configuration is rejected;
+an explicit `--token-env` bypasses that configuration.
 
-There is no automatic selection from environment names alone or from `gh` or
-`glab` logins. Local scans do not read the host mapping. The optional Analyzer
+`GIT_TOKEN` is the only environment-name fallback; `gh` and `glab` logins are
+not used. Local scans do not read the host mapping. The optional Analyzer
 continues to manage its own repository-source authentication; the mapping covers
 this tool's API requests.
 
@@ -252,7 +262,7 @@ repository grade; `--checks all` preserves the default behavior.
 | `--details`, `--detail` | Repository overview, subscores and findings per topic; for changes, the signals grouped by rule. |
 | `--quiet`, `--quite` | Print only the number, or nothing if there is none. Cannot be combined with `--json`, `--yaml`, change analysis, `--list-rules`, or `--verify-rules`. |
 | `--json`, `--yaml` | Structured output with all findings and the calculation. With `--details` it also contains the `overview`. |
-| `--token-env NAME` | Explicit API token environment variable for a repository URL; overrides automatic host mappings. |
+| `--token-env NAME` | Explicit API token environment variable for a repository URL; overrides host mappings and the `GIT_TOKEN` fallback. |
 | `--timeout SECONDS` | Time budget from 0.1 to 120 seconds; default 60. |
 | `--engine analyzer` | Use a separately installed AppSec Analyzer instead of the bundled rules; repository scans only. `--analyzer PATH` sets the absolute path of a trusted executable; otherwise it is taken from `PATH`. See [compatibility](compatibility.md). |
 | `--list-rules` | Show the bundled rules. |

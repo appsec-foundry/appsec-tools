@@ -173,7 +173,7 @@ def parser():
     )
     result.add_argument(
         "--token-env",
-        help="Explicit read-only API token environment variable; overrides automatic host mappings; URL requests only",
+        help="Explicit read-only API token environment variable; overrides host mappings and the GIT_TOKEN fallback; URL requests only",
     )
     result.add_argument(
         "--list-rules",

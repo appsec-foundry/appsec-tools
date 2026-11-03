@@ -66,7 +66,16 @@ security-score https://gitlab.company.example/team/project --token-env GITLAB_RE
 Repository URLs work with or without a trailing `.git`; both select the same
 project through the host API.
 
-For automatic selection, create `~/.config/security-score/token-hosts.json`
+If `GIT_TOKEN` is already exported, you can omit `--token-env` and the
+configuration file. The tool starts anonymously and retries once with
+`GIT_TOKEN` on HTTP 401, 403 or 404, only at the selected HTTPS API origin:
+
+```sh
+security-score https://gitlab.company.example/team/project --details
+```
+
+To assign different tokens to specific hosts, create
+`~/.config/security-score/token-hosts.json`
 (or `$XDG_CONFIG_HOME/security-score/token-hosts.json`):
 
 ```json
@@ -84,10 +93,12 @@ security-score https://gitlab.company.example/team/project --details
 ```
 
 Automatic reads start anonymously. On HTTP 401, 403 or 404, the tool retries the
-request once with the token assigned to that exact HTTPS origin. An origin
-includes its port; configure `https://gitlab.company.example:8443` separately
-when needed. `--token-env NAME` overrides the mapping and uses that token from
-the first request. Without a matching mapping, access stays anonymous.
+request once with the token assigned to that exact HTTPS origin, or `GIT_TOKEN`
+when no mapping matches. An origin includes its port; configure
+`https://gitlab.company.example:8443` separately when needed. `--token-env NAME`
+overrides both and uses that token from the first request. A missing or invalid
+explicitly selected or mapped variable is an error; it does not fall back to
+`GIT_TOKEN`. Without a matching mapping or `GIT_TOKEN`, access stays anonymous.
 
 The GitLab token needs `read_api` and access to the project. The tool reads files
 and host settings through the API without cloning. Internal GitLab addresses,
