@@ -11,7 +11,8 @@ appsec-analyzer repository.
 | [Security Score](#security-score) | A GitHub or GitLab URL, a local directory, or a single change | A score from 0 to 100 with a grade from A to F and findings per topic, or the security relevance of the change |
 | [Requirement Harvester](#requirement-harvester) | Websites and wikis named in a configuration file | A catalog of security requirements in OSCAL YAML |
 
-All tools need Python 3.10 or newer, `pipx`, and Git with SSH access to GitHub.
+All tools need Python 3.10 or newer, `pipx`, and Git. Installation uses
+HTTPS; public repositories need no GitHub account or SSH key.
 
 ## Security Score
 
@@ -20,7 +21,7 @@ A to F. It also rates how security-relevant a single change is. The checks are
 fixed rules, and the scanned code is never run.
 
 ```sh
-pipx install "git+ssh://git@github.com/appsec-foundry/appsec-tools.git#subdirectory=security-score"
+pipx install "git+https://github.com/appsec-foundry/appsec-tools.git#subdirectory=security-score"
 ```
 
 Pass a GitHub URL to scan a repository without cloning it. Public repositories
@@ -70,7 +71,7 @@ Reads security requirements from websites and wikis and writes them to an
 says which pages to read and how requirements are recognized on them.
 
 ```sh
-git clone git@github.com:appsec-foundry/appsec-tools.git
+git clone https://github.com/appsec-foundry/appsec-tools.git
 cd appsec-tools/requirement-harvester
 pipx install .
 ```

@@ -11,10 +11,11 @@ not that the code is secure.
 
 ## Quick start
 
-Requires Python 3.10+, `pipx`, and Git with SSH access to GitHub.
+Requires Python 3.10+, `pipx`, and Git. Installation uses HTTPS; public
+repositories need no GitHub account or SSH key.
 
 ```sh
-pipx install "git+ssh://git@github.com/appsec-foundry/appsec-tools.git#subdirectory=security-score"
+pipx install "git+https://github.com/appsec-foundry/appsec-tools.git#subdirectory=security-score"
 ```
 
 ```console
@@ -95,11 +96,12 @@ security-score --update
 ```
 
 This reinstalls from the source pipx recorded at installation, not from a signed
-release. To repair a broken installation:
+release. To switch an existing SSH installation to HTTPS or repair a broken
+installation:
 
 ```sh
 pipx install --force --pip-args="--upgrade --force-reinstall --no-cache-dir" \
-  "git+ssh://git@github.com/appsec-foundry/appsec-tools.git#subdirectory=security-score"
+  "git+https://github.com/appsec-foundry/appsec-tools.git#subdirectory=security-score"
 ```
 
 ## Development
