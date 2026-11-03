@@ -23,6 +23,11 @@ class GitLabRemoteTests(unittest.TestCase):
     REPO = f"https://{HOST}/group/team/project"
     TOKEN = "isolated-test-token"
 
+    def setUp(self):
+        proxy = mock.patch.object(remote, "proxy_for", return_value=None)
+        proxy.start()
+        self.addCleanup(proxy.stop)
+
     def test_host_and_port_come_from_the_repository_url(self):
         for host in ("gitlab.internal", self.HOST, "10.23.4.5:8443", "[fd12::8]:8443"):
             with self.subTest(host=host):
@@ -30,6 +35,21 @@ class GitLabRemoteTests(unittest.TestCase):
                     remote.repository_url(f"https://{host}/group/team/project.git"),
                     (host, "group/team/project"),
                 )
+
+    def test_git_suffix_and_bare_repository_url_select_identical_api_resources(self):
+        selected = []
+        for suffix in ("", ".git", ".git/"):
+            output = io.StringIO()
+            with (
+                mock.patch.object(remote, "host_settings", return_value=([], "a" * 40, False)) as settings,
+                mock.patch.object(remote, "get", return_value=(b"[]", 200)) as get,
+                contextlib.redirect_stdout(output),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                cli.main([self.REPO + suffix, "--json"])
+            selected.append((settings.call_args.args[:2], get.call_args.args[0]))
+        self.assertEqual(selected[0], selected[1])
+        self.assertEqual(selected[0], selected[2])
 
     def test_malformed_and_credential_bearing_urls_fail_before_network_access(self):
         for url in (

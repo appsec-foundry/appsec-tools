@@ -43,6 +43,17 @@ class JuiceShopE2ETests(unittest.TestCase):
             for key, value in os.environ.items()
             if key not in {"PYTHONPATH", "PYTHONHOME"}
         }
+        cls.proxy = None
+        if os.environ.get("SECURITY_SCORE_E2E_HTTP_PROXY") == "1":
+            from test_http_proxy import TunnelProxy
+
+            cls.proxy = TunnelProxy()
+            cls.proxy.__enter__()
+            cls.addClassCleanup(cls.proxy.__exit__, None, None, None)
+            for name in list(cls.environment):
+                if name.lower() in {"http_proxy", "https_proxy", "all_proxy", "no_proxy"}:
+                    cls.environment.pop(name)
+            cls.environment["HTTP_PROXY"] = f"http://127.0.0.1:{cls.proxy.server_address[1]}"
         selected = os.environ.get("SECURITY_SCORE_E2E_EXECUTABLE")
         provenance = {}
         if selected:
@@ -128,6 +139,17 @@ class JuiceShopE2ETests(unittest.TestCase):
             encoding="utf-8",
         )
         print(f"\nLive E2E: {version}; artifacts: {cls.artifacts}", flush=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        if cls.proxy is not None:
+            count = len(cls.proxy.destinations)
+            (cls.artifacts / "proxy.json").write_text(
+                json.dumps({"connect_requests": count}, indent=2) + "\n"
+            )
+            print(f"HTTP proxy CONNECT requests: {count}", flush=True)
+            if count == 0:
+                raise AssertionError("The installed CLI made no HTTP proxy CONNECT request.")
 
     @classmethod
     def build(cls, *arguments):

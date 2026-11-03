@@ -3870,6 +3870,11 @@ class ScoreTests(unittest.TestCase):
 
 
 class NetworkUsageTests(unittest.TestCase):
+    def setUp(self):
+        proxy = mock.patch.object(remote, "proxy_for", return_value=None)
+        proxy.start()
+        self.addCleanup(proxy.stop)
+
     def test_real_http_path_counts_read_bytes_and_failed_attempts(self):
         budget = sources.Budget()
         budget.network = remote.NetworkStats()
@@ -4075,6 +4080,11 @@ class NetworkUsageTests(unittest.TestCase):
 
 
 class RemoteTests(unittest.TestCase):
+    def setUp(self):
+        proxy = mock.patch.object(remote, "proxy_for", return_value=None)
+        proxy.start()
+        self.addCleanup(proxy.stop)
+
     def test_slow_headers_and_bodies_cannot_outlive_the_request_budget(self):
         for slow_part in ("headers", "body"):
             with self.subTest(slow_part=slow_part):

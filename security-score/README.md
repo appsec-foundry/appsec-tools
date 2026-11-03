@@ -63,6 +63,9 @@ put it in an environment variable and pass its name:
 security-score https://gitlab.company.example/team/project --token-env GITLAB_READ_TOKEN --details
 ```
 
+Repository URLs work with or without a trailing `.git`; both select the same
+project through the host API.
+
 For automatic selection, create `~/.config/security-score/token-hosts.json`
 (or `$XDG_CONFIG_HOME/security-score/token-hosts.json`):
 
@@ -93,6 +96,20 @@ supported; loopback, link-local and cloud metadata addresses remain
 blocked. For an internal certificate authority, use your system trust store or
 set `SSL_CERT_FILE` to its CA bundle. SSH URLs and other Git providers need a
 local checkout. Self-managed GitLab URLs use the internal engine.
+
+HTTP proxies are supported for HTTPS repository scans:
+
+```sh
+export HTTP_PROXY=http://proxy.company.example:3128
+security-score https://gitlab.company.example/team/project --token-env GIT_TOKEN --details
+```
+
+The tool checks `HTTPS_PROXY`, then `ALL_PROXY`, then `HTTP_PROXY`; lowercase
+forms take precedence over their uppercase equivalents. `NO_PROXY` supports
+hosts, domain suffixes, optional ports and `*`. Proxy URLs must use `http://`
+without embedded credentials. Repository requests and tokens remain inside the
+verified HTTPS tunnel. Proxy failures are reported separately from a repository
+404 and never cause an automatic direct connection.
 
 ## Reading the result
 
@@ -144,7 +161,7 @@ pipx install --force --pip-args="--upgrade --force-reinstall --no-cache-dir" \
 Run from `security-score/`:
 
 ```sh
-python3 -B -m unittest test_security_score test_security_controls test_gitlab_remote test_auto_token -v  # offline tests
+python3 -B -m unittest test_security_score test_security_controls test_gitlab_remote test_auto_token test_http_proxy -v  # offline tests
 python3 -B -m unittest test_packaging -v                              # build and install a wheel
 python3 scripts/score.py --verify-rules                               # rule examples
 ```

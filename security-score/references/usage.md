@@ -88,6 +88,11 @@ GitLab. The host and optional port come directly from the repository URL;
 there is no separate host option. URLs must not contain credentials, query
 strings, or fragments.
 
+An optional `.git` suffix and a trailing slash are normalized before the API
+lookup. For example, `/team/project`, `/team/project.git` and
+`/team/project.git/` select the same project. A 404 therefore needs an access,
+namespace or connectivity check rather than a second request with `.git` added.
+
 ```sh
 security-score https://gitlab.company.example:8443/team/project --token-env GITLAB_READ_TOKEN --details
 ```
@@ -154,12 +159,44 @@ There is no automatic selection from environment names alone or from `gh` or
 continues to manage its own repository-source authentication; the mapping covers
 this tool's API requests.
 
+### HTTP proxies
+
+The internal engine supports HTTP CONNECT proxies for HTTPS repository reads.
+It selects `HTTPS_PROXY`, then `ALL_PROXY`, then `HTTP_PROXY`. Lowercase forms
+override uppercase forms. `NO_PROXY` accepts comma-separated host names, domain
+suffixes, optional ports, or `*` for direct access to all hosts. CIDR exclusions
+are not supported.
+
+```sh
+export HTTP_PROXY=http://proxy.company.example:3128
+export NO_PROXY=localhost,.direct.company.example
+security-score https://gitlab.company.example/team/project --token-env GIT_TOKEN --details
+```
+
+Use an `http://` proxy URL without user information. HTTPS or SOCKS proxy URLs
+and embedded proxy credentials are rejected with a diagnostic. An existing
+`HTTPS_PROXY` takes precedence over the `HTTP_PROXY` in this example.
+
+The client resolves and checks the repository destination before requesting a
+tunnel to that IP. The proxy must permit CONNECT to IP addresses, and the client
+must be able to resolve the repository host. Repository TLS still verifies the
+original hostname, and repository tokens are sent only inside that TLS session.
+CONNECT contains no repository token. Locally configured loopback proxies are
+supported; a proxy does not relax validation of repository destinations.
+
+A failed proxy connection or CONNECT response stops that request with a proxy
+diagnostic, including the HTTP status when available. It never falls back to a
+direct connection or treats a proxy 404 as a missing repository. The optional
+Analyzer manages its own transport settings.
+
 ### Network usage
 
 With `--details`, a closing `Network:` block reports HTTP request attempts and
 download volume, in total and per host. This includes host settings, file
 listings, selected files and the overview's commits and branches; failed HTTP
-attempts count too. Local scans report zero HTTP requests. Measuring adds no
+attempts count too. Proxy CONNECT attempts are counted under the proxy's host
+and port with zero response body bytes; their headers are excluded. Local scans
+report zero HTTP requests. Measuring adds no
 requests. JSON/YAML with details includes the same counters under `network`,
 with exact byte counts in `response_body_bytes`.
 
@@ -253,6 +290,16 @@ and the repair command in the README takes `./security-score` instead of the URL
 
 The packaging test needs `setuptools>=61`, `wheel`, and a pip with `--python`
 support; it downloads no packages.
+
+To exercise the installed CLI through a real loopback HTTP proxy, including
+`HTTP_PROXY` fallback for HTTPS repository scans:
+
+```sh
+SECURITY_SCORE_LIVE_E2E=1 SECURITY_SCORE_E2E_HTTP_PROXY=1 python3 -B -m unittest test_e2e_juice_shop -v
+```
+
+The fixture relays only public IP addresses on port 443, uses no repository
+credentials and writes CONNECT counts to `out/juice-shop-e2e/proxy.json`.
 
 Before releasing changes to URL scanning or console output, run the live test
 against Juice Shop. It takes about three minutes:

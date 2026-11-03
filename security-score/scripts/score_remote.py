@@ -16,6 +16,7 @@ import ssl
 import threading
 import time
 from urllib.parse import quote, urlsplit
+from urllib.request import getproxies_environment, proxy_bypass_environment
 
 from score_core import RULES
 from score_sources import RemoteError, SourceError
@@ -61,7 +62,7 @@ class NetworkStats:
             "response_body_bytes": sum(row["response_body_bytes"] for row in hosts),
             "hosts": hosts,
             "measurement": (
-                "HTTP GET attempts and response body bytes read, including discarded "
+                "HTTP GET and proxy CONNECT attempts and response body bytes read, including discarded "
                 "partial or oversized reads. Excludes unread bodies, HTTP headers, "
                 "uploads, DNS and TLS/TCP overhead."
             ),
@@ -143,7 +144,7 @@ def repository_url(value):
     return parsed.netloc, "/".join(parts)
 
 
-def public_addresses(host, budget, *, port=443, allow_private=False):
+def public_addresses(host, budget, *, port=443, allow_private=False, allow_loopback=False):
     complete = threading.Event()
     result = []
 
@@ -167,10 +168,11 @@ def public_addresses(host, budget, *, port=443, allow_private=False):
         private = allow_private and any(
             address in network for network in PRIVATE_NETWORKS
         )
+        local_proxy = allow_loopback and address.is_loopback
         if (
             address in METADATA_ADDRESSES
             or address.is_multicast
-            or not (address.is_global or private)
+            or not (address.is_global or private or local_proxy)
         ):
             raise SourceError("Git host resolved to a disallowed network destination.")
     return result
@@ -184,6 +186,84 @@ def interrupt_socket(sock, expired=None):
         sock.shutdown(socket.SHUT_RDWR)
     except OSError:
         pass
+
+
+class HTTPProxy:
+    def __init__(self, host, port):
+        self.host, self.port = host, port
+
+    @property
+    def authority(self):
+        name = f"[{self.host}]" if ":" in self.host else self.host
+        return f"{name}:{self.port}"
+
+
+def proxy_for(authority):
+    """Use operator environment settings, with lowercase precedence and NO_PROXY."""
+    proxies = getproxies_environment()
+    if proxy_bypass_environment(authority, proxies):
+        return None
+    value = proxies.get("https") or proxies.get("all") or proxies.get("http")
+    if not value:
+        return None
+    try:
+        parsed = urlsplit(value if "://" in value else "http://" + value)
+        host = parsed.hostname
+        port = parsed.port if parsed.port is not None else 80
+    except ValueError:
+        raise SourceError("Invalid HTTP proxy host or port.") from None
+    if (
+        len(value) > 4096
+        or parsed.scheme != "http"
+        or not host
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or not 1 <= port <= 65535
+        or any(ord(char) < 33 or ord(char) > 126 for char in value)
+    ):
+        raise SourceError(
+            "Use an HTTP proxy URL without credentials, path, query or fragment; HTTPS and SOCKS proxy URLs are not supported."
+        )
+    name = f"[{host}]" if ":" in host else host
+    gitlab_destination(f"{name}:{port}")
+    return HTTPProxy(host, port)
+
+
+def proxy_tunnel(raw_socket, proxy, target, port, budget):
+    """CONNECT to the checked target IP before starting repository TLS."""
+    tunnel = http.client.HTTPConnection(
+        proxy.host, proxy.port, timeout=min(5, budget.remaining())
+    )
+    name = f"[{target}]" if ":" in target else target
+    tunnel.set_tunnel(name, port, headers={"Host": f"{name}:{port}"})
+    tunnel.sock = raw_socket
+    expired = threading.Event()
+    deadline = threading.Timer(
+        min(5, budget.remaining()), interrupt_socket, (raw_socket, expired)
+    )
+    deadline.daemon = True
+    deadline.start()
+    try:
+        if budget.network is not None:
+            budget.network.record(proxy.authority, 0)
+        tunnel._tunnel()
+        budget.check()
+        if expired.is_set():
+            raise SourceError("HTTP proxy CONNECT timed out; no direct connection was attempted.")
+    except (OSError, http.client.HTTPException) as error:
+        budget.check()
+        status = re.search(r"Tunnel connection failed: (\d{3})\b", str(error))
+        detail = f" (HTTP {status[1]})" if status else ""
+        raise SourceError(
+            f"HTTP proxy CONNECT failed{detail}; check proxy access and authentication. No direct connection was attempted."
+        ) from None
+    finally:
+        deadline.cancel()
+        deadline.join()
+        tunnel.sock = None
 
 
 class RateLimited(RemoteError):
@@ -264,7 +344,9 @@ def get(
     else:
         port = 443
     authority = parsed.netloc
-    connection = connections.get(authority) if connections is not None else None
+    proxy = proxy_for(authority)
+    key = (authority, proxy.authority) if proxy else authority
+    connection = connections.get(key) if connections is not None else None
     raw_socket, reusable, deadline = None, False, None
     attempted, body_bytes = False, 0
     expired = threading.Event()
@@ -277,27 +359,44 @@ def get(
             )
             if connection is not None:
                 connection.close()
-            for address in addresses:
-                connection = http.client.HTTPSConnection(
-                    host,
-                    port=port,
-                    timeout=min(5, budget.remaining()),
-                    context=tls_context(),
+            endpoints = (
+                public_addresses(
+                    proxy.host, budget, port=proxy.port,
+                    allow_private=True, allow_loopback=True,
                 )
-                raw_socket = socket.socket(address[0], socket.SOCK_STREAM)
-                try:
-                    raw_socket.settimeout(min(5, budget.remaining()))
-                    raw_socket.connect(address[4])
-                    raw_socket.settimeout(min(5, budget.remaining()))
-                    connection.sock = connection._context.wrap_socket(
-                        raw_socket, server_hostname=host
+                if proxy else None
+            )
+            for address in addresses:
+                for endpoint in endpoints if proxy else [address]:
+                    connection = http.client.HTTPSConnection(
+                        host,
+                        port=port,
+                        timeout=min(5, budget.remaining()),
+                        context=tls_context(),
                     )
-                    break
-                except OSError:
-                    raw_socket.close()
-                    connection.close()
+                    raw_socket = socket.socket(endpoint[0], socket.SOCK_STREAM)
+                    try:
+                        raw_socket.settimeout(min(5, budget.remaining()))
+                        raw_socket.connect(endpoint[4])
+                        if proxy:
+                            proxy_tunnel(raw_socket, proxy, address[4][0], port, budget)
+                        raw_socket.settimeout(min(5, budget.remaining()))
+                        connection.sock = connection._context.wrap_socket(
+                            raw_socket, server_hostname=host
+                        )
+                        break
+                    except OSError:
+                        raw_socket.close()
+                        connection.close()
+                else:
+                    continue
+                break
             else:
                 budget.check()
+                if proxy:
+                    raise SourceError(
+                        "Cannot connect through the configured HTTP proxy; no direct connection was attempted."
+                    )
                 return None, 0
         connection.sock.settimeout(min(5, budget.remaining()))
         deadline = threading.Timer(
@@ -371,7 +470,7 @@ def get(
             raise SourceError("Remote response ended before its declared length.")
         reusable = connections is not None and connection.sock is not None
         if reusable:
-            connections[authority] = connection
+            connections[key] = connection
         return bytes(data), 200
     except (OSError, http.client.HTTPException, ssl.SSLError):
         budget.check()
@@ -386,7 +485,7 @@ def get(
             if connection is not None:
                 connection.close()
             if connections is not None:
-                connections.pop(authority, None)
+                connections.pop(key, None)
         if raw_socket is not None:
             raw_socket.close()
 

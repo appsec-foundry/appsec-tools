@@ -155,3 +155,8 @@ Tests pin the exact behavior.
   retry once with a token environment variable configured by the user for that
   exact HTTPS origin when authentication is needed. Never use credential mappings
   from the scanned repository or send a token to another origin.
+
+- **REQ-25 — Proxy support.** Honor user-configured HTTP proxies and host
+  exclusions for HTTPS repository scans. Preserve destination validation and
+  verified TLS for repository credentials, and report proxy failures instead of
+  falling back to a direct connection.
