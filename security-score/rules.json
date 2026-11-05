@@ -3193,7 +3193,7 @@
     ]
   },
   "subscore_policy": {
-    "version": 1,
+    "version": 2,
     "deductions": {
       "critical": 61,
       "high": 41,
@@ -3247,12 +3247,12 @@
           "privileges": [
             "TF-IAM-WILDCARD"
           ],
-          "trust-boundaries": [],
-          "sensitive-data-flows": []
+          "query-binding": ["DESIGN-DATA-BOUNDARY"]
         },
-        "required": [
-          "trust-boundaries",
-          "sensitive-data-flows"
+        "required": [],
+        "limitations": [
+          "Assessed criteria cover recognized data-access boundaries and declared isolation or privileges, not a complete architecture review.",
+          "Cross-service authorization, tenant separation and wider sensitive-data flows are not established."
         ]
       },
       {

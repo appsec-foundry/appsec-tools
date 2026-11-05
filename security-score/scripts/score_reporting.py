@@ -451,7 +451,7 @@ LOGIN_LABELS = {
 CLOUD_LOGIN_LABELS = {"oidc": "OIDC", "stored-key": "stored key"}
 
 
-def identity_profile(style, architecture):
+def identity_profile(style, architecture, *, concise=False):
     providers = architecture.get("identity_providers", [])
     grants = architecture.get("oauth_grants", [])
     if not providers and not grants:
@@ -476,12 +476,15 @@ def identity_profile(style, architecture):
         style,
         (("SSO servers", servers), ("OAuth grants", flows)),
         "Identity profile",
+        concise=concise,
     )
 
 
-def architecture_profile(style, architecture):
+def architecture_profile(style, architecture, *, concise=False):
     """Recognized traits as context; 'none recognized' is no proof of absence."""
     if "sql_queries" not in architecture:
+        if concise:
+            return []
         return note(
             style, "Profile unavailable: architecture observation did not complete."
         )
@@ -514,6 +517,10 @@ def architecture_profile(style, architecture):
         queries = f"literal query text in {calls}"
     else:
         queries = ""
+    if concise and sql["status"] == "constructed":
+        queries = f"{sql['constructed']} of {calls} construct SQL text ({location(sql['example'])})"
+    elif concise and sql["status"] == "unresolved":
+        queries = calls
     first_hash = {}
     for row in sorted(
         architecture.get("password_hashing", []),
@@ -561,19 +568,25 @@ def architecture_profile(style, architecture):
             ),
         ),
     )
-    return profile_rows(style, rows)
+    return profile_rows(style, rows, concise=concise)
 
 
-def profile_rows(style, rows, title="Profile"):
-    lines = note(style, f"{title} (context only, adds no score credit):")
+def profile_rows(style, rows, title="Profile", *, concise=False):
+    if concise:
+        rows = [(label, text) for label, text in rows if text]
+    if not rows:
+        return []
+    heading = f"{title}:" if concise else f"{title} (context only, adds no score credit):"
+    lines = note(style, heading)
+    label_width = max(16, max(len(label) + 2 for label, _ in rows))
     for label, text in rows:
         lines += wrapped(
-            text or "none recognized", style.width, " " * 20, f"    {label:<16}"
+            text or "none recognized", style.width, " " * (4 + label_width), f"    {label:<{label_width}}"
         )
     return lines
 
 
-def dependency_profile(style, architecture):
+def dependency_profile(style, architecture, *, concise=False):
     """Lockfiles, exact versions and update tools, shown once a project has any."""
 
     def names(trait):
@@ -594,10 +607,118 @@ def dependency_profile(style, architecture):
             for row in architecture.get("artifact_repositories", [])[:6]
         )),
     )
-    return profile_rows(style, rows) if any(text for _, text in rows) else []
+    if concise and architecture.get("supply_chain"):
+        rows = [row for row in rows if row[0] != "Lockfile"]
+    return profile_rows(style, rows, concise=concise) if any(text for _, text in rows) else []
 
 
-def infrastructure_profile(architecture):
+SUPPLY_CHAIN_LABELS = {
+    "node-lockfiles": ("Lockfile", {"observed": "Found"}),
+    "node-lock-consistency": ("Manifest and lock", {"supported": "Consistent", "weakness": "Inconsistent"}),
+    "node-locked-install": ("Locked installation", {"supported": "Declared in CI or container build"}),
+    "node-artifact-integrity": ("Artifact hashes", {"supported": "Declared for inspected registry artifacts"}),
+    "node-lifecycle-scripts": ("Install scripts", {"observed": "Declared; behavior requires review"}),
+    "python-lockfiles": ("Lockfile", {"observed": "Found"}),
+    "python-version-pins": ("Exact versions", {"supported": "Pinned requirements", "weakness": "Includes unpinned requirements"}),
+    "python-artifact-hashes": ("Artifact hashes", {"supported": "Declared for inspected requirements"}),
+    "python-locked-install": ("Locked installation", {"supported": "Hash-enforced or locked install declared"}),
+}
+
+
+def supply_chain_profile(style, architecture):
+    lines = []
+    for profile in architecture.get("supply_chain", []):
+        rows = []
+        for control in profile["controls"]:
+            selected = SUPPLY_CHAIN_LABELS.get(control["criterion"])
+            if selected is None:
+                continue
+            label, statuses = selected
+            text = statuses.get(control["status"], "Not assessed")
+            locations = control.get("locations", [])
+            if control["status"] in statuses and locations:
+                text += f" ({location(locations[0])})"
+            rows.append((label, text))
+        lines += profile_rows(style, rows, f"{safe(profile['ecosystem'])} dependency checks", concise=True)
+    return lines
+
+
+def compose_value(key, value, display):
+    if isinstance(value, dict) and key == "image":
+        pin = "digest pinned" if value["immutable_digest"] else "digest not declared"
+        return safe(value["reference"]) + f" ({pin})"
+    if key == "ports" and isinstance(value, list):
+        ports = []
+        for item in value:
+            if not isinstance(item, dict):
+                ports.append("unresolved")
+                continue
+            host = item.get("host_ip", "bind unspecified")
+            published = item.get("published", "dynamic port")
+            ports.append(f"{safe(host)}:{safe(published)} -> {safe(item['target'])}/{safe(item['protocol'])} ({safe(item['binding'])})")
+        return "; ".join(ports) or "explicitly empty"
+    if key == "volumes" and isinstance(value, list):
+        mounts = []
+        for item in value:
+            if not isinstance(item, dict):
+                mounts.append("unresolved")
+                continue
+            access = "read-only" if item['read_only'] is True else "writable" if item['read_only'] is False else "read-only setting " + safe(item['read_only'])
+            socket = "; Docker socket" if item['docker_socket'] is True else "; Docker socket unresolved" if item['docker_socket'] == "unresolved" else ""
+            mounts.append(f"{safe(item['type'])} {safe(item.get('source', 'source unspecified'))} -> {safe(item.get('target', 'target unresolved'))} ({access}{socket})")
+        return "; ".join(mounts) or "explicitly empty"
+    return display(value)
+
+
+def compose_profile(style, architecture, limit=3):
+    """Readable per-service declarations, independent of rating evidence."""
+    profile = architecture.get("compose", {})
+    services = [service for service in profile.get("services", [])
+                if service.get("properties") or service.get("unresolved")]
+    if not profile.get("files") or not (services or profile.get("gaps")):
+        return []
+    lines = note(style, "Compose service profiles:")
+
+    def display(value):
+        if value is True:
+            return "true"
+        if value is False:
+            return "false"
+        if isinstance(value, dict):
+            return ", ".join(f"{safe(key)}={display(item)}" for key, item in value.items()) or "none declared"
+        if isinstance(value, list):
+            return "; ".join(display(item) for item in value) or "explicitly empty"
+        return safe(value)
+
+    groups = (
+        ("Image", ("image",)),
+        ("Ports", ("ports",)),
+        ("Networks", ("networks", "network_mode", "pid", "ipc")),
+        ("Privileges", ("user", "privileged", "cap_add", "cap_drop", "security_opt", "use_api_socket")),
+        ("Filesystem", ("read_only", "volumes")),
+        ("Operations", ("cpus", "mem_limit", "pids_limit", "healthcheck", "restart", "init", "deploy")),
+    )
+    for service in services[:limit]:
+        rows = []
+        for label, keys in groups:
+            properties = service["properties"]
+            declared = [f"{key}: {compose_value(key, properties[key]['value'], display)} (line {properties[key]['line']})" for key in keys if key in properties]
+            if declared:
+                rows.append((label, "; ".join(declared)))
+        for reason in service.get("unresolved", []):
+            rows.append(("Unresolved", safe(reason)))
+        lines += profile_rows(style, rows, f"  {safe(service['service'])} ({location(service)})", concise=True)
+    if len(services) > limit:
+        lines += note(style, f"+{len(services) - limit} service declarations in JSON/YAML")
+    for gap in profile.get("gaps", [])[:limit]:
+        lines += note(style, f"Unresolved: {safe(gap['reason'])} ({location(gap)})")
+    if len(profile.get("gaps", [])) > limit:
+        lines += note(style, f"+{len(profile['gaps']) - limit} Compose profile gaps in JSON/YAML")
+    lines += note(style, profile.get("interpretation", "Compose declarations give no score credit."))
+    return lines
+
+
+def infrastructure_profile(architecture, limit=20):
     """Declared cloud/IaC context; do not promote inventory to runtime assurance."""
     lines = []
     iac = architecture.get("iac", {})
@@ -609,11 +730,11 @@ def infrastructure_profile(architecture):
     for provider in iac.get("providers", []):
         if provider["region"]:
             lines.append(f"  {safe(provider['technology'])} region: {safe(provider['region'])} ({location(provider)})")
-    for row in iac.get("resources", [])[:20]:
+    for row in iac.get("resources", [])[:limit]:
         detail = "; ".join(f"{safe(key)}: {safe(value)}" for key, value in row["properties"].items())
         lines.append(f"  {safe(row['technology'])} {safe(row['category'])}: {safe(row['type'])} ({row['mode']}, {location(row)})" + (f" · {detail}" if detail else ""))
-    if len(iac.get("resources", [])) > 20:
-        lines.append(f"  +{len(iac['resources']) - 20} resource declarations in JSON/YAML")
+    if len(iac.get("resources", [])) > limit:
+        lines.append(f"  +{len(iac['resources']) - limit} resource declarations in JSON/YAML")
     for row in iac.get("state_backends", []):
         lines.append(f"Terraform state backend: {safe(row['type'])} · encryption {row['encryption']} · locking {row['locking']} ({location(row)})")
     for row in architecture.get("cloud_login", []):
@@ -685,7 +806,7 @@ def risk_rows(risks):
     return rows
 
 
-def overview_section(style, overview):
+def overview_section(style, overview, *, concise=False):
     """Repository context above the topics; none of it reaches a score."""
     if not overview:
         return []
@@ -710,17 +831,18 @@ def overview_section(style, overview):
         style,
         (
             ("Languages", counted(overview["languages"], "language", "files")),
-            ("Files", file_row(overview["files"])),
+            ("Files", f"{overview['files']['read']:,} read, {overview['files']['lines']:,} lines" if concise else file_row(overview["files"])),
             ("Frameworks", names(overview["frameworks"])),
             ("Test tools", names(overview["test_tools"])),
             ("Runtimes", runtimes),
             ("Package tools", names(overview["package_tools"])),
         ),
         "Technology",
+        concise=concise,
     )
     if risks:
-        lines += profile_rows(style, risks, "Technology risks")
-    else:
+        lines += profile_rows(style, risks, "Technology risks", concise=concise)
+    elif not concise:
         lines += note(
             style,
             "Technology risks: none recognized from the bundled list; no proof of absence.",
@@ -728,13 +850,14 @@ def overview_section(style, overview):
     lines += profile_rows(
         style,
         (
-            *history_rows(development["history"]),
+            *(history_rows(development["history"]) if not concise or "unavailable" not in development["history"] else ()),
             ("Process files", names(development["process_files"])),
             ("CI", ci),
             ("Quality tools", names(development["quality_tools"])),
             ("Security tools", names(development["security_tools"])),
         ),
         "Development",
+        concise=concise,
     )
     return lines
 
@@ -788,6 +911,7 @@ def render_repository(result, summary, style=None):
             lines += dependency_profile(style, result.get("architecture") or {})
         if topic["id"] == "deployment":
             lines += infrastructure_profile(result.get("architecture") or {})
+            lines += compose_profile(style, result.get("architecture") or {})
 
     count = len(result["findings"])
     lines += [

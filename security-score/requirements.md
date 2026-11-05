@@ -22,7 +22,7 @@ Tests pin the exact behavior.
   chain, including GitLab CI. Terraform stays a narrow set; a full policy catalog is
   left to dedicated tools.
 
-- **REQ-03 — Five security subscores.** By default, report five repository subscores from 0–100 with plain-language ratings: Architecture & isolation, Identity & access, Data & processing, Dependencies & supply chain, and Deployment & operations. Add an overall verdict with its main reason, without an overall numeric score; serious weaknesses, including security-design flaws, must limit that verdict. Changes retain a separate security-relevance assessment without a numeric score.
+- **REQ-03 — Compact score and detailed overview.** For repository assessments, show only the overall 0–100 score and its plain-language rating by default. Use the lowest assessed subscore as the overall score; serious weaknesses must limit the result. With `--details`, show the five subscores, evidence and calculation in a clear, colored overview with bars, and include the tool version. Changes retain a separate security-relevance assessment without a numeric score.
 
 - **REQ-04 — Evidence and limits.** Distinguish findings, supported controls, unknowns and exclusions, and report coverage and incomplete checks separately from ratings. Leave areas without sufficient evidence unassessed; positive ratings require evidence of effective protection. Technology presence, high scores and absence of findings do not establish safety, and missing evidence does not establish low change relevance.
 
@@ -33,7 +33,7 @@ Tests pin the exact behavior.
 
 - **REQ-07 — Explainable calculation.** Publish understandable, manually reproducible criteria and calculations, centrally editable scoring values, and comparison examples. Count each underlying weakness once, and prevent unrelated strengths from offsetting serious weaknesses. Detailed output explains the subscores, decisive evidence and gaps.
 
-- **REQ-08 — Console and structured output.** Repository scans show five subscores and an overall verdict; `--details` explains results, while JSON/YAML preserve the structured evidence. `--quiet` retains numeric output; all modes preserve actual completion status, keep progress on stderr, and prevent terminal-control injection. Detailed output includes elapsed time as observational metadata only.
+- **REQ-08 — Console and structured output.** Repository scans show only the overall score and plain-language rating by default; `--details` adds the colored overview, bars, evidence and tool version. JSON/YAML preserve the structured evidence. `--quiet` retains numeric output; all modes preserve actual completion status, keep progress on stderr, and prevent terminal-control injection. Detailed output includes elapsed time as observational metadata only.
 
 - **REQ-09 — End-to-end check before release.** Changes to URL scanning or console
   output need a live run of the installed CLI against
@@ -129,3 +129,7 @@ Tests pin the exact behavior.
   exclusions for HTTPS repository scans. Preserve destination validation and
   verified TLS for repository credentials, and report proxy failures instead of
   falling back to a direct connection.
+
+- **REQ-26 — Automatic architecture assessment.** Assess Architecture & isolation automatically from recognized data-access boundaries and declared isolation and privilege controls. Base scores on concrete weaknesses or sufficient independent control evidence; a missing manual architecture review alone must not prevent assessment of these supported checks. Report unsupported wider architecture separately, without awarding points for technology presence.
+
+- **REQ-27 — Compose service profiles.** Report declared Docker Compose settings per service, with source locations, covering network exposure, privileges, mounts, image references and operating controls. Distinguish missing and unresolved settings, and do not infer an effective merged deployment or award score credit from the profile alone.

@@ -1522,6 +1522,7 @@ def describe(files, budget, checks=(), paths=()):
     """Technology observations are context, not scored control evidence."""
     from score_profiles import artifact_repositories
     from score_iac import inspect as inspect_iac
+    from score_compose import inspect as inspect_compose
     from score_supply_chain import inspect as inspect_supply_chain
     traits = {"frontend": [], "templates": [], "persistence": [], "authentication": []}
     keys = {"persistence": "kind", "authentication": "mechanism"}
@@ -1616,6 +1617,7 @@ def describe(files, budget, checks=(), paths=()):
         "dependency_updates": dependency_updates(checks),
         "artifact_repositories": artifact_repositories(files, budget),
         "iac": inspect_iac(files, budget),
+        "compose": inspect_compose(files, budget, paths),
         "supply_chain": inspect_supply_chain(files, paths, budget),
         "artifact_repository_gaps": [
             {"file": path, "reason": "Credential-bearing package configuration is not read; endpoints may be present here."}

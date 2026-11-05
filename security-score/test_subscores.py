@@ -3,6 +3,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -15,6 +16,7 @@ import score_assessment as assessment
 import score_design
 import score_profiles
 from score_sources import Budget
+from score_style import Style
 
 
 class Invocation:
@@ -61,6 +63,22 @@ class SubscoreTests(Invocation, unittest.TestCase):
             self.assertEqual(status, 0)
             self.assertEqual(out.getvalue(), "59\n")
             self.assertEqual(err.getvalue(), "")
+
+    def test_compact_failure_keeps_one_stdout_line_and_incomplete_exit_status(self):
+        with tempfile.TemporaryDirectory(prefix="compact-failure-test-") as directory:
+            Path(directory, "app.py").write_text("requests.get(url, verify=False)\n")
+            Path(directory, "bad.py").write_text("def broken(\n")
+            for flags in ([], ["--score"], ["--details"]):
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    status = score.main([directory, *flags])
+                self.assertEqual(status, 1)
+                if flags == ["--details"]:
+                    self.assertIn("Assessment incomplete", out.getvalue())
+                    self.assertEqual(out.getvalue().count("Duration:"), 1)
+                else:
+                    self.assertEqual(out.getvalue(), "59/100 (Bad)\n")
+                    self.assertNotIn("Processing incomplete", err.getvalue())
 
     def test_one_safe_pattern_does_not_award_a_subscore(self):
         status, result = self.invoke({"app.py": "import ast\nast.literal_eval(value)\n"})
@@ -153,16 +171,19 @@ class SubscoreTests(Invocation, unittest.TestCase):
         _, result = self.invoke({"pod.json": json.dumps(pod)})
         self.assertIsNone(self.area(result, "architecture")["score"])
 
-    def test_declared_isolation_does_not_certify_trust_boundaries(self):
+    def test_declared_isolation_can_score_supported_criteria_without_certifying_wider_architecture(self):
         pod = {"apiVersion": "v1", "kind": "Pod", "spec": {"containers": [{"securityContext": {
             "privileged": False, "allowPrivilegeEscalation": False,
             "runAsNonRoot": True, "capabilities": {"drop": ["ALL"]},
         }}]}}
         _, result = self.invoke({"pod.json": json.dumps(pod)})
         area = self.area(result, "architecture")
-        self.assertIsNone(area["score"])
+        self.assertEqual(area["score"], 100)
         self.assertIn("isolation", area["controls"])
-        self.assertTrue(any("trust-boundaries" in gap for gap in area["gaps"]))
+        self.assertIn("privileges", area["controls"])
+        self.assertTrue(area["limitations"])
+        self.assertFalse(any("requires design or access-flow review" in gap for gap in area["gaps"]))
+        self.assertEqual(result["overall"]["rating"], "Not assessed")
 
     def test_malformed_design_values_never_create_positive_evidence(self):
         for value in ({"apiVersion": []}, {"apiVersion": "v1", "kind": {}},
@@ -177,12 +198,51 @@ class SubscoreTests(Invocation, unittest.TestCase):
                     score.main(["--score", flag, "/nonexistent"])
                 self.assertEqual(caught.exception.code, 2)
 
-    def test_text_output_keeps_exactly_five_scores_and_no_legacy_partial(self):
+    def test_compact_output_and_details_keep_the_same_evidence_based_score(self):
         _, result = self.invoke({"app.py": "requests.get(url, verify=False)\n"})
-        text = score.render(result)
+        self.assertEqual(score.render(result), "59/100 (Bad)")
+        text = score.render(result, details=True)
         self.assertNotIn("partial", text)
         self.assertNotIn("(E)", text)
         self.assertEqual(sum(title in text for title in ("Architecture & isolation", "Identity & access", "Data & processing", "Dependencies & supply chain", "Deployment & operations")), 5)
+        self.assertIn("59/100 (Bad)", text)
+        self.assertEqual(text.count("░"), 44)
+
+    def test_compact_output_never_promotes_partial_positive_evidence_to_an_overall_score(self):
+        for files in ({"README.md": "Example\n"}, {"app.py": "ast.literal_eval(value)\ncursor.execute('SELECT 1')\n"}):
+            _, result = self.invoke(files)
+            self.assertEqual(score.render(result), "Not assessed")
+
+    def test_detail_output_groups_repeated_findings_and_retains_full_json_evidence(self):
+        _, result = self.invoke({"app.py": "requests.get(url, verify=False)\n" * 20})
+        details = score.render(result, details=True)
+        self.assertEqual(len(self.area(result, "deployment")["breakdown"]), 20)
+        self.assertEqual(details.count("PY-TLS ·"), 1)
+        self.assertIn("(+19 more)", details)
+        self.assertNotIn("Calculation:", details)
+        self.assertIn("0/100 (Very bad)", score.render(result))
+
+    def test_detail_style_supports_color_plain_and_ascii_bars(self):
+        _, result = self.invoke({"app.py": "requests.get(url, verify=False)\n"})
+        self.assertIn("\x1b[", score.render(result, details=True, style=Style(color=True)))
+        plain = score.render(result, details=True, style=Style())
+        self.assertNotIn("\x1b[", plain)
+        ascii_text = score.render(result, details=True, style=Style(unicode=False))
+        self.assertIn("[######----]", ascii_text)
+        self.assertNotIn("░", ascii_text)
+        self.assertNotIn("—", ascii_text)
+        with patch.dict(os.environ, {"TERM": "xterm", "NO_COLOR": "1"}):
+            stream = io.StringIO()
+            stream.isatty = lambda: True
+            self.assertFalse(Style.detect(stream).color)
+
+    def test_cloud_inventory_is_bounded_in_details_and_complete_in_json(self):
+        source = '\n'.join(f'resource "aws_db_instance" "db{index}" {{}}' for index in range(12))
+        _, result = self.invoke({"main.tf": source})
+        self.assertEqual(len(result["architecture"]["iac"]["resources"]), 12)
+        details = score.render(result, details=True)
+        self.assertEqual(details.count("AWS database: aws_db_instance"), 3)
+        self.assertIn("+9 resource declarations in JSON/YAML", details)
 
     def test_terminal_control_sequences_are_encoded_in_new_output(self):
         _, result = self.invoke({"app.py": "requests.get(url, verify=False)\n"})
@@ -194,7 +254,26 @@ class SubscoreTests(Invocation, unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertEqual(result["verdict"], "incomplete")
         self.assertEqual(self.area(result, "deployment")["score"], 59)
-        self.assertIn("Processing incomplete", score.render(result))
+        self.assertEqual(score.render(result), "59/100 (Bad)")
+        details = score.render(result, details=True)
+        self.assertEqual(details.count("Assessment incomplete"), 1)
+        self.assertIn("1 file could not be parsed (bad.py)", details)
+
+    def test_details_omit_internal_states_without_changing_structured_evidence(self):
+        _, result = self.invoke({"app.py": "requests.get(url, verify=False)\n", "other.py": "eval(payload)\n"}, "--details")
+        before = json.dumps(result, sort_keys=True)
+        details = score.render(result, details=True)
+        for internal in ("Score: 100 -", "severity limit", "rounded once", "floor 0", "Open:",
+                         "Supported criteria:", "Evidence: limited", "unresolved check", "context only",
+                         "no proof of absence", "none recognized", "Source:", "Excluded:"):
+            self.assertNotIn(internal, details)
+        self.assertIn("PY-TLS", details)
+        self.assertIn("app.py:1", details)
+        self.assertIn("manual review", details)
+        self.assertIn("calculations and check results: --json or --yaml", details)
+        self.assertTrue(any(row["gaps"] for row in result["subscores"]))
+        self.assertTrue(any(row["controls"] for row in result["subscores"]) or result["review_hints"])
+        self.assertEqual(json.dumps(result, sort_keys=True), before)
 
 
 class EndpointTests(Invocation, unittest.TestCase):
@@ -342,6 +421,12 @@ resource "google_sql_database_instance" "db" {
         self.assertEqual(statuses["node-artifact-integrity"], "supported")
         self.assertEqual(statuses["node-locked-install"], "supported")
         self.assertEqual(self.area(result, "dependencies")["score"], 100)
+        details = score.render(result, details=True)
+        for text in ("Node.js dependency checks:", "Manifest and lock", "Consistent", "Locked installation",
+                     "Declared in CI or container build", "Artifact hashes", "Declared for inspected registry artifacts"):
+            self.assertIn(text, details)
+        self.assertNotIn("node-lock-consistency", details)
+        self.assertNotIn("not_assessed", details)
 
     def test_node_manifest_drift_withholds_positive_dependency_score(self):
         files = self.node_files()
@@ -349,6 +434,36 @@ resource "google_sql_database_instance" "db" {
         _, result = self.invoke(files)
         self.assertIsNone(self.area(result, "dependencies")["score"])
         self.assertTrue(any(row["rule"] == "SC-NODE-LOCK-CONSISTENCY" for row in self.area(result, "dependencies")["breakdown"]))
+        self.assertIn("Inconsistent", score.render(result, details=True))
+
+    def test_unknown_supply_chain_results_remain_visible_without_raw_statuses(self):
+        _, result = self.invoke({"package.json": json.dumps({"dependencies": {"example": "1.0.0"}})})
+        details = score.render(result, details=True)
+        for label in ("Lockfile", "Manifest and lock", "Locked installation", "Artifact hashes", "Install scripts"):
+            self.assertIn(label, details)
+        self.assertIn("Not assessed", details)
+        self.assertNotIn("not_assessed", details)
+        self.assertNotIn("node-lockfiles", details)
+        self.assertTrue(all(row["status"] == "not_assessed" for row in result["architecture"]["supply_chain"][0]["controls"]))
+
+    def test_architecture_evidence_is_displayed_with_locations_and_without_raw_gaps(self):
+        for privileged in (True, False):
+            with self.subTest(privileged=privileged):
+                context = {"privileged": privileged, "allowPrivilegeEscalation": False,
+                           "runAsNonRoot": True, "capabilities": {"drop": ["ALL"]}}
+                pod = {"apiVersion": "v1", "kind": "Pod", "spec": {"containers": [{"securityContext": context}]}}
+                _, result = self.invoke({"pod.json": json.dumps(pod)})
+                details = score.render(result, details=True)
+                self.assertIn("pod.json:/spec/containers/0", details)
+                self.assertNotIn("Open:", details)
+                if privileged:
+                    self.assertIn("HIGH", details)
+                    self.assertIn("explicitly privileged", details)
+                    self.assertEqual(self.area(result, "architecture")["score"], 59)
+                else:
+                    self.assertIn("OK", details)
+                    self.assertIn("restricts privilege escalation", details)
+                    self.assertEqual(self.area(result, "architecture")["score"], 100)
 
     def test_printed_install_command_is_not_enforcement(self):
         files = self.node_files()

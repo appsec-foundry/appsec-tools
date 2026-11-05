@@ -8,6 +8,7 @@ import re
 
 from score_calculation import POLICY, has_unknown
 from score_design import inspect as inspect_design
+from score_boundaries import inspect as inspect_boundaries
 from score_style import safe
 
 
@@ -132,7 +133,9 @@ def assess(result, files, budget):
     issues, observed, gaps, hints = defaultdict(dict), defaultdict(set), defaultdict(set), []
     subset = bool(result["scope"].get("check_selection"))
     design = [] if subset else inspect_design(files, budget)
-    result["coverage"]["design_checks"] = [] if subset else ["DESIGN-CONTAINER-ISOLATION"]
+    boundaries = [] if subset else inspect_boundaries(files, budget)
+    boundary_locations = {(row["file"], row["line"]): row for row in boundaries if row["status"] != "unclear"}
+    result["coverage"]["design_checks"] = [] if subset else ["DESIGN-CONTAINER-ISOLATION", "DESIGN-DATA-BOUNDARY"]
     design_paths = {r["file"] for r in design}
     for finding in result["findings"]:
         budget.check()
@@ -141,6 +144,9 @@ def assess(result, files, budget):
             continue
         if finding["rule"] == "IAC-PRIVILEGED" and finding["file"] in design_paths:
             continue  # The structured design check owns this component evidence.
+        if finding["rule"] in {"JS-SQL", "PY-SQL"} and (finding["file"], finding["line"]) in boundary_locations:
+            boundary_locations[(finding["file"], finding["line"])].setdefault("related_rules", []).append(finding["rule"])
+            continue  # The resolved boundary owns this operation; do not deduct twice.
         disposition, reason = context.classify(finding)
         row = {k: finding[k] for k in ("rule", "file", "line", "severity", "title") if k in finding}
         row.update(criterion=criterion, reason=reason)
@@ -175,6 +181,12 @@ def assess(result, files, budget):
     for key, (domain, row) in shared.items():
         issues[domain][key] = row
     for check in result["checks"]:
+        if check["rule"] in {"JS-SQL", "PY-SQL"} and check.get("locations"):
+            remaining = [item for item in check["locations"] if (check["file"], item["line"]) not in boundary_locations]
+            if not remaining:
+                continue
+            check = {**check, "locations": remaining}
+            check["status"] = "unclear" if any(item["status"] == "unclear" for item in remaining) else "violated" if any(item["status"] == "violated" for item in remaining) else "satisfied"
         domain, criterion = assignment(check["rule"], check["area"])
         if domain is None:
             continue
@@ -190,9 +202,19 @@ def assess(result, files, budget):
                 **row, "rules": [row["rule"]], "title": "Declared container breaks the host isolation boundary",
             }
         elif row["status"] == "satisfied":
-            observed["architecture"].add("isolation")
+            observed["architecture"].update(row.get("supported_criteria", [row["criterion"]]))
         else:
             gaps["architecture"].add("isolation: unresolved container design")
+    for row in boundaries:
+        if row["status"] == "violated":
+            key = (row["criterion"], row["file"], row["line"])
+            issues["architecture"][key] = {
+                **row, "rules": [row["rule"], *row.get("related_rules", [])], "title": row["reason"],
+            }
+        elif row["status"] == "satisfied":
+            observed["architecture"].add(row["criterion"])
+        else:
+            gaps["architecture"].add("query-binding: request-to-database flow requires review")
     for domain in CONFIG["domains"]:
         for criterion in domain["required"]:
             gaps[domain["id"]].add(f"{criterion}: requires design or access-flow review")
@@ -261,6 +283,7 @@ def assess(result, files, budget):
             "coverage": "limited" if gaps[name] else "assessed static criteria",
             "controls": sorted(observed[name]), "gaps": sorted(gaps[name]),
             "breakdown": breakdown, "severity_cap": cap, "independent_weaknesses": len(entries),
+            "limitations": list(domain.get("limitations", [])),
         })
     bad = [s for s in subscores if s["score"] is not None and s["score"] < CONFIG["ratings"][3][0]]
     complete_basis = all(s["score"] is not None and not s["gaps"] for s in subscores)
@@ -276,60 +299,123 @@ def assess(result, files, budget):
     result.update(analysis="security-assessment", scoring_version=CONFIG["version"],
                   scoring_policy="five-subscores", subscores=subscores, overall=overall,
                   review_hints=hints, design_evidence=design)
+    result["boundary_evidence"] = boundaries
     result["comparability"].update(scoring_version=CONFIG["version"], scoring_policy="five-subscores")
     result["verdict"] = "incomplete" if incomplete else "assessed" if complete_basis else "limited"
     return result
 
 
 def render(result, details=False, style=None):
-    lines = []
+    from score_reporting import (
+        architecture_profile, dependency_profile, entry, identity_profile,
+        infrastructure_profile, note, overview_section, plural, source_priority,
+        supply_chain_profile, compose_profile,
+    )
+    from score_style import Style
+
+    style = style or Style()
+    values = [row["score"] for row in result["subscores"] if row["score"] is not None]
+    value = min(values) if values and result["overall"]["rating"] != "Not assessed" else None
+    summary = "Not assessed" if value is None else f"{value}/100 ({rating(value)})"
+    summary = style.paint(summary, style.band(value), "bold")
+    if not details:
+        return summary
+
+    lines = [style.paint("Security score", "bold") + f" {style.dot} " + summary]
+    scope = result["scope"]
+    revision = f" @ {safe(scope['revision'][:12])}" if scope.get("revision") else ""
+    lines.append(f"Scope: {safe(scope['repository'])}{revision}")
+    lines += overview_section(style, result.get("overview"), concise=True)
+    width = max(len(row["title"]) for row in result["subscores"])
+    architecture = result.get("architecture", {})
     for row in result["subscores"]:
-        value = "—" if row["score"] is None else f"{row['score']}/100"
-        suffix = " · limited evidence" if row["coverage"] == "limited" else ""
-        lines.append(f"{row['title']:<32} {value:>7} · {row['rating']}{suffix}")
-        if details:
-            lines.append(f"  Reason: {safe(row['reason'])}")
-            for item in row["breakdown"]:
-                location = f"{safe(item['file'])}:{safe(item.get('pointer', item.get('line', '?')))}"
-                lines.append(f"  {', '.join(item['rules'])} · {location} · {item['points']}/{item['divisor']} = {item['deduction']:g} points")
-            if row["breakdown"]:
-                lines.append(f"  Calculation: max(0, min(100 - deductions, {row['severity_cap']})); round once.")
-            for gap in row["gaps"]:
-                lines.append(f"  Open: {safe(gap)}")
-            if row["controls"]:
-                lines.append("  Supported criteria: " + ", ".join(row["controls"]))
-    lines += ["", f"Overall: {result['overall']['rating']}", f"Reason: {safe(result['overall']['reason'])}"]
+        if row["score"] is None:
+            points = "—" if style.unicode else "-"
+        else:
+            points = f"{row['score']}/100"
+        lines += ["", (
+            style.paint(f"{row['title']:<{width}}", "bold") + "  "
+            + style.paint(f"{points:>7}", style.band(row["score"]), "bold")
+            + f"  {style.bar(row['score'])}  "
+            + style.paint(row["rating"], style.band(row["score"]))
+        )]
+        groups = defaultdict(list)
+        for item in row["breakdown"]:
+            groups[tuple(item["rules"])].append(item)
+        ranked = sorted(groups.items(), key=lambda pair: (
+            min(SEVERITIES.index(item["severity"]) for item in pair[1]),
+            -sum(item["deduction"] for item in pair[1]), pair[0],
+        ))
+        for rules, items in ranked[:3]:
+            first = min(items, key=lambda item: (source_priority(item["file"]), str(item.get("pointer", item.get("line", 0)))))
+            severity = min((item["severity"] for item in items), key=SEVERITIES.index)
+            deduction = sum(item["deduction"] for item in items)
+            location = f"{safe(first['file'])}:{safe(first.get('pointer', first.get('line', '?')))}"
+            more = f" (+{len(items) - 1} more)" if len(items) > 1 else ""
+            title = first["reason"] if "DESIGN-CONTAINER-ISOLATION" in rules else first["title"]
+            lines += entry(style, style.tag(severity), f"{safe(title)} (-{deduction:.1f} points)",
+                           f"{', '.join(rules)} {style.dot} {location}{more}")
+        if len(ranked) > 3:
+            hidden = sum(item["deduction"] for _, items in ranked[3:] for item in items)
+            lines += note(style, f"+{len(ranked) - 3} more finding types (-{hidden:.1f} points).")
+        if row["score"] is None:
+            reason = {
+                "architecture": "No sufficient evidence from the supported data-access and isolation checks.",
+                "identity": "Access permissions need manual review.",
+            }.get(row["id"], "Not enough evidence to rate this area.")
+            lines += note(style, reason)
+        if row["id"] == "identity":
+            lines += identity_profile(style, architecture, concise=True)
+        elif row["id"] == "architecture":
+            if row["score"] is not None:
+                lines += note(style, "Score scope: supported static data-access, isolation and privilege checks.")
+            lines += architecture_profile(style, architecture, concise=True)
+            design = {}
+            for item in result.get("design_evidence", []):
+                if item["status"] != "violated":
+                    design.setdefault((item["status"], item["reason"]), []).append(item)
+            for (status, reason), items in list(design.items())[:2]:
+                first = items[0]
+                tag = style.paint(f"{'OK' if status == 'satisfied' else 'REVIEW':<8}", "green" if status == "satisfied" else "yellow")
+                location = f"{safe(first['file'])}:{safe(first['pointer'])}"
+                more = f" (+{len(items) - 1} more)" if len(items) > 1 else ""
+                lines += entry(style, tag, safe(reason), location + more)
+            protected = [item for item in result.get("boundary_evidence", []) if item["status"] == "satisfied"]
+            for item in protected[:2]:
+                lines += entry(style, style.paint(f"{'OK':<8}", "green"), safe(item["reason"]),
+                               f"{safe(item['file'])}:{item['line']}")
+        elif row["id"] == "dependencies":
+            lines += dependency_profile(style, architecture, concise=True)
+            lines += supply_chain_profile(style, architecture)
+            repository_gaps = architecture.get("artifact_repository_gaps", [])
+            if repository_gaps:
+                paths = ", ".join(safe(gap["file"]) for gap in repository_gaps[:2])
+                more = f", +{len(repository_gaps) - 2} more" if len(repository_gaps) > 2 else ""
+                lines += note(style, f"Package repository settings were not inspected ({paths}{more}).")
+        elif row["id"] == "deployment":
+            for line in infrastructure_profile(architecture, limit=3):
+                lines += note(style, line)
+            lines += compose_profile(style, architecture)
+
+    lines += ["", style.paint("Coverage", "bold")]
+    count = sum(row["independent_weaknesses"] for row in result["subscores"])
+    weaknesses = plural(count, "finding")
+    lines += note(style, f"{plural(result['coverage'].get('files_checked', 0), 'file')} checked {style.dot} "
+                  f"{weaknesses}")
     if result["verdict"] == "incomplete":
-        lines.append("Processing incomplete; available evidence is retained.")
-    if details:
-        from score_reporting import overview_section
-        from score_style import Style
-
-        lines += overview_section(style or Style(), result.get("overview"))
-        architecture = result.get("architecture", {})
-        for provider in architecture.get("identity_providers", []):
-            lines.append(f"SSO: {safe(provider.get('url') or provider.get('server') or 'unresolved')} ({safe(provider['endpoint'])}, {safe(provider['file'])}:{provider['line']})")
-        for repository in architecture.get("artifact_repositories", []):
-            lines.append(f"Artifact repository: {safe(repository['url'])} ({safe(repository['ecosystem'])}, {safe(repository['evidence'])}, {safe(repository['file'])}:{repository['line']})")
-        for gap in architecture.get("artifact_repository_gaps", []):
-            lines.append(f"Artifact repository unresolved: {safe(gap['file'])} · {safe(gap['reason'])}")
-        from score_reporting import infrastructure_profile
-
-        lines += infrastructure_profile(architecture)
-        for profile in architecture.get("supply_chain", []):
-            lines.append(f"Supply chain ({profile['ecosystem']}):")
-            for control in profile["controls"]:
-                lines.append(f"  {control['criterion']}: {control['status']} · {control['reason']}")
-                for location in control["locations"][:3]:
-                    lines.append(f"    {safe(location['file'])}:{location['line']}")
-        for hint in result["review_hints"]:
-            lines.append(f"Review: {hint['rule']} · {safe(hint['file'])}:{hint.get('line', '?')} · {hint['reason']}")
-        for error in result.get("source_errors", []):
-            lines.append(f"Source: {safe(error['file'])} · {safe(error['reason'])}")
-        for exclusion in result.get("exclusions", []):
-            if exclusion["reason"] != "excluded or unsupported":
-                lines.append(f"Excluded: {safe(exclusion['file'])} · {safe(exclusion['reason'])}")
-        lines.append("Scope: recognized source/configuration criteria; runtime enforcement and wider flows remain unverified.")
-        if "duration_seconds" in result:
-            lines.append(f"Duration: {result['duration_seconds']:.2f} s")
+        lines += note(style, "Assessment incomplete; some files or checks could not be processed.")
+    hints = [hint for hint in result["review_hints"] if hint["disposition"] == "review"]
+    if hints:
+        lines += note(style, f"{len(hints)} further observations need manual review.")
+    errors = result.get("source_errors", [])
+    if errors:
+        more = f", +{len(errors) - 1} more" if len(errors) > 1 else ""
+        lines += note(style, f"{plural(len(errors), 'file')} could not be parsed ({safe(errors[0]['file'])}{more}).")
+    exclusions = [row for row in result.get("exclusions", []) if row["reason"] != "excluded or unsupported"]
+    if exclusions:
+        more = f", +{len(exclusions) - 1} more" if len(exclusions) > 1 else ""
+        lines += note(style, f"{plural(len(exclusions), 'source item')} excluded ({safe(exclusions[0]['file'])}{more}).")
+    if any(row["coverage"] == "limited" for row in result["subscores"]):
+        lines += note(style, "Some areas lack sufficient evidence; runtime protection remains unverified.")
+    lines += note(style, "All findings, calculations and check results: --json or --yaml.")
     return "\n".join(lines)

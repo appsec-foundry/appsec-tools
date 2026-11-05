@@ -72,6 +72,8 @@ class PackagingTests(unittest.TestCase):
                 self.assertIn("score_remote_sources.py", packaged.namelist())
                 self.assertIn("score_update.py", packaged.namelist())
                 self.assertIn("score_style.py", packaged.namelist())
+                self.assertIn("score_boundaries.py", packaged.namelist())
+                self.assertIn("score_compose.py", packaged.namelist())
             environment = root / "venv"
             venv.EnvBuilder(with_pip=False).create(environment)
             python = environment / "bin" / "python"
@@ -92,7 +94,7 @@ class PackagingTests(unittest.TestCase):
                 cwd=root,
                 env={**os.environ, "PATH": ""},
             )
-            self.assertEqual(output, f"security-score 0.2.1 (commit {commit})")
+            self.assertEqual(output, f"security-score 0.3.2 (commit {commit})")
 
 
 if __name__ == "__main__":

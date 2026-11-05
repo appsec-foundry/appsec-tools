@@ -69,6 +69,8 @@ def inspect(files, budget):
                     reasons.append("Container is explicitly privileged across the host isolation boundary.")
                 if any(pod.get(key) is True for key in ("hostPID", "hostIPC")):
                     reasons.append("Container shares host process or IPC namespaces.")
+                if pod.get("hostNetwork") is True:
+                    reasons.append("Container shares the host network namespace.")
                 mounts = container.get("volumeMounts", [])
                 unresolved = not isinstance(mounts, list)
                 for mount in mounts if isinstance(mounts, list) else []:
@@ -82,12 +84,12 @@ def inspect(files, budget):
                     value = host.get("path") if isinstance(host, dict) else None
                     if isinstance(value, str) and value in {"/", "/var/run/docker.sock", "/run/docker.sock", "/run/containerd/containerd.sock"}:
                         reasons.append("Container mounts the host root or a container-runtime control socket.")
-                    elif not isinstance(value, str):
+                    else:
                         unresolved = True
                 if reasons:
                     observations.append(evidence(path, pointer, "violated", " ".join(reasons)))
                     continue
-                booleans = [(pod, "hostPID"), (pod, "hostIPC"), (sc, "privileged"), (sc, "allowPrivilegeEscalation")]
+                booleans = [(pod, "hostPID"), (pod, "hostIPC"), (pod, "hostNetwork"), (sc, "privileged"), (sc, "allowPrivilegeEscalation")]
                 unresolved |= any(key in owner and type(owner[key]) is not bool for owner, key in booleans)
                 caps = sc.get("capabilities", {})
                 positive = (
@@ -99,11 +101,14 @@ def inspect(files, budget):
                     and caps.get("drop") == ["ALL"]
                     and not caps.get("add")
                 )
-                observations.append(evidence(
+                row = evidence(
                     path, pointer, "satisfied" if positive else "unclear",
                     "Container explicitly restricts privilege escalation, root identity and capabilities."
                     if positive else "Container isolation controls are not sufficiently established.",
-                ))
+                )
+                if positive:
+                    row["supported_criteria"] = ["isolation", "privileges"]
+                observations.append(row)
     return observations
 
 

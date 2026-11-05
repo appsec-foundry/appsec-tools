@@ -1,6 +1,7 @@
 # Five security subscores
 
-Repository scans report five area assessments and an overall qualitative verdict by default.
+Repository scans show one overall score and plain-language rating by default.
+`--details` shows the tool version and five area assessments with colored bars.
 This is a separate, versioned scoring policy from the legacy A–F index returned
 with `--legacy-score`. It makes no model calls and runs no target code.
 
@@ -8,7 +9,7 @@ with `--legacy-score`. It makes no model calls and runs no target code.
 
 | Area | Assessed criteria | Important limits |
 | --- | --- | --- |
-| Architecture & isolation | Declared container/host isolation and wildcard infrastructure privileges; native Kubernetes JSON also resolves container volume mounts to host resources. | Complete trust boundaries and sensitive data flows need a wider design review. |
+| Architecture & isolation | Supported request-to-database boundaries and declared container/host isolation or infrastructure privileges; native Kubernetes JSON resolves host mounts. | Only supported static criteria are scored; wider data flows, tenancy and deployed enforcement remain unverified. |
 | Identity & access | Recognized token validation, password hashing, session settings, OAuth choices and SAML validation. | Resource authorization and tenant isolation are not established by these checks. |
 | Data & processing | Recognized input-to-execution observations, query construction, deserialization, output binding, cryptography and credential formats. | Unresolved data flows remain review hints. |
 | Dependencies & supply chain | Package declarations, integrity and source checks, build/CI permissions and repository controls. | No vulnerability-feed query or runtime integrity verification. |
@@ -25,12 +26,15 @@ checks in the area, a complete source selection and the full check catalog.
 Repeated evidence for the same criterion cannot satisfy that minimum twice.
 This qualifies the **assessed static criteria**, not all application behavior.
 
-The scanner currently cannot complete the trust-boundary/data-flow review or
-resource-authorization review. Architecture and Identity therefore remain
-unassessed for favorable ratings; a concrete serious weakness in either can
-still yield a negative score. An overall favorable verdict is likewise withheld
-while these areas are unresolved. This is an explicit capability limit, not a
-point deduction or a guess about their security.
+Since subscore policy version 2, Architecture is scored automatically for supported
+static criteria. The absence of a complete manual architecture review is recorded
+under `limitations`, not added as a permanently failing evidence gate. Explicit
+container isolation and privilege restrictions are independent control criteria.
+Positive scores still require sufficient evidence, complete processing and no
+unresolved applicable checks. A concrete serious architecture weakness can
+establish a negative score despite wider gaps. Identity still requires wider
+resource-authorization evidence for a favorable rating; overall coverage remains
+separate from the numeric assessment.
 
 An established serious weakness is sufficient for a negative assessment despite
 wider evidence gaps. For example, one explicitly disabled certificate-validation
@@ -44,7 +48,8 @@ keeps exit status 1. Known findings are never converted into a successful scan.
   `eval(input())` establishes an interactive-input-to-execution flow and deducts
   as high severity. `eval(payload)` remains a review hint until input trust is known.
 - Other unresolved execution, SQL, deserialization and output candidates retain
-  their locations as review hints. The static catalog is not a taint analyzer.
+  their locations as review hints. The supported boundary patterns below are
+  deliberately narrower than general whole-program taint analysis.
 - A fixed `theme` cookie with a literal `dark`/`light` value does not establish a
   session-cookie weakness. Other recognized cookie findings remain visible.
 - Wildcard credentialed CORS is distinguished from reflected-origin credential
@@ -74,8 +79,8 @@ The first deducts its full weight, the second half its weight, the third a third
 and so on. Different criteria add their deductions. Subtract from 100, apply the
 strictest severity cap and a floor of zero, then round once to the nearest whole
 point, with halves rounded up. Exact rational arithmetic avoids cumulative
-rounding differences. `--details` and JSON/YAML show the numerator and divisor
-for every contribution.
+rounding differences. `--details` summarizes grouped point deductions. JSON/YAML retain the numerator
+and divisor for every contribution.
 
 | Comparison case | Calculated index | Expected relationship |
 | --- | ---: | --- |
@@ -105,24 +110,65 @@ cannot cancel them.
 
 The overall verdict takes the worst supported negative rating, with its main
 reason. A favorable overall verdict requires sufficient evidence in all five
-areas. There is no sixth numeric score. Coverage never changes point weights.
+areas. Compact text shows the lowest assessed subscore as the overall number
+only when the overall evidence gate is met, for example `59/100 (Bad)`. This is
+a minimum, not an average or another independently calculated score. Coverage
+never changes point weights.
 
 ## Architecture inspection
 
 Beyond existing explicit privilege findings, the design check reads native JSON
 Pod, Deployment, StatefulSet, DaemonSet and Job specifications. It follows each
 container's volumeMount references to declared hostPath volumes. Privileged
-containers, shared host process/IPC namespaces, or a mounted host root or runtime
+containers, shared host process/IPC/network namespaces, or a mounted host root or runtime
 control socket establish an isolation weakness. An unused hostPath volume does not.
 Explicit non-root identity, disabled escalation, non-privileged execution and
-dropped capabilities establish bounded positive isolation evidence, not a complete
-architecture grade. Malformed values, duplicate JSON keys and unresolved references
+dropped capabilities establish independent declared isolation and privilege
+criteria. Other host-path mounts retain a review gap rather than establishing
+positive isolation. A positive score qualifies these supported static criteria,
+not a complete architecture review. Malformed values, duplicate JSON keys and unresolved references
 never establish positive evidence. Other formats retain their narrower existing
 pattern observations.
 
 Check selection is honored: custom `--checks`/`--skip-checks` scans do not add the
 supplemental design inspection, cannot establish favorable subscores, and identify
 their reduced scope. `coverage.design_checks` identifies supplemental inspections.
+
+## Automatic data-access boundaries
+
+Results from subscore policies 1 and 2 are not directly comparable: version 2
+adds supported automatic architecture controls and request-to-database findings.
+Policy version 2 adds `DESIGN-DATA-BOUNDARY` evidence for complete TypeScript
+sources with Express `Request` parameters and recognized named Sequelize/pg query
+receivers. The inspector follows one selected relative database export, including
+a simple constructor factory and typed setter, and one unchanged local value
+alias. Source code is never imported or executed, and unselected modules are not
+read. Comments, strings, unrelated query methods, shadowed bindings, patch
+fragments and malformed lexical/bracket context cannot establish protection.
+
+Direct request-field interpolation or concatenation into SQL is a high-severity
+architecture finding. Literal SQL with explicit parameter binding is positive
+query-boundary evidence. Unknown transformations and preceding local guards stay
+reviewable; control-flow feasibility, external middleware and arbitrary helper
+sanitizers are outside this bounded analysis. A finding describes the observed
+unsafe construction, not verified exploitability. A constant query without a
+request data flow earns no boundary credit.
+
+Generic JS-SQL evidence and the resolved boundary at the same file/line share one
+owner and one deduction. `boundary_evidence` retains source, query and database
+locations without source snippets or request values. Incomplete source coverage
+still blocks favorable ratings, while recognized serious weaknesses remain rated.
+Custom check subsets do not run supplemental boundary or container inspection.
+The implementation reuses the scanner's source/budget limits and 4 KiB expression
+windows; arbitrary call chains and nested callback flows remain outside scope.
+
+| Example | Architecture result | Meaning |
+| --- | ---: | --- |
+| One direct HTTP input embedded in SQL | 59 (Bad) | A concrete data-access boundary weakness is sufficient for a negative assessment. |
+| Two independent unsafe request-to-query locations | 39 (Very bad) | Both locations contribute; generic SQL detections are not counted again. |
+| One parameter-bound HTTP query | Not assessed alone | One supported criterion cannot establish a complete positive basis. |
+| Explicit independent container isolation and privilege restrictions | 100 for supported static criteria | Wider architecture limitations remain separate and visible in structured output. |
+| Framework/database inventory alone | Not assessed | Presence is not control evidence. |
 
 ## SSO and artifact endpoints
 
@@ -160,6 +206,32 @@ Terraform evaluation or cloud API is accessed. HCL property windows are limited
 to 200 lines/40,000 characters. Both formats use the source-size limit and a
 1,000-block limit per selected file.
 
+Compose profiles appear under **Deployment & operations**, independently of its
+score, and in JSON/YAML at `architecture.compose`. Each service reports declared
+image references and SHA-256 digest pinning; short/long port and mount syntax;
+network names and host namespaces; user, privileged mode, capability additions and
+drops, selected security options and Docker socket mounts; read-only filesystems;
+CPU, memory and PID limits; healthcheck presence/disablement and restart settings.
+Supported `deploy.resources.limits` and restart conditions are declarations only.
+Each property includes its source line. Values, commands and contents from environment,
+secrets, labels, build arguments and healthcheck commands are omitted.
+
+The dependency-free reader supports block YAML maps and sequences, simple scalar
+flow lists and JSON flow values. Other flow YAML, YAML tags, aliases, anchors,
+merges, interpolation, includes and `extends` remain unresolved; block scalar
+contents are skipped. Files are never merged or evaluated. Duplicate keys do not
+establish a value. Missing means not declared in that file, including for overrides;
+it is neither a finding nor proof of a default or deployed control. Unavailable or
+partial files and reader limits appear as profile gaps. Existing container findings
+remain separate; profile presence alone never changes a score or completion status.
+The reader uses the existing selected source and scan budgets, with at most 20,000
+lines, 32 indentation levels, 100 services per file and 100 entries per selected
+list. Details show at most three services with recognized settings or unresolved
+evidence. Since 0.3.2, absent fields and services without such evidence are omitted
+from text; parser gaps and unresolved declared values remain visible. JSON/YAML
+keep all captured services.
+Profiles require tool version 0.3.1 or later.
+
 Dependency profiles distinguish these controls:
 
 | Ecosystem | Recognized evidence | Limits |
@@ -191,7 +263,13 @@ security-score /selected/repository --json
 security-score /selected/repository --yaml
 ```
 
-The default assessment supports internal repository scans. `--score` remains a
+The default assessment supports internal repository scans. Compact text contains
+only `score/100 (plain-language rating)`, or `Not assessed` when the overall
+evidence gate is unmet. `--details` adds the tool version and colored bars,
+with up to three grouped finding types per area, readable architecture and
+dependency-check outcomes and one coverage summary;
+Internal criterion IDs, unresolved-check lists and formula traces remain in
+JSON/YAML, which retain every occurrence, deduction and gap. `--score` remains a
 compatible alias; it cannot be combined with change selection, Analyzer,
 `--quiet`, or rule-listing operations. Use `--legacy-score` for the previous text
 or structured single-score result. Numeric `--quiet`, change relevance and

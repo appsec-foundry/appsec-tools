@@ -18,8 +18,8 @@ HTTPS; public repositories need no GitHub account or SSH key.
 
 ## Security Score
 
-Scans a repository and reports five security subscores from 0 to 100 with ratings
-and an overall verdict by default. It also rates how security-relevant a single change is. The checks are
+Scans a repository and reports a score from 0 to 100 with a plain-language
+rating. `--details` adds five subscores, colored bars and grouped findings. It also rates how security-relevant a single change is. The checks are
 fixed rules, and the scanned code is never run.
 
 ```sh
@@ -31,25 +31,15 @@ need no token:
 
 ```console
 $ security-score https://github.com/juice-shop/juice-shop
-security-score 0.2.1
-
-Architecture & isolation               — · Not assessed · limited evidence
-Identity & access                  0/100 · Very bad · limited evidence
-Data & processing                  0/100 · Very bad · limited evidence
-Dependencies & supply chain        0/100 · Very bad · limited evidence
-Deployment & operations                — · Not assessed · limited evidence
-
-Overall: Very bad
-Reason: Identity & access: Password reaches a fast general-purpose hash
-Processing incomplete; available evidence is retained.
+0/100 (Very bad)
 ```
 
 [Juice Shop](https://github.com/juice-shop/juice-shop) is insecure on purpose,
 so the low subscores are expected. Areas without sufficient evidence remain
 Not assessed; incomplete processing is reported separately.
 
-`--details` adds the repository overview, evidence, gaps and calculation for each
-area. `--legacy-score` selects the previous A–F output; `--score` remains an alias
+`--details` adds the tool version, repository overview, colored bars, grouped
+findings and calculation for each area. `--legacy-score` selects the previous A–F output; `--score` remains an alias
 for the default assessment. The screenshot shows `--legacy-score --details`:
 
 <a href="security-score/docs/details-juice-shop.png">
@@ -72,9 +62,9 @@ Local directories and single changes work too:
 
 ```console
 $ security-score /path/to/repository --legacy-score
-security-score 0.2.1 · 59/100 (E)
+59/100 (E)
 $ security-score /path/to/repository --commit HEAD
-security-score 0.2.1 · Security relevance: high · 0 introduced, 0 worsened findings
+Security relevance: high · 0 introduced, 0 worsened findings
 ```
 
 [Installation, options and how the score works](security-score/README.md)

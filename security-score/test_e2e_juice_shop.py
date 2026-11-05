@@ -220,9 +220,8 @@ class JuiceShopE2ETests(unittest.TestCase):
 
     def test_legacy_shows_progress_and_one_result_without_details(self):
         result = self.run_mode("legacy", "--legacy-score")
-        self.assertRegex(result.stdout, r"\Asecurity-score \S+ · ")
         self.check_score(
-            re.fullmatch(r"security-score \S+ · " + SCORE_LINE + r"\n", result.stdout),
+            re.fullmatch(SCORE_LINE + r"\n", result.stdout),
             result,
         )
         self.assertIn("Reading selected sources...", result.stderr)
@@ -327,20 +326,45 @@ class JuiceShopE2ETests(unittest.TestCase):
         self.assertEqual(len(data["subscores"]), 5)
         self.assertFalse({"score", "grade", "observed_score"} & data.keys())
         self.assertTrue(data["findings"])
+        self.assertTrue(data["architecture"]["compose"]["services"])
+        self.assertTrue(any("ports" in row["properties"] for row in data["architecture"]["compose"]["services"]))
         self.assertTrue(any(row["breakdown"] for row in data["subscores"]))
         self.assertTrue(any(row["url"] for row in data["architecture"]["identity_providers"]))
         self.assertIn(data["overall"]["rating"], {"Bad", "Very bad"})
         self.assertTrue(data["overall"]["reason"])
+        architecture = next(row for row in data["subscores"] if row["id"] == "architecture")
+        self.assertIsNotNone(architecture["score"])
+        self.assertTrue(data["boundary_evidence"])
+        self.assertTrue(architecture["limitations"])
         self.assertNotIn("Traceback", result.stderr)
 
-    def test_default_shows_five_subscores_and_tool_version(self):
+    def test_default_shows_only_score_and_plain_language_rating(self):
         result = self.run_mode("default")
-        self.assertRegex(result.stdout, r"\Asecurity-score \S+\n\n")
+        self.assertRegex(result.stdout, r"\A(?:100|[1-9]?\d)/100 \((?:Bad|Very bad)\)\n\Z")
+        self.assertIn("Reading selected sources...", result.stderr)
+
+    def test_details_show_five_subscores_bars_grouped_findings_and_version(self):
+        result = self.run_mode("details", "--details")
+        self.assertRegex(result.stdout, r"\Asecurity-score \S+\n\nSecurity score . \d+/100 \((?:Bad|Very bad)\)")
         for area in ("Architecture & isolation", "Identity & access", "Data & processing",
                      "Dependencies & supply chain", "Deployment & operations"):
-            self.assertIn(area, result.stdout)
-        self.assertRegex(result.stdout, r"(?m)^Overall: (Bad|Very bad)$")
-        self.assertIn("Reason:", result.stdout)
+            self.assertRegex(result.stdout, rf"(?m)^{re.escape(area)} +(?:—|\d+/100) +[█░]{{10}} +")
+        self.assertIn("PASSWORD-HASH", result.stdout)
+        self.assertRegex(result.stdout, r"(?m)^Architecture & isolation +\d+/100 +")
+        self.assertIn("DESIGN-DATA-BOUNDARY", result.stdout)
+        self.assertIn("https://accounts.google.com", result.stdout)
+        self.assertIn("Coverage", result.stdout)
+        self.assertEqual(result.stdout.count("Duration:"), 1)
+        self.assertNotIn("Calculation:", result.stdout)
+        for internal in ("Open:", "Supported criteria:", "Evidence: limited", "unresolved check",
+                         "not_assessed", "node-lockfiles", "Score: 100 -", "context only"):
+            self.assertNotIn(internal, result.stdout)
+        self.assertIn("Node.js dependency checks:", result.stdout)
+        self.assertIn("Compose service profiles:", result.stdout)
+        compose_block = result.stdout.split("Compose service profiles:", 1)[1].split("\nCoverage\n", 1)[0]
+        self.assertNotRegex(compose_block, r"(?m)^\s+(?:Image|Ports|Networks|Privileges|Filesystem|Operations) +not declared in this file$")
+        self.assertIn("override order", result.stdout)
+        self.assertEqual(result.stdout.count("Assessment incomplete"), 1 if result.returncode == 1 else 0)
         self.assertIn("Reading selected sources...", result.stderr)
 
 

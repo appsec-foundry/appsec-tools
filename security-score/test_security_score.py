@@ -50,7 +50,7 @@ def legacy_main(arguments):
 
 
 class ScoreTests(unittest.TestCase):
-    def test_help_and_invalid_arguments_show_tool_version_without_scanning(self):
+    def test_help_and_invalid_arguments_do_not_add_version_banners_or_scan(self):
         for flags, expected_status in ((["--help"], 0), (["--unknown-option"], 2)):
             with (
                 self.subTest(flags=flags),
@@ -65,12 +65,13 @@ class ScoreTests(unittest.TestCase):
                 cli.main(flags)
             self.assertEqual(exited.exception.code, expected_status)
             text = output.getvalue() if expected_status == 0 else errors.getvalue()
-            self.assertTrue(text.startswith("usage: security-score 7.8.9 "), text)
+            self.assertTrue(text.startswith("usage: security-score "), text)
+            self.assertNotIn("7.8.9", text)
             self.assertIn("--score", text)
             run.assert_not_called()
 
-    def test_text_assessments_show_tool_version_and_preserve_one_line_summary(self):
-        self.write("app.py", "eval(payload)\n")
+    def test_only_details_show_tool_version_and_default_is_one_score_line(self):
+        self.write("app.py", "requests.get(url, verify=False)\n")
         for flags in ([], ["--details"], ["--score"], ["--score", "--details"], ["--legacy-score"]):
             with (
                 self.subTest(flags=flags),
@@ -82,14 +83,16 @@ class ScoreTests(unittest.TestCase):
             ):
                 status = cli.main([str(self.repo), *flags])
             self.assertEqual(status, 0 if "--legacy-score" in flags else 2)
-            self.assertTrue(output.getvalue().startswith("security-score 7.8.9"))
-            if "--legacy-score" in flags:
-                self.assertEqual(output.getvalue(), "security-score 7.8.9 · 59/100 (E)\n")
-            else:
+            if "--details" in flags:
+                self.assertTrue(output.getvalue().startswith("security-score 7.8.9\n\n"))
                 for area in ("Architecture & isolation", "Identity & access", "Data & processing",
                              "Dependencies & supply chain", "Deployment & operations"):
                     self.assertIn(area, output.getvalue())
-                self.assertIn("Overall:", output.getvalue())
+                self.assertIn("59/100 (Bad)", output.getvalue())
+                self.assertEqual(output.getvalue().count("Duration:"), 1)
+            else:
+                expected = "59/100 (E)\n" if "--legacy-score" in flags else "59/100 (Bad)\n"
+                self.assertEqual(output.getvalue(), expected)
 
     def test_deep_python_parser_failure_keeps_other_files_and_reports_location(self):
         self.write("a.py", "eval(payload)\n")
@@ -393,7 +396,7 @@ class ScoreTests(unittest.TestCase):
             build, {"version": "0.1.1", "commit": "unknown", "dirty": False}
         )
 
-    def test_help_version_does_not_start_git_or_scan_the_target(self):
+    def test_help_does_not_start_git_or_scan_the_target(self):
         with (
             mock.patch.object(score_version.subprocess, "run") as command,
             mock.patch.object(cli, "run") as scan,
@@ -402,7 +405,7 @@ class ScoreTests(unittest.TestCase):
         ):
             cli.main(["--help"])
         self.assertEqual(exited.exception.code, 0)
-        self.assertIn(PROGRAM, output.getvalue())
+        self.assertIn("usage: security-score ", output.getvalue())
         command.assert_not_called()
         scan.assert_not_called()
 
@@ -1507,7 +1510,7 @@ class ScoreTests(unittest.TestCase):
     ):
         self.write("app.py", "eval(payload)\n")
         for args, expected in (
-            ([], f"{PROGRAM} · 59/100 (E)\n"),
+            ([], "59/100 (E)\n"),
             (["--detail"], r"(?m)^Architecture\s+59/100"),
             (["--details"], r"(?m)^Architecture\s+59/100"),
         ):
@@ -1944,7 +1947,7 @@ class ScoreTests(unittest.TestCase):
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
             status = legacy_main([str(self.repo)])
         self.assertEqual(status, 1)
-        self.assertEqual(output.getvalue(), f"{PROGRAM} · 59/100 (partial)\n")
+        self.assertEqual(output.getvalue(), "59/100 (partial)\n")
         self.assertIn("Reading selected sources...", errors.getvalue())
         self.assertNotIn("Source coverage:", output.getvalue())
 
@@ -3013,7 +3016,7 @@ class ScoreTests(unittest.TestCase):
             timeout=5,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, f"{PROGRAM} · 59/100 (E)\n")
+        self.assertEqual(result.stdout, "59/100 (E)\n")
         self.assertIn("Reading selected sources...", result.stderr)
 
     def test_malformed_human_edited_catalog_fails_without_traceback(self):
@@ -3440,8 +3443,8 @@ class ScoreTests(unittest.TestCase):
             ):
                 status = cli.main([str(self.repo), "--worktree", *extra])
             self.assertEqual(status, 0)
-            separator = "\n\n" if extra else " · "
-            self.assertTrue(output.getvalue().startswith(f"{PROGRAM}{separator}Security relevance: high"))
+            prefix = f"{PROGRAM}\n\n" if extra else ""
+            self.assertTrue(output.getvalue().startswith(f"{prefix}Security relevance: high"))
             self.assertNotIn("/100", output.getvalue())
             self.assertNotIn("grade", output.getvalue())
             if extra:
@@ -4435,7 +4438,7 @@ class RemoteTests(unittest.TestCase):
                         self.assertIn("59/100 (partial)", output.getvalue())
                         self.assertIn(reason, output.getvalue())
                     else:
-                        self.assertEqual(output.getvalue(), f"{PROGRAM} · 59/100 (partial)\n")
+                        self.assertEqual(output.getvalue(), "59/100 (partial)\n")
                         self.assertIn("Reading selected sources...", errors.getvalue())
 
     def test_truncated_tree_yields_an_explicitly_incomplete_indication(self):

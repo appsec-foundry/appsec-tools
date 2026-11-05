@@ -1,10 +1,10 @@
 # Security Score
 
-Reports five security subscores by default: Architecture & isolation,
+Reports a repository security score and plain-language rating in one line, such
+as `59/100 (Bad)`. `--details` shows a colored overview with bars, grouped findings,
+evidence coverage and the tool version. Its five areas are Architecture & isolation,
 Identity & access, Data & processing, Dependencies & supply chain, and Deployment
-& operations. Each supported score has a plain-language rating and separate
-evidence coverage; an overall verdict explains the decisive weakness without
-averaging the numbers. Insufficient evidence leaves an area Not assessed.
+& operations. Insufficient evidence leaves an area or the overall result Not assessed.
 
 It reads selected source and configuration with fixed rules, without model calls
 or executing the target. The [scoring reference](references/subscores.md) explains
@@ -23,32 +23,28 @@ pipx install "git+https://github.com/appsec-foundry/appsec-tools.git#subdirector
 
 ```console
 $ security-score /path/to/repository
-security-score 0.2.1
-
-Architecture & isolation               — · Not assessed · limited evidence
-Identity & access                      — · Not assessed · limited evidence
-Data & processing                      — · Not assessed · limited evidence
-Dependencies & supply chain            — · Not assessed · limited evidence
-Deployment & operations           59/100 · Bad · limited evidence
-
-Overall: Bad
-Reason: Deployment & operations: Python certificate verification disabled
+59/100 (Bad)
 
 $ security-score /path/to/repository --commit HEAD
-security-score 0.2.1 · Security relevance: high · 0 introduced, 0 worsened findings
+Security relevance: high · 0 introduced, 0 worsened findings
 ```
 
 The repository example contains one explicitly disabled certificate check.
 Unavailable evidence remains separate from that established weakness.
 
-Text assessments, help and argument errors show the installed tool version.
-`security-score --version` also shows the source commit. JSON/YAML contain no text
-banner; `--quiet` remains numeric. Use `--legacy-score` to retain the previous
-single-score JSON/YAML schema.
+The default output contains only the score and rating; `--score` is an alias.
+The overall number takes the lowest assessed subscore, subject to the overall
+evidence gate. Partial positive evidence alone does not establish a favorable
+overall result. Incomplete processing retains a nonzero exit status; details and
+structured output explain coverage. `security-score --version` explicitly shows the version and source commit.
+JSON/YAML contain no text banner; `--quiet` remains numeric. Use `--legacy-score`
+to retain the previous single-score JSON/YAML schema.
 
-`--details` adds the repository overview, evidence, gaps and calculation for each
-area. The following screenshot shows the legacy detail mode with
-`--legacy-score --details`.
+`--details` adds the tool version, repository overview, colored bars and up to
+three grouped finding types per area, with point deductions, readable dependency
+check outcomes and one coverage summary.
+JSON/YAML retain every occurrence, deduction and gap. The screenshot below shows
+the earlier legacy layout; the default details use five areas with the same styling.
 
 <a href="docs/details-juice-shop.png">
   <img src="docs/details-juice-shop-crop.png" alt="Excerpt of security-score --details on Juice Shop: repository overview, then the score and findings for the Repository and Authentication topics">
@@ -64,9 +60,9 @@ security-score /path/to/repository --json
 
 For a fixture with one explicitly disabled certificate check, Deployment is
 `59/100 · Bad · limited evidence`; other areas without evidence stay Not assessed.
-The overall verdict is Bad and names certificate validation as the reason.
+The compact output is `59/100 (Bad)`; details name certificate validation as the reason.
 
-`--details` explains deductions, supported controls and open questions, and shows
+`--details` shows grouped deductions and concrete control evidence, and shows
 recognized SSO server URLs (including realm paths) and artifact repositories such
 as Nexus or Artifactory. Endpoint profiles distinguish configuration from lockfile
 observations and omit credentials and query tokens. These names earn no points.
@@ -76,11 +72,21 @@ selected security properties and state backends. Python/Node profiles distinguis
 version/lock consistency, artifact hashes and applicable locked-install declarations.
 Unsupported lock formats and unresolved build workflows remain gaps; see the
 [profile coverage](references/subscores.md#cloud-and-supply-chain-profiles).
+Compose details also show each service’s declared ports and bind addresses, network
+settings, privileges, mounts, image references, healthcheck and operating limits,
+with source locations. Profiles report files independently; interpolation and
+override order remain unresolved. Missing settings give no finding or score credit.
+This profile requires version 0.3.1 or later. Since 0.3.2, text details omit empty
+profile rows and services without recognized settings or unresolved evidence;
+JSON/YAML retain all captured declarations.
 
-The scanner can establish some declared isolation and privilege weaknesses, but
-cannot complete architecture trust-boundary or resource-authorization reviews.
-Those missing reviews prevent favorable Architecture/Identity and overall ratings;
-they do not hide an established serious weakness. See [criteria and examples](references/subscores.md).
+Architecture is assessed automatically from supported request-to-database boundaries
+and declared isolation or privilege controls. Direct request interpolation into SQL
+yields a located architecture finding; explicit parameter binding is positive
+evidence. Independent declared container-isolation and privilege controls can
+establish a positive static Architecture score. Wider manual architecture review
+is a separate limitation and no longer blocks these supported criteria. Identity
+still requires wider resource-authorization evidence for a favorable rating. See [criteria and examples](references/subscores.md).
 
 ## Usage
 
@@ -197,7 +203,7 @@ for a partial result.
 
 ## Update
 
-The five-subscore default requires tool version 0.2.1 or later. Installing or
+Automatic architecture assessment requires tool version 0.3.0 or later. Installing or
 pushing the separate `appsec-skills` repository does not update this Python tool. When publishing a
 local tool change, commit and push it from the `appsec-tools` checkout first.
 

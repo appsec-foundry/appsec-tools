@@ -145,8 +145,8 @@ def announce(options, message):
 
 def parser():
     result = argparse.ArgumentParser(
-        prog=f"security-score {score_version.package_version()}",
-        description="Five repository security subscores (0–100) or change security relevance; no model calls."
+        prog="security-score",
+        description="Repository security score (0–100) or change security relevance; no model calls."
     )
     result.add_argument(
         "--version",
@@ -169,7 +169,7 @@ def parser():
     scoring = result.add_mutually_exclusive_group()
     scoring.add_argument(
         "--score", action="store_true",
-        help="Compatibility alias for the default five-subscore repository assessment",
+        help="Compatibility alias for the default repository score",
     )
     scoring.add_argument(
         "--legacy-score", action="store_true",
@@ -1153,9 +1153,9 @@ def execute(argv):
         else:
             style = Style.detect(sys.stdout)
             output = render(result, options.details, style)
-            separator = "\n\n" if options.details or options.score else f" {style.dot} "
-            output = arguments.prog + separator + output
-            if "network" in result:
+            if options.details:
+                output = f"security-score {score_version.package_version()}\n\n" + output
+            if options.details and "network" in result:
                 network = result["network"]
                 rows = [
                     f"Network: {network['requests']:,} HTTP requests "
@@ -1170,7 +1170,7 @@ def execute(argv):
                     "  Excludes unread bodies, HTTP headers, uploads, DNS and TLS/TCP overhead."
                 )
                 output += "\n\n" + "\n".join(rows)
-            if "duration_seconds" in result:
+            if options.details and "duration_seconds" in result:
                 output += f"\n\nDuration: {result['duration_seconds']:.2f} s"
         print(output)
         return status
