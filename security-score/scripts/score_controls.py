@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from score_architecture import JS_NAME, bracket_pairs, js_arguments, js_imports
 from score_core import JS_EXTENSIONS, qualified
+from score_profiles import endpoint_url, scalar_settings
 
 
 CALL = re.compile(rf"(?<![\w$.])({JS_NAME}(?:\s*\.\s*{JS_NAME}){{0,8}})\s*\(")
@@ -101,7 +102,7 @@ def server_identity(value):
     ):
         if host.endswith("." + domain):
             label = name
-    if re.match(r"/(?:auth/)?realms/[^/]+/", url.path):
+    if re.match(r"/(?:auth/)?realms/[^/]+(?:/|$)", url.path):
         label = "Keycloak-compatible endpoint"
     return origin, label
 
@@ -115,6 +116,7 @@ def provider_evidence(
             "technology": label,
             "protocol": protocol,
             "server": server,
+            "url": endpoint_url(value),
             "endpoint": endpoint,
             "line": number,
             "evidence": evidence,
@@ -640,8 +642,12 @@ def json_identity(text, profile):
                         {"grant_type": grant}, 1, profile, server, "supported"
                     )
     elif "auth-server-url" in document:
+        value = document["auth-server-url"]
+        realm = document.get("realm")
+        if isinstance(value, str) and isinstance(realm, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,200}", realm):
+            value = value.rstrip("/") + "/realms/" + realm
         provider_evidence(
-            document["auth-server-url"],
+            value,
             "issuer",
             1,
             profile,
@@ -650,40 +656,26 @@ def json_identity(text, profile):
         )
 
 
-def spring_identity(text, rows, profile):
+def spring_identity(text, rows, profile, properties=False):
     """Selected scalar Spring OAuth2 client settings; YAML tags/merges stay unread."""
-    stack, settings = [], {}
-    for number, line in enumerate(text.splitlines(), 1):
-        match = re.fullmatch(r"( *)([A-Za-z0-9_.-]+):(?:[ \t]+(.*))?", line)
-        if not match:
-            continue
-        indent, key, value = len(match[1]), match[2], match[3]
-        while stack and stack[-1][0] >= indent:
-            stack.pop()
-        path = tuple(part for _, key in stack for part in key.split(".")) + tuple(
-            key.split(".")
-        )
-        if value is None or not value.strip() or value.lstrip().startswith("#"):
-            stack.append((indent, key))
-            continue
-        if path[:5] != ("spring", "security", "oauth2", "client", "provider") and path[
-            :5
-        ] != ("spring", "security", "oauth2", "client", "registration"):
-            continue
-        if len(path) != 7:
-            continue
-        if path in settings:
-            settings[path] = (None, number)
-            continue
-        value = re.split(r"\s+#", value, maxsplit=1)[0].strip()
-        scalar = (
-            string_value(value)
-            if value.startswith(("'", '"'))
-            else value
-            if not value.startswith(("&", "*", "!", "|", ">", "{", "["))
-            else None
-        )
-        settings[path] = (scalar, number)
+    flat = scalar_settings(text, properties)
+    settings = {tuple(key.split(".")): value for key, value in flat.items()
+                if key.startswith(("spring.security.oauth2.client.provider.", "spring.security.oauth2.client.registration."))
+                and len(key.split(".")) == 7}
+    endpoints = {
+        "spring.security.oauth2.resourceserver.jwt.issuer-uri": "issuer",
+        "spring.security.oauth2.resourceserver.jwt.jwk-set-uri": "jwks",
+        "quarkus.oidc.auth-server-url": "issuer",
+        "keycloak.auth-server-url": "issuer",
+    }
+    for key, endpoint in endpoints.items():
+        if key in flat:
+            value, number = flat[key]
+            if key == "keycloak.auth-server-url":
+                realm = flat.get("keycloak.realm", (None, 0))[0]
+                if isinstance(value, str) and isinstance(realm, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,200}", realm):
+                    value = value.rstrip("/") + "/realms/" + realm
+            provider_evidence(value, endpoint, number, profile)
     providers = {}
     for path, (value, number) in settings.items():
         if path[4] == "provider" and path[6] in {
@@ -719,8 +711,8 @@ def inspect_controls(path, text, code, profile=None):
         python_controls(text, rows, profile)
     elif suffix == ".json":
         json_identity(text, profile)
-    elif suffix in {".yaml", ".yml"}:
-        spring_identity(text, rows, profile)
+    elif suffix in {".yaml", ".yml", ".properties"}:
+        spring_identity(text, rows, profile, suffix == ".properties")
     elif suffix in {".conf", ".config"}:
         for number, line in enumerate(text.splitlines(), 1):
             if re.match(r"\s*listen\s+[^;#\n]*\bssl\s*;", line):

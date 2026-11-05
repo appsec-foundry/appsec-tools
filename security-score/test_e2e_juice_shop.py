@@ -316,6 +316,19 @@ class JuiceShopE2ETests(unittest.TestCase):
         self.assertRegex(result.stdout, r"\A(?:100|[1-9]?\d)\n\Z")
         self.assertEqual(result.stderr, "")
 
+    def test_five_subscores_and_endpoint_profiles_from_installed_cli(self):
+        result = self.run_mode("five-subscores", "--score", "--details", "--json")
+        data = json.loads(result.stdout)
+        self.assertEqual(data["analysis"], "security-assessment")
+        self.assertEqual(len(data["subscores"]), 5)
+        self.assertFalse({"score", "grade", "observed_score"} & data.keys())
+        self.assertTrue(data["findings"])
+        self.assertTrue(any(row["breakdown"] for row in data["subscores"]))
+        self.assertTrue(any(row["url"] for row in data["architecture"]["identity_providers"]))
+        self.assertIn(data["overall"]["rating"], {"Bad", "Very bad"})
+        self.assertTrue(data["overall"]["reason"])
+        self.assertNotIn("Traceback", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

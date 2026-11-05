@@ -165,6 +165,10 @@ def parser():
     )
     result.add_argument("--repo", help="Alternative local repository selection")
     result.add_argument(
+        "--score", action="store_true",
+        help="Show five evidence-qualified subscores and an overall verdict (internal repositories only)",
+    )
+    result.add_argument(
         "--detail",
         "--details",
         dest="details",
@@ -311,6 +315,10 @@ def yaml_text(value, indent=0):
 
 def render(result, details=False, style=None):
     style = style or Style()
+    if result.get("analysis") == "security-assessment":
+        from score_assessment import render as render_assessment
+
+        return render_assessment(result, details, style)
     if result.get("analysis") == "change-relevance":
         return render_change(result, details, style)
     if result["score"] is None and result.get("observed_score") is not None:
@@ -1010,6 +1018,15 @@ def run(options):
             result["warnings"].append("Overview skipped: the time budget ran out.")
     if budget.network is not None:
         result["network"] = budget.network.snapshot()
+    if options.score and not change:
+        from score_assessment import assess
+
+        try:
+            assess(result, after, budget)
+        except SourceError:
+            # No legacy number may escape as a successful five-subscore result.
+            raise SourceError("The five-subscore assessment exceeded its processing budget.") from None
+        return result, 1 if result["verdict"] == "incomplete" else 0 if result["verdict"] == "assessed" else 2
     return result, (0 if complete else 1) if change else {
         "scored": 0,
         "undetermined": 2,
@@ -1036,6 +1053,12 @@ def execute(argv):
         arguments.error("--timeout must be between 0.1 and 120 seconds.")
     if options.head and not options.base:
         arguments.error("--head requires --base.")
+    if options.score and (
+        options.engine != "internal" or options.patch or options.base or options.commit
+        or options.staged or options.unstaged or options.worktree or options.pr or options.mr
+        or options.quiet or options.list_rules or options.list_checks or options.verify_rules
+    ):
+        arguments.error("--score supports internal repository assessments; use --json or --yaml for structured subscores.")
     if options.quiet and (
         options.list_checks
         or options.list_rules

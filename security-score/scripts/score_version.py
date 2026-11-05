@@ -50,6 +50,9 @@ def source_identity(root=None):
 
 
 def identity():
+    # A source checkout must not inherit a different installed package's stamp.
+    if not Path(__file__).with_name("_security_score_build.py").is_file():
+        return source_identity()
     try:
         from _security_score_build import BUILD
     except ImportError:

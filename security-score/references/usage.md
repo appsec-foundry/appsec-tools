@@ -4,7 +4,14 @@ Details for the [README](../README.md). The calculation is described in
 [Security Score explained](<../security score.md>), rule coverage and limits in the
 [technical reference](scoring.md).
 
-## Reading `--details`
+## Reading `--score --details`
+
+Five area assessments show points, ratings, coverage, deductions and open questions,
+followed by the overall qualitative verdict. The repository overview and service,
+cloud/IaC and supply-chain profiles provide located context. See the
+[five-subscore reference](subscores.md) for criteria, arithmetic and profile limits.
+
+## Reading legacy `--details` (without `--score`)
 
 The report starts with an overview of the repository, then lists the score and
 findings per topic.
@@ -17,8 +24,9 @@ findings per topic.
   lines are positive evidence and add no points.
 
 The report ends with a coverage line. Under Authentication it also lists the
-identity servers and grants it recognized. Server origins omit credentials, paths
-and query parameters. A closing line shows the scan time, for example
+identity servers and grants it recognized. Endpoint URLs preserve useful paths
+while omitting credentials and query tokens; structured `server` values remain
+origins for compatibility. A closing line shows the scan time, for example
 `Duration: 8.42 s`; JSON/YAML with `--details` includes `duration_seconds` instead.
 
 ## Topics
@@ -327,3 +335,7 @@ path of its `security-score`.
 
 How to change rules and weights is described in the
 [technical reference](scoring.md#maintaining-the-rules).
+
+## Five security subscores
+
+Use `--score` for five evidence-qualified area assessments and an overall verdict without a numeric average. Combine it with `--details`, `--json` or `--yaml`. See [criteria, endpoint profiles and compatibility](subscores.md).

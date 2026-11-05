@@ -22,58 +22,25 @@ Tests pin the exact behavior.
   chain, including GitLab CI. Terraform stays a narrow set; a full policy catalog is
   left to dedicated tools.
 
-- **REQ-03 — Score, grade, and change relevance.** A repository scan gives a score
-  from 0 to 100, where 100 means no deductions, and a grade: A ≥ 90, B ≥ 80, C ≥ 70,
-  D ≥ 60, E ≥ 50, F < 50. Passed checks cannot offset a serious finding. Only a
-  fixed number of findings per rule deduct points, so one repeated pattern does not
-  hide every other difference; all findings stay in the output. A change
-  gets a security relevance of high, medium, low, or unclear instead of a score. It
-  depends on the security behavior the change touches, not only on detected
-  weaknesses; introduced, worsened, resolved, and pre-existing findings are
-  reported separately.
+- **REQ-03 — Five security subscores.** With `--score`, report five repository subscores from 0–100 with plain-language ratings: Architecture & isolation, Identity & access, Data & processing, Dependencies & supply chain, and Deployment & operations. Add an overall verdict with its main reason, without an overall numeric score; serious weaknesses, including security-design flaws, must limit that verdict. Changes retain a separate security-relevance assessment without a numeric score; direct CLI calls without `--score` retain the legacy score interface.
 
-- **REQ-04 — Honest limits.** Keep findings, positive evidence, unknowns, and
-  exclusions apart. A detected technology is no proof of protection. Without
-  enough coverage, or when required checks fail, withhold score and grade but keep
-  the findings. Rules that can only report positive evidence never make an area or
-  a repository assessable. No findings in a change does not mean low relevance, and
-  a high score does not mean the code is safe.
+- **REQ-04 — Evidence and limits.** Distinguish findings, supported controls, unknowns and exclusions, and report coverage and incomplete checks separately from ratings. Leave areas without sufficient evidence unassessed; positive ratings require evidence of effective protection. Technology presence, high scores and absence of findings do not establish safety, and missing evidence does not establish low change relevance.
 
-- **REQ-05 — Fast and bounded.** A repository scan should finish within a default
-  budget of about 60 seconds, and all processing is bounded. When a limit stops a
-  scan, report the index of the evidence found so far as partial, without a grade,
-  and state what was not covered.
+- **REQ-05 — Fast and bounded.** Repository scans use a default budget of about 60 seconds with bounded processing. Retain available evidence when processing is incomplete and state what was not covered.
 
 - **REQ-06 — Analyzer only on request.** AppSec Analyzer is used only when selected
   explicitly. The internal engine stays the default, even when Analyzer is installed.
 
-- **REQ-07 — Reproducible calculation.** A score can be recalculated by hand.
-  Weights and caps are kept in one place and can be changed without touching the
-  detection rules. Each rule ships with examples and expected results. JSON/YAML
-  output contains every finding and every value used in the calculation.
+- **REQ-07 — Explainable calculation.** Publish understandable, manually reproducible criteria and calculations, centrally editable scoring values, and comparison examples. Count each underlying weakness once, and prevent unrelated strengths from offsetting serious weaknesses. Detailed output explains the subscores, decisive evidence and gaps.
 
-- **REQ-08 — Three console modes.** The default text output is one result line on
-  stdout; `--details` adds per-topic subscores with a few located findings each;
-  `--quiet` prints only the number. Progress goes to stderr and is suppressed in
-  quiet and JSON/YAML modes. The exit status is the same in every mode, so scripts
-  can tell a partial result from a complete one. Redirected output contains no
-  color codes, and text from the scanned repository cannot inject terminal control
-  characters. Detailed text ends with the elapsed scan duration; structured output
-  requested with details includes it as `duration_seconds`, without affecting the
-  score, relevance, exit status or quiet output.
+- **REQ-08 — Console and structured output.** `--score` shows five subscores and an overall verdict; `--details` explains results, while JSON/YAML preserve the structured evidence. Legacy direct calls retain one-line output and numeric `--quiet`; all modes preserve actual completion status, keep progress on stderr, and prevent terminal-control injection. Detailed output includes elapsed time as observational metadata only.
 
 - **REQ-09 — End-to-end check before release.** Changes to URL scanning or console
   output need a live run of the installed CLI against
   `https://github.com/juice-shop/juice-shop` before release. Once enabled, this test
   fails on missing evidence, crashes, or a missed deadline instead of skipping.
 
-- **REQ-10 — Architecture profile.** A repository scan reports recognized
-  architecture traits with their evidence: login through SSO, passwords or both,
-  authentication mechanisms, the hash a password reaches, single-page app or
-  server-side templates, persistence, how SQL query text is built, deployment
-  targets, how CI logs in to a cloud, lockfiles, exact dependency versions and the
-  update tool. The profile is context only and never changes score or grade; a trait
-  that is not recognized is reported as such, not as absent.
+- **REQ-10 — Architecture and service profiles.** Report recognized architecture traits, authentication services and concrete SSO endpoints, and configured or lockfile-observed artifact repositories with their evidence. Preserve useful endpoint paths without credentials or query tokens, and distinguish declarations from runtime use. Technology and endpoint inventories give no score credit; evidenced security-design weaknesses can affect the architecture subscore.
 
 - **REQ-11 — Security headers as positive evidence.** Browser security headers
   other than CSP count only as positive evidence. A missing, disabled, or

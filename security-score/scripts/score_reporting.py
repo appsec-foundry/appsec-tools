@@ -464,7 +464,7 @@ def identity_profile(style, architecture):
         )
 
     servers = limited(
-        f"{safe(row['technology'])}: {safe(row['server'] or 'unresolved server')} ({safe(row['endpoint'])}, {location(row)})"
+        f"{safe(row['technology'])}: {safe(row.get('url') or row['server'] or 'unresolved server')} ({safe(row['endpoint'])}, {location(row)})"
         for row in providers
     )
     flows = limited(
@@ -589,8 +589,36 @@ def dependency_profile(style, architecture):
         ("Lockfile", names("lockfiles")),
         ("Exact versions", versions and f"{versions} direct dependencies"),
         ("Updates", names("dependency_updates")),
+        ("Artifact repositories", "; ".join(
+            f"{safe(row['url'])} ({safe(row['ecosystem'])}, {safe(row['evidence'])}, {location(row)})"
+            for row in architecture.get("artifact_repositories", [])[:6]
+        )),
     )
     return profile_rows(style, rows) if any(text for _, text in rows) else []
+
+
+def infrastructure_profile(architecture):
+    """Declared cloud/IaC context; do not promote inventory to runtime assurance."""
+    lines = []
+    iac = architecture.get("iac", {})
+    technologies = {row["technology"] for row in architecture.get("deployment", [])}
+    technologies.update(row["technology"] for row in iac.get("providers", []))
+    technologies.update(row["technology"] for row in iac.get("resources", []))
+    if technologies:
+        lines.append("Declared deployment targets: " + ", ".join(sorted(technologies)))
+    for provider in iac.get("providers", []):
+        if provider["region"]:
+            lines.append(f"  {safe(provider['technology'])} region: {safe(provider['region'])} ({location(provider)})")
+    for row in iac.get("resources", [])[:20]:
+        detail = "; ".join(f"{safe(key)}: {safe(value)}" for key, value in row["properties"].items())
+        lines.append(f"  {safe(row['technology'])} {safe(row['category'])}: {safe(row['type'])} ({row['mode']}, {location(row)})" + (f" · {detail}" if detail else ""))
+    if len(iac.get("resources", [])) > 20:
+        lines.append(f"  +{len(iac['resources']) - 20} resource declarations in JSON/YAML")
+    for row in iac.get("state_backends", []):
+        lines.append(f"Terraform state backend: {safe(row['type'])} · encryption {row['encryption']} · locking {row['locking']} ({location(row)})")
+    for row in architecture.get("cloud_login", []):
+        lines.append(f"Cloud CI identity: {safe(row['technology'])} · {safe(row['method'])} ({location(row)})")
+    return lines
 
 
 RISK_LABELS = (
@@ -758,6 +786,8 @@ def render_repository(result, summary, style=None):
             )
         if topic["id"] == "dependencies":
             lines += dependency_profile(style, result.get("architecture") or {})
+        if topic["id"] == "deployment":
+            lines += infrastructure_profile(result.get("architecture") or {})
 
     count = len(result["findings"])
     lines += [

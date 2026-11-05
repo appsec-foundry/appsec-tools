@@ -1520,6 +1520,9 @@ def login_summary(authentication):
 
 def describe(files, budget, checks=(), paths=()):
     """Technology observations are context, not scored control evidence."""
+    from score_profiles import artifact_repositories
+    from score_iac import inspect as inspect_iac
+    from score_supply_chain import inspect as inspect_supply_chain
     traits = {"frontend": [], "templates": [], "persistence": [], "authentication": []}
     keys = {"persistence": "kind", "authentication": "mechanism"}
     cloud_login = []
@@ -1611,5 +1614,12 @@ def describe(files, budget, checks=(), paths=()):
         "lockfiles": lockfiles(paths),
         "exact_versions": exact_versions(files, budget),
         "dependency_updates": dependency_updates(checks),
+        "artifact_repositories": artifact_repositories(files, budget),
+        "iac": inspect_iac(files, budget),
+        "supply_chain": inspect_supply_chain(files, paths, budget),
+        "artifact_repository_gaps": [
+            {"file": path, "reason": "Credential-bearing package configuration is not read; endpoints may be present here."}
+            for path in paths if Path(path).name in {".npmrc", ".pypirc"}
+        ],
         "interpretation": "Declared packages, imports and selected code patterns only; their presence gives no score credit, and an unrecognized trait may still exist. CSP delivery, authorization, DB privileges and deployment controls require wider evidence.",
     }

@@ -1931,7 +1931,9 @@
         {
           "file": "package.json",
           "source": "{\"dependencies\":{\"example\":\"^1.0.0\"}}",
-          "paths": ["yarn.lock"],
+          "paths": [
+            "yarn.lock"
+          ],
           "outcome": "not_applicable",
           "expected_score": null,
           "expected_grade": null
@@ -1939,7 +1941,9 @@
         {
           "file": "packages/app/package.json",
           "source": "{\"dependencies\":{\"example\":\"^1.0.0\"}}",
-          "paths": ["pnpm-lock.yaml"],
+          "paths": [
+            "pnpm-lock.yaml"
+          ],
           "outcome": "not_applicable",
           "expected_score": null,
           "expected_grade": null
@@ -1947,7 +1951,9 @@
         {
           "file": "package.json",
           "source": "{\"dependencies\":{\"example\":\"^1.0.0\"}}",
-          "paths": ["uv.lock"],
+          "paths": [
+            "uv.lock"
+          ],
           "outcome": "violated",
           "expected_score": 79,
           "expected_grade": "C"
@@ -1967,7 +1973,9 @@
         },
         {
           "file": "Pipfile",
-          "paths": ["Pipfile.lock"],
+          "paths": [
+            "Pipfile.lock"
+          ],
           "outcome": "not_applicable",
           "expected_score": null,
           "expected_grade": null
@@ -1982,7 +1990,9 @@
         {
           "file": "pyproject.toml",
           "source": "[project]\nname = \"example\"\ndependencies = [\n  \"example\",\n]\n",
-          "paths": ["uv.lock"],
+          "paths": [
+            "uv.lock"
+          ],
           "outcome": "not_applicable",
           "expected_score": null,
           "expected_grade": null
@@ -2828,7 +2838,7 @@
       ]
     }
   ],
-  "rule_version": 11,
+  "rule_version": 12,
   "change_relevance": {
     "version": 7,
     "documentation_extensions": [
@@ -3181,5 +3191,166 @@
         "expected_relevance": "high"
       }
     ]
+  },
+  "subscore_policy": {
+    "version": 1,
+    "deductions": {
+      "critical": 61,
+      "high": 41,
+      "medium": 12,
+      "low": 3
+    },
+    "caps": {
+      "critical": 39,
+      "high": 59,
+      "medium": 100,
+      "low": 100
+    },
+    "ratings": [
+      [
+        90,
+        "Very good"
+      ],
+      [
+        80,
+        "Good"
+      ],
+      [
+        70,
+        "OK"
+      ],
+      [
+        60,
+        "Needs improvement"
+      ],
+      [
+        50,
+        "Bad"
+      ],
+      [
+        0,
+        "Very bad"
+      ]
+    ],
+    "minimum_positive_criteria": 2,
+    "workflow_criteria": ["python-version-pins", "node-locked-install", "node-artifact-integrity"],
+    "domains": [
+      {
+        "id": "architecture",
+        "title": "Architecture & isolation",
+        "areas": [],
+        "criteria": {
+          "isolation": [
+            "IAC-PRIVILEGED",
+            "DESIGN-CONTAINER-ISOLATION"
+          ],
+          "privileges": [
+            "TF-IAM-WILDCARD"
+          ],
+          "trust-boundaries": [],
+          "sensitive-data-flows": []
+        },
+        "required": [
+          "trust-boundaries",
+          "sensitive-data-flows"
+        ]
+      },
+      {
+        "id": "identity",
+        "title": "Identity & access",
+        "areas": [
+          "authentication",
+          "authorization"
+        ],
+        "criteria": {},
+        "required": [
+          "resource-authorization"
+        ]
+      },
+      {
+        "id": "data",
+        "title": "Data & processing",
+        "areas": [
+          "execution",
+          "injection",
+          "deserialization",
+          "output",
+          "frontend-policy",
+          "cryptography",
+          "secrets"
+        ],
+        "criteria": {},
+        "required": []
+      },
+      {
+        "id": "dependencies",
+        "title": "Dependencies & supply chain",
+        "areas": [
+          "supply-chain",
+          "repository-host"
+        ],
+        "criteria": {},
+        "required": []
+      },
+      {
+        "id": "deployment",
+        "title": "Deployment & operations",
+        "areas": [
+          "hardening",
+          "transport",
+          "infrastructure"
+        ],
+        "criteria": {},
+        "required": []
+      }
+    ],
+    "families": {
+      "PY-TLS": "tls-validation",
+      "PY-TLS-CONTEXT": "tls-validation",
+      "JS-TLS": "tls-validation",
+      "PY-HASH": "password-or-crypto-hash",
+      "JS-HASH": "password-or-crypto-hash",
+      "PASSWORD-HASH": "password-or-crypto-hash",
+      "PY-EXEC": "dynamic-execution",
+      "JS-EVAL": "dynamic-execution",
+      "PY-SHELL": "shell-execution",
+      "JS-SHELL": "shell-execution",
+      "PY-SQL": "query-binding",
+      "JS-SQL": "query-binding",
+      "PY-JWT": "token-validation",
+      "JS-JWT": "token-validation",
+      "PY-RANDOM": "secret-randomness",
+      "JS-RANDOM": "secret-randomness",
+      "PY-YAML": "deserialization",
+      "PY-PICKLE": "deserialization",
+      "JS-HTML": "output-encoding",
+      "FRONTEND-BINDING": "output-encoding",
+      "PY-DEPENDENCIES": "python-version-pins",
+      "CI-FROZEN-INSTALL": "node-locked-install",
+      "NPM-LOCK-SOURCES": "node-artifact-integrity"
+    },
+    "context_only": [
+      "SECRET-FILE",
+      "REPO-BINARY",
+      "TF-PUBLIC-RESOURCE",
+      "HOST-DEPENDABOT-SECURITY-UPDATES",
+      "HOST-SECRET-SCANNING",
+      "HOST-SECURITY-SCANNING"
+    ],
+    "candidate_rules": [
+      "PY-EXEC",
+      "JS-EVAL",
+      "PY-SHELL",
+      "JS-SHELL",
+      "PY-PICKLE",
+      "PY-SQL",
+      "JS-SQL",
+      "JS-HTML",
+      "CI-PR-HEAD-CHECKOUT",
+      "TF-STATE"
+    ],
+    "owners": {
+      "password-or-crypto-hash": "PASSWORD-HASH"
+    }
   }
 }

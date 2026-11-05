@@ -1,13 +1,15 @@
 # Security Score
 
-Gives a repository a security score from 0 to 100 and a grade from A to F. For a
-single change, it rates the security relevance instead: `high`, `medium`, `low`
-or `unclear`.
+Reports five security subscores with `--score`: Architecture & isolation,
+Identity & access, Data & processing, Dependencies & supply chain, and Deployment
+& operations. Each supported score has a plain-language rating and separate
+evidence coverage; an overall verdict explains the decisive weakness without
+averaging the numbers. Insufficient evidence leaves an area Not assessed.
 
-It checks source code, dependencies, CI, container and Terraform files, and
-repository settings with fixed rules. It needs no LLM and no AppSec Analyzer, and
-it never runs the scanned code. A score of 100 means the checks found nothing,
-not that the code is secure.
+It reads selected source and configuration with fixed rules, without model calls
+or executing the target. The [scoring reference](references/subscores.md) explains
+the criteria, worked calculations and architecture limits. Direct calls without
+`--score` retain the legacy 0–100/A–F output; changes retain security relevance.
 
 ## Quick start
 
@@ -19,27 +21,57 @@ pipx install "git+https://github.com/appsec-foundry/appsec-tools.git#subdirector
 ```
 
 ```console
-$ security-score https://github.com/juice-shop/juice-shop
-0/100 (partial)
+$ security-score /path/to/repository --score
+Architecture & isolation               — · Not assessed · limited evidence
+Identity & access                      — · Not assessed · limited evidence
+Data & processing                      — · Not assessed · limited evidence
+Dependencies & supply chain            — · Not assessed · limited evidence
+Deployment & operations           59/100 · Bad · limited evidence
 
-$ security-score /path/to/repository
-59/100 (E)
+Overall: Bad
+Reason: Deployment & operations: Python certificate verification disabled
 
 $ security-score /path/to/repository --commit HEAD
 Security relevance: high · 0 introduced, 0 worsened findings
 ```
 
-[Juice Shop](https://github.com/juice-shop/juice-shop) is insecure on purpose, so
-the low score is expected. `partial` means that some topics could not be assessed,
-so there is no grade.
+The repository example contains one explicitly disabled certificate check.
+Unavailable evidence remains separate from that established weakness.
 
-`--details` adds a repository overview, then the score and findings per topic with
-rule, file, line and points deducted. `OK` lines are positive evidence and add no
-points.
+`--details` adds the repository overview, evidence, gaps and calculation for each
+area. The following screenshot shows the legacy detail mode without `--score`.
 
 <a href="docs/details-juice-shop.png">
   <img src="docs/details-juice-shop-crop.png" alt="Excerpt of security-score --details on Juice Shop: repository overview, then the score and findings for the Repository and Authentication topics">
 </a>
+
+## Five-subscore assessment
+
+```sh
+security-score /path/to/repository --score
+security-score /path/to/repository --score --details
+security-score /path/to/repository --score --json
+```
+
+For a fixture with one explicitly disabled certificate check, Deployment is
+`59/100 · Bad · limited evidence`; other areas without evidence stay Not assessed.
+The overall verdict is Bad and names certificate validation as the reason.
+
+`--details` explains deductions, supported controls and open questions, and shows
+recognized SSO server URLs (including realm paths) and artifact repositories such
+as Nexus or Artifactory. Endpoint profiles distinguish configuration from lockfile
+observations and omit credentials and query tokens. These names earn no points.
+
+Cloud/IaC details identify declared Terraform providers, regions, resource roles,
+selected security properties and state backends. Python/Node profiles distinguish
+version/lock consistency, artifact hashes and applicable locked-install declarations.
+Unsupported lock formats and unresolved build workflows remain gaps; see the
+[profile coverage](references/subscores.md#cloud-and-supply-chain-profiles).
+
+The scanner can establish some declared isolation and privilege weaknesses, but
+cannot complete architecture trust-boundary or resource-authorization reviews.
+Those missing reviews prevent favorable Architecture/Identity and overall ratings;
+they do not hide an established serious weakness. See [criteria and examples](references/subscores.md).
 
 ## Usage
 
@@ -122,7 +154,7 @@ without embedded credentials. Repository requests and tokens remain inside the
 verified HTTPS tunnel. Proxy failures are reported separately from a repository
 404 and never cause an automatic direct connection.
 
-## Reading the result
+## Reading the legacy result
 
 Each area, such as execution or transport, starts at 100 and loses points per
 finding. The lowest area score is the repository score, so a strong area cannot

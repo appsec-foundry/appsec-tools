@@ -723,11 +723,16 @@ def deployment_rows(files, paths):
                 found.setdefault(technology, path)
     for path, source in sorted(files.items()):
         suffix = Path(path).suffix.lower().replace(".yml", ".yaml")
+        text = source["text"]
+        if suffix == ".tf":
+            from score_iac import clean_hcl
+
+            text = clean_hcl(text)
         for technology, scope, pattern in DEPLOYMENT_TEXT:
             if (scope == "ci" and ci_file(path)) or (
                 scope == suffix and not ci_file(path)
             ):
-                if re.search(pattern, source["text"]):
+                if re.search(pattern, text):
                     found.setdefault(technology, path)
     return [
         {"technology": technology, "file": path}

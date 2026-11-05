@@ -228,6 +228,11 @@ IMPLEMENTATION_HASH = hashlib.sha256(
             "score_remote_sources.py",
             "score_architecture.py",
             "score_controls.py",
+            "score_assessment.py",
+            "score_design.py",
+            "score_profiles.py",
+            "score_iac.py",
+            "score_supply_chain.py",
             "score_infrastructure.py",
             "score_overview.py",
             "score_relevance.py",
@@ -245,6 +250,7 @@ SOURCE_EXTENSIONS = JS_EXTENSIONS | {
     ".conf",
     ".config",
     ".tf",
+    ".properties",
 }
 GRADLE_BUILD_FILES = {
     "build.gradle",
@@ -252,7 +258,7 @@ GRADLE_BUILD_FILES = {
     "settings.gradle",
     "settings.gradle.kts",
 }
-DEPENDENCY_FILES = {"pyproject.toml", "pom.xml", "Cargo.toml"} | GRADLE_BUILD_FILES
+DEPENDENCY_FILES = {"pyproject.toml", "pom.xml", "settings.xml", "Cargo.toml"} | GRADLE_BUILD_FILES
 LOCKFILES = {"package-lock.json", "npm-shrinkwrap.json"}
 
 
@@ -963,6 +969,7 @@ def applies(rule, path):
             ".json",
             ".yaml",
             ".yml",
+            ".properties",
         }
     if kind == "web-settings":
         return suffix == ".py"
