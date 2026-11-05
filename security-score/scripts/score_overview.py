@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 from urllib.parse import quote
 
+from score_ai import package_name as ai_package
 from score_architecture import COMMENT_LINE
 from score_core import GRADLE_BUILD_FILES, JS_EXTENSIONS
 from score_infrastructure import OWN_CODE, ci_file, document, line_of, logical_lines
@@ -425,6 +426,7 @@ def repository_overview(files, paths, listed, budget):
     """Technologies, files and development signals from sources already read."""
     own_paths = [path for path in paths if origin(path) in OWN_CODE]
     frameworks, test_tools, runtimes, risks = set(), set(), {}, {}
+    ai_sdks = set()
     ci_steps, security_tools = set(), set()
 
     def risk(category, technology, reason, path, line=None):
@@ -453,6 +455,8 @@ def repository_overview(files, paths, listed, budget):
                 frameworks.add(FRAMEWORKS.get(key) or FRAMEWORKS[group])
             if key in TEST_TOOLS or group in TEST_TOOLS:
                 test_tools.add(TEST_TOOLS.get(key) or TEST_TOOLS[group])
+            if ai_package(ecosystem, package):
+                ai_sdks.add(ai_package(ecosystem, package))
             if key in INSECURE_PACKAGES:
                 number = line or line_of(text, f'"{package}"')
                 risk("dependency", package, INSECURE_PACKAGES[key], path, number)
@@ -507,6 +511,7 @@ def repository_overview(files, paths, listed, budget):
             "by_origin": dict(sorted(Counter(map(origin, paths)).items())),
         },
         "frameworks": sorted(frameworks),
+        "ai_sdks": sorted(ai_sdks),
         "test_tools": sorted(test_tools),
         "runtimes": sorted(
             runtimes.values(), key=lambda row: (row["runtime"], row["version"])

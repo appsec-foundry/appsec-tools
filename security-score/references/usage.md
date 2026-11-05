@@ -7,12 +7,14 @@ Details for the [README](../README.md). The calculation is described in
 ## Reading the default `--details`
 
 The report starts with the tool version, overall score and repository overview.
-Five area assessments show colored bars, points, ratings and grouped findings,
+Six area assessments show colored bars, points, ratings and grouped findings,
 with point deductions, readable dependency-check outcomes and one coverage
 summary. Internal states and formula traces remain in JSON/YAML, which retain
 every occurrence and unresolved question. The repository overview and service,
 cloud/IaC and supply-chain profiles provide located context. See the
-[five-subscore reference](subscores.md) for criteria, arithmetic and profile limits.
+[subscore reference](subscores.md) for criteria, arithmetic and profile limits.
+AI & agents shows Not applicable when no AI SDK, model call or agent
+configuration is recognized; the overview then has no AI SDKs row.
 
 ## Reading legacy `--legacy-score --details`
 
@@ -258,8 +260,8 @@ security-score /path/to/repository --checks JS-JWT,PY-JWT --json
 ```
 
 The default is `all`. Available groups are `authentication`, `tls`, `headers`,
-`architecture`, `frontend`, `dependencies`, `secrets`, `cryptography`, `deployment`
-and `repository`; individual rule IDs from `--list-rules` also work. Groups can
+`architecture`, `frontend`, `dependencies`, `secrets`, `cryptography`, `deployment`,
+`repository` and `ai`; individual rule IDs from `--list-rules` also work. Groups can
 overlap. `--skip-checks` removes checks from the selection. Selection applies to
 internal repository scans, and an empty or unknown selection is an argument error.
 A subset reports its recognized index as partial and withholds the overall
@@ -339,9 +341,9 @@ path of its `security-score`.
 How to change rules and weights is described in the
 [technical reference](scoring.md#maintaining-the-rules).
 
-## Five security subscores
+## Security subscores
 
-Repository scans show only the overall number and plain-language rating by default, for example `59/100 (Bad)`. The number is the lowest assessed subscore when the overall evidence gate is met, never an average. `--details` shows the tool version and the five areas with colored bars and grouped findings. `--score` remains a compatible alias; `--legacy-score` selects the previous single score. Combine it with `--details`, `--json` or `--yaml`. See [criteria, endpoint profiles and compatibility](subscores.md).
+Repository scans show only the overall number and plain-language rating by default, for example `59/100 (Bad)`. The number is the lowest assessed subscore when the overall evidence gate is met, never an average. `--details` shows the tool version and the six areas with colored bars and grouped findings. `--score` remains a compatible alias; `--legacy-score` selects the previous single score. Combine it with `--details`, `--json` or `--yaml`. See [criteria, endpoint profiles and compatibility](subscores.md).
 
 Architecture scoring uses supported data-access boundary and isolation controls.
 See [automatic boundary coverage](subscores.md#automatic-data-access-boundaries)

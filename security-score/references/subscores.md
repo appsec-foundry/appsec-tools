@@ -1,7 +1,7 @@
-# Five security subscores
+# Security subscores
 
 Repository scans show one overall score and plain-language rating by default.
-`--details` shows the tool version and five area assessments with colored bars.
+`--details` shows the tool version and six area assessments with colored bars.
 This is a separate, versioned scoring policy from the legacy A–F index returned
 with `--legacy-score`. It makes no model calls and runs no target code.
 
@@ -14,9 +14,12 @@ with `--legacy-score`. It makes no model calls and runs no target code.
 | Data & processing | Recognized input-to-execution observations, query construction, deserialization, output binding, cryptography and credential formats. | Unresolved data flows remain review hints. |
 | Dependencies & supply chain | Package declarations, integrity and source checks, build/CI permissions and repository controls. | No vulnerability-feed query or runtime integrity verification. |
 | Deployment & operations | Recognized transport verification, debug, session-host configuration and infrastructure exposure. | Declarations do not prove deployment or enforcement. |
+| AI & agents | Model output reaching code, shell, SQL or HTML sinks, schema validation of structured output, and committed MCP and agent configuration. | Flows stay within one file and scope; tool arguments, prompt injection and retrieval trust need design review. |
 
 The `subscore_policy` object in `rules.json` assigns each rule to one criterion
-and area, including explicit ownership for overlapping password-hash evidence.
+and area, including explicit ownership for overlapping password-hash evidence
+and `location_owners` for specific findings that own generic ones at the same
+location.
 Technology inventories, SSO server names, artifact repository URLs and
 positive-only observations do not establish a score.
 
@@ -109,11 +112,50 @@ cannot cancel them.
 | 0–49 | Very bad |
 
 The overall verdict takes the worst supported negative rating, with its main
-reason. A favorable overall verdict requires sufficient evidence in all five
+reason. A favorable overall verdict requires sufficient evidence in all applicable
 areas. Compact text shows the lowest assessed subscore as the overall number
 only when the overall evidence gate is met, for example `59/100 (Bad)`. This is
 a minimum, not an average or another independently calculated score. Coverage
 never changes point weights.
+
+## AI & agents
+
+The area applies when an AI SDK import or declaration, a model call or parseable
+committed agent or MCP configuration is recognized. Otherwise it shows **Not
+applicable**, carries `applicable: false` in JSON/YAML and does not affect the
+overall verdict. Incomplete processing, a check subset or unresolved source
+coverage never establish absence; the area is then Not assessed.
+
+| Rule | Severity | Violated by | Satisfied by |
+| --- | --- | --- | --- |
+| `AI-OUTPUT-EXEC` | high | Model output in `eval`, `exec`, `new Function`, shell commands or SQL text | Model output only as a bound SQL parameter |
+| `AI-OUTPUT-HTML` | high | Model output in `innerHTML`, `document.write`, `dangerouslySetInnerHTML`, `Markup`, `mark_safe` and similar sinks | Sanitizer around every model value, text sinks, escaping |
+| `AI-OUTPUT-PARSE` | medium | JSON parsed from model output without a schema validator in the same scope | Pydantic, zod, ajv or jsonschema validation; SDK calls with a schema |
+| `AI-MCP-CREDENTIAL` | high | Literal credential in MCP `env`, `headers` or arguments | Environment reference such as `${TOKEN}` |
+| `AI-MCP-SOURCE` | medium | `npx`, `uvx`, `pipx`, `pnpm dlx` and similar without an exact version | Exact version or Git commit |
+| `AI-MCP-TRANSPORT` | high | Remote `http`/`ws` server URL | `https`/`wss` |
+| `AI-AGENT-BYPASS` | high | Claude Code `bypassPermissions`, Gemini CLI `autoAccept`, MCP `trust: true` | `disableBypassPermissionsMode: "disable"` |
+| `AI-AGENT-AUTO-APPROVE` | medium | `enableAllProjectMcpServers: true`, `autoApprove`/`alwaysAllow` lists | — |
+| `AI-AGENT-PERMISSIONS` | high | Allow rules for unrestricted `Bash`, wildcard high-risk commands, or `Write`/`Edit` on any or credential paths | — |
+| `AI-AGENT-SANDBOX` | medium | Pre-approved tools beyond read access without a sandbox | Enabled sandbox |
+
+`AI-INTEGRATION` is a positive-only inventory rule: it makes the area applicable
+and never earns credit. Model output is followed only in Python and
+JavaScript/TypeScript files that import an AI SDK, from the assignment of a
+recognized model call through further assignments and loops within the same
+function or block. A value passed to another function or file is not followed.
+Configuration files with duplicate keys or comments are unresolved.
+
+When model output reaches `eval()`, the specific `AI-OUTPUT-EXEC` finding owns
+the generic `JS-EVAL` or `PY-EXEC` candidate at the same location and deducts
+once; `AI-MCP-CREDENTIAL` likewise owns `SECRET-TOKEN` in MCP configuration.
+`location_owners` in `rules.json` lists these pairs. A positive AI rating needs
+two independent satisfied criteria, for example an enabled agent sandbox and
+model output written to a text sink.
+
+Not yet assessed: tool arguments chosen by the model, model-selected URLs and
+file paths, prompt construction, retrieval and memory, MCP server code, TOML and
+YAML agent settings, VS Code `settings.json`, and Markdown instruction files.
 
 ## Architecture inspection
 
@@ -274,10 +316,11 @@ compatible alias; it cannot be combined with change selection, Analyzer,
 `--quiet`, or rule-listing operations. Use `--legacy-score` for the previous text
 or structured single-score result. Numeric `--quiet`, change relevance and
 explicit Analyzer requests retain their interfaces. The structured result uses `analysis:
-security-assessment`, `scoring_policy: five-subscores`, `subscores` and `overall`;
+security-assessment`, `scoring_policy: area-subscores` (named `five-subscores`
+before subscore policy version 3), `subscores` and `overall`;
 legacy top-level score, grade, observed index and area indices are absent.
 
-Exit 0 means sufficient evidence for all five areas, 2 means limited assessment
+Exit 0 means sufficient evidence for all applicable areas, 2 means limited assessment
 or invalid arguments, 1 means incomplete processing or operational failure, and
 130 means cancellation. A negative verdict can coexist with exit 2; these are
 completion statuses, not CI pass/fail gates.

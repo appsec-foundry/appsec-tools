@@ -22,7 +22,7 @@ Tests pin the exact behavior.
   chain, including GitLab CI. Terraform stays a narrow set; a full policy catalog is
   left to dedicated tools.
 
-- **REQ-03 — Compact score and detailed overview.** For repository assessments, show only the overall 0–100 score and its plain-language rating by default. Use the lowest assessed subscore as the overall score; serious weaknesses must limit the result. With `--details`, show the five subscores, evidence and calculation in a clear, colored overview with bars, and include the tool version. Changes retain a separate security-relevance assessment without a numeric score.
+- **REQ-03 — Compact score and detailed overview.** For repository assessments, show only the overall 0–100 score and its plain-language rating by default. Use the lowest assessed subscore as the overall score; serious weaknesses must limit the result. With `--details`, show the area subscores, evidence and calculation in a clear, colored overview with bars, and include the tool version. Changes retain a separate security-relevance assessment without a numeric score.
 
 - **REQ-04 — Evidence and limits.** Distinguish findings, supported controls, unknowns and exclusions, and report coverage and incomplete checks separately from ratings. Leave areas without sufficient evidence unassessed; positive ratings require evidence of effective protection. Technology presence, high scores and absence of findings do not establish safety, and missing evidence does not establish low change relevance.
 
@@ -133,3 +133,5 @@ Tests pin the exact behavior.
 - **REQ-26 — Automatic architecture assessment.** Assess Architecture & isolation automatically from recognized data-access boundaries and declared isolation and privilege controls. Base scores on concrete weaknesses or sufficient independent control evidence; a missing manual architecture review alone must not prevent assessment of these supported checks. Report unsupported wider architecture separately, without awarding points for technology presence.
 
 - **REQ-27 — Compose service profiles.** Report declared Docker Compose settings per service, with source locations, covering network exposure, privileges, mounts, image references and operating controls. Distinguish missing and unresolved settings, and do not infer an effective merged deployment or award score credit from the profile alone.
+
+- **REQ-28 — AI & agents area.** Assess model-output handling in supported source code and committed agent and MCP configuration as a separate subscore under the same evidence rules as the other areas. The area is not applicable only when a complete scan of all checks recognizes no AI SDK, model call or agent configuration, so that repositories without AI keep their result. Model output is followed only within one file and scope, and prompts and configuration values never appear in results.

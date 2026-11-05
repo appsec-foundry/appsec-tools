@@ -10,7 +10,7 @@ appsec-analyzer repository.
 
 | Tool | Reads | Produces |
 | --- | --- | --- |
-| [Security Score](#security-score) | A GitHub or GitLab URL, a local directory, or a single change | Five security subscores from 0 to 100 and an overall verdict, or the security relevance of the change |
+| [Security Score](#security-score) | A GitHub or GitLab URL, a local directory, or a single change | Security subscores from 0 to 100, including AI & agents, and an overall verdict, or the security relevance of the change |
 | [Requirement Harvester](#requirement-harvester) | Websites and wikis named in a configuration file | A catalog of security requirements in OSCAL YAML |
 
 All tools need Python 3.10 or newer, `pipx`, and Git. Installation uses

@@ -3174,7 +3174,7 @@ class ScoreTests(unittest.TestCase):
         self.write("app.py", source.replace("return actor == owner", "return True"))
         status, result, _ = self.invoke("--worktree")
         self.assertEqual(status, 0)
-        self.assertEqual(result["relevance_version"], 7)
+        self.assertEqual(result["relevance_version"], 8)
         self.assertEqual(result["relevance"], "high")
         self.assertEqual(result["findings"], [])
         self.assertTrue(

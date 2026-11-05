@@ -83,7 +83,7 @@ class SubscoreTests(Invocation, unittest.TestCase):
     def test_one_safe_pattern_does_not_award_a_subscore(self):
         status, result = self.invoke({"app.py": "import ast\nast.literal_eval(value)\n"})
         self.assertEqual(status, 2)
-        self.assertEqual(len(result["subscores"]), 5)
+        self.assertEqual(len(result["subscores"]), 6)
         self.assertTrue(all(row["score"] is None for row in result["subscores"]))
         self.assertEqual(result["overall"]["rating"], "Not assessed")
         self.assertFalse({"score", "observed_score", "grade", "areas", "origin_groups"} & result.keys())
@@ -204,9 +204,9 @@ class SubscoreTests(Invocation, unittest.TestCase):
         text = score.render(result, details=True)
         self.assertNotIn("partial", text)
         self.assertNotIn("(E)", text)
-        self.assertEqual(sum(title in text for title in ("Architecture & isolation", "Identity & access", "Data & processing", "Dependencies & supply chain", "Deployment & operations")), 5)
+        self.assertEqual(sum(title in text for title in ("Architecture & isolation", "Identity & access", "Data & processing", "Dependencies & supply chain", "Deployment & operations", "AI & agents")), 6)
         self.assertIn("59/100 (Bad)", text)
-        self.assertEqual(text.count("░"), 44)
+        self.assertEqual(text.count("░"), 54)
 
     def test_compact_output_never_promotes_partial_positive_evidence_to_an_overall_score(self):
         for files in ({"README.md": "Example\n"}, {"app.py": "ast.literal_eval(value)\ncursor.execute('SELECT 1')\n"}):

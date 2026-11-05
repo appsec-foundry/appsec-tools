@@ -1,4 +1,4 @@
-"""Five evidence-qualified subscores; legacy scoring is deliberately separate."""
+"""Evidence-qualified area subscores; legacy scoring is deliberately separate."""
 
 import ast
 from collections import defaultdict
@@ -35,8 +35,13 @@ def validate_policy():
         raise ValueError("Invalid subscore rating bands")
     if type(CONFIG["minimum_positive_criteria"]) is not int or CONFIG["minimum_positive_criteria"] < 2:
         raise ValueError("Positive ratings need independent control evidence")
-    if [d["id"] for d in CONFIG["domains"]] != ["architecture", "identity", "data", "dependencies", "deployment"]:
+    if [d["id"] for d in CONFIG["domains"]] != ["architecture", "identity", "data", "dependencies", "deployment", "ai"]:
         raise ValueError("Invalid subscore domains")
+    if any(type(d.get("optional", False)) is not bool for d in CONFIG["domains"]):
+        raise ValueError("A domain's optional flag must be true or false")
+    for owner, owned in CONFIG.get("location_owners", {}).items():
+        if owner not in RULES or any(rule not in RULES for rule in owned):
+            raise ValueError("Location owners must name catalog rules")
     if CONFIG["caps"]["high"] >= bands[3][0] or CONFIG["caps"]["critical"] >= bands[4][0]:
         raise ValueError("Serious weaknesses must limit the verdict")
 
@@ -137,10 +142,22 @@ def assess(result, files, budget):
     boundary_locations = {(row["file"], row["line"]): row for row in boundaries if row["status"] != "unclear"}
     result["coverage"]["design_checks"] = [] if subset else ["DESIGN-CONTAINER-ISOLATION", "DESIGN-DATA-BOUNDARY"]
     design_paths = {r["file"] for r in design}
+    # A specific finding owns generic observations at its exact location, e.g.
+    # model output reaching eval() owns the unresolved JS-EVAL candidate there.
+    owners, related = {}, defaultdict(list)
+    for owner, owned in CONFIG.get("location_owners", {}).items():
+        for finding in result["findings"]:
+            if finding["rule"] == owner:
+                for rule in owned:
+                    owners[(rule, finding["file"], finding.get("line", 0))] = owner
     for finding in result["findings"]:
         budget.check()
         domain, criterion = assignment(finding["rule"], finding["area"])
         if domain is None:
+            continue
+        owner = owners.get((finding["rule"], finding["file"], finding.get("line", 0)))
+        if owner:
+            related[(owner, finding["file"], finding.get("line", 0))].append(finding["rule"])
             continue
         if finding["rule"] == "IAC-PRIVILEGED" and finding["file"] in design_paths:
             continue  # The structured design check owns this component evidence.
@@ -180,6 +197,11 @@ def assess(result, files, budget):
     issues = defaultdict(dict)
     for key, (domain, row) in shared.items():
         issues[domain][key] = row
+    for (owner, path, line), rules in related.items():
+        domain, criterion = assignment(owner, RULES[owner]["area"])
+        row = issues[domain].get((criterion, path, line))
+        if row:
+            row["rules"] += [rule for rule in sorted(set(rules)) if rule not in row["rules"]]
     for check in result["checks"]:
         if check["rule"] in {"JS-SQL", "PY-SQL"} and check.get("locations"):
             remaining = [item for item in check["locations"] if (check["file"], item["line"]) not in boundary_locations]
@@ -256,6 +278,20 @@ def assess(result, files, budget):
     subscores = []
     for domain in CONFIG["domains"]:
         name = domain["id"]
+        # An optional area applies only where its subject is recognized; partial
+        # processing or check selection cannot establish its absence.
+        if domain.get("optional") and not (
+            issues[name] or incomplete or subset or global_unknown
+            or any(c["area"] in domain["areas"] and c["status"] != "not_applicable" for c in result["checks"])
+        ):
+            subscores.append({
+                "id": name, "title": domain["title"], "applicable": False, "score": None,
+                "rating": "Not applicable", "reason": "No AI integration or agent configuration was recognized.",
+                "coverage": "not applicable", "controls": [], "gaps": [], "breakdown": [],
+                "severity_cap": 100, "independent_weaknesses": 0,
+                "limitations": list(domain.get("limitations", [])),
+            })
+            continue
         if incomplete:
             gaps[name].add("Required source processing did not complete")
         if subset:
@@ -278,7 +314,7 @@ def assess(result, files, budget):
         else:
             reason = "Insufficient evidence to assess this area."
         subscores.append({
-            "id": name, "title": domain["title"], "score": value if assessable else None,
+            "id": name, "title": domain["title"], "applicable": True, "score": value if assessable else None,
             "rating": rating(value) if assessable else "Not assessed", "reason": reason,
             "coverage": "limited" if gaps[name] else "assessed static criteria",
             "controls": sorted(observed[name]), "gaps": sorted(gaps[name]),
@@ -286,7 +322,7 @@ def assess(result, files, budget):
             "limitations": list(domain.get("limitations", [])),
         })
     bad = [s for s in subscores if s["score"] is not None and s["score"] < CONFIG["ratings"][3][0]]
-    complete_basis = all(s["score"] is not None and not s["gaps"] for s in subscores)
+    complete_basis = all(s["score"] is not None and not s["gaps"] for s in subscores if s["applicable"])
     rated = bad or (subscores if complete_basis else [])
     if rated:
         worst = min(rated, key=lambda s: s["score"])
@@ -297,10 +333,10 @@ def assess(result, files, budget):
     for key in ("score", "grade", "observed_score", "areas", "origin_groups"):
         result.pop(key, None)
     result.update(analysis="security-assessment", scoring_version=CONFIG["version"],
-                  scoring_policy="five-subscores", subscores=subscores, overall=overall,
+                  scoring_policy="area-subscores", subscores=subscores, overall=overall,
                   review_hints=hints, design_evidence=design)
     result["boundary_evidence"] = boundaries
-    result["comparability"].update(scoring_version=CONFIG["version"], scoring_policy="five-subscores")
+    result["comparability"].update(scoring_version=CONFIG["version"], scoring_policy="area-subscores")
     result["verdict"] = "incomplete" if incomplete else "assessed" if complete_basis else "limited"
     return result
 
@@ -358,10 +394,13 @@ def render(result, details=False, style=None):
         if len(ranked) > 3:
             hidden = sum(item["deduction"] for _, items in ranked[3:] for item in items)
             lines += note(style, f"+{len(ranked) - 3} more finding types (-{hidden:.1f} points).")
-        if row["score"] is None:
+        if not row["applicable"]:
+            lines += note(style, row["reason"])
+        elif row["score"] is None:
             reason = {
                 "architecture": "No sufficient evidence from the supported data-access and isolation checks.",
                 "identity": "Access permissions need manual review.",
+                "ai": "Needs two independent AI controls, such as validated model output and an enabled agent sandbox.",
             }.get(row["id"], "Not enough evidence to rate this area.")
             lines += note(style, reason)
         if row["id"] == "identity":

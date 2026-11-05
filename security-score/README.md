@@ -2,9 +2,10 @@
 
 Reports a repository security score and plain-language rating in one line, such
 as `59/100 (Bad)`. `--details` shows a colored overview with bars, grouped findings,
-evidence coverage and the tool version. Its five areas are Architecture & isolation,
-Identity & access, Data & processing, Dependencies & supply chain, and Deployment
-& operations. Insufficient evidence leaves an area or the overall result Not assessed.
+evidence coverage and the tool version. Its areas are Architecture & isolation,
+Identity & access, Data & processing, Dependencies & supply chain, Deployment
+& operations, and AI & agents. Insufficient evidence leaves an area or the overall
+result Not assessed; AI & agents is Not applicable when no AI use is recognized.
 
 It reads selected source and configuration with fixed rules, without model calls
 or executing the target. The [scoring reference](references/subscores.md) explains
@@ -44,13 +45,13 @@ to retain the previous single-score JSON/YAML schema.
 three grouped finding types per area, with point deductions, readable dependency
 check outcomes and one coverage summary.
 JSON/YAML retain every occurrence, deduction and gap. The screenshot below shows
-the earlier legacy layout; the default details use five areas with the same styling.
+the earlier legacy layout; the default details use the six areas with the same styling.
 
 <a href="docs/details-juice-shop.png">
   <img src="docs/details-juice-shop-crop.png" alt="Excerpt of security-score --details on Juice Shop: repository overview, then the score and findings for the Repository and Authentication topics">
 </a>
 
-## Five-subscore assessment
+## Subscore assessment
 
 ```sh
 security-score /path/to/repository
@@ -87,6 +88,30 @@ evidence. Independent declared container-isolation and privilege controls can
 establish a positive static Architecture score. Wider manual architecture review
 is a separate limitation and no longer blocks these supported criteria. Identity
 still requires wider resource-authorization evidence for a favorable rating. See [criteria and examples](references/subscores.md).
+
+AI & agents follows model output in Python and JavaScript/TypeScript files that
+import an AI SDK into code, shell, SQL and HTML sinks and checks whether parsed
+structured output is schema-validated. It also reads committed MCP and agent
+configuration (`.mcp.json`, `mcp.json`, `.claude/settings*.json`,
+`.gemini/settings.json`) for literal credentials, unpinned or unencrypted MCP
+servers, bypassed confirmations, broad permission rules and missing sandboxes:
+
+```console
+$ security-score /path/to/ai-app --details
+...
+AI & agents                    0/100  ░░░░░░░░░░  Very bad
+  HIGH      Committed permission rule pre-approves shell or unrestricted writes (-41.0 points)
+            AI-AGENT-PERMISSIONS · .claude/settings.json:1
+  HIGH      Remote MCP server uses an unencrypted connection (-41.0 points)
+            AI-MCP-TRANSPORT · .mcp.json:4
+  HIGH      Model output reaches code, shell or SQL execution (-41.0 points)
+            AI-OUTPUT-EXEC, JS-EVAL · src/chat.js:8
+  +4 more finding types (-77.0 points).
+```
+
+The overview lists recognized AI SDKs, which earn no points. Model-chosen tool
+arguments, URLs and file paths are not yet followed; see the
+[AI & agents criteria](references/subscores.md#ai--agents).
 
 ## Usage
 

@@ -1031,8 +1031,8 @@ def run(options):
         try:
             assess(result, after, budget)
         except SourceError:
-            # No legacy number may escape as a successful five-subscore result.
-            raise SourceError("The five-subscore assessment exceeded its processing budget.") from None
+            # No legacy number may escape as a successful subscore result.
+            raise SourceError("The subscore assessment exceeded its processing budget.") from None
         return result, 1 if result["verdict"] == "incomplete" else 0 if result["verdict"] == "assessed" else 2
     return result, (0 if complete else 1) if change else {
         "scored": 0,

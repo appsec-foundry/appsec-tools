@@ -1506,12 +1506,19 @@
       "area": "secrets",
       "severity": "high",
       "title": "Credential in a recognized format",
-      "criteria": "Recognize prefixed AWS, GitHub, GitLab, Slack, npm, Stripe and Anthropic credentials and PEM private keys with key material. Generic high-entropy strings, documentation samples and repeated placeholder characters do not match. Whether a credential is live is not established, and output never contains its value.",
+      "criteria": "Recognize prefixed AWS, GitHub, GitLab, Slack, npm, Stripe, Anthropic, OpenAI and Hugging Face credentials and PEM private keys with key material. Generic high-entropy strings, documentation samples and repeated placeholder characters do not match. Whether a credential is live is not established, and output never contains its value.",
       "next_action": "Revoke the credential, remove it from the history, and load the value from a secret store.",
       "examples": [
         {
           "file": "config.py",
           "source": "TOKEN = 'ghp_0123456789abcdefghijABCDEFGHIJ012345'\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "llm.py",
+          "source": "OPENAI_API_KEY = 'sk-proj-0123456789abcdefghijABCDEFGHIJ0123456789klmnop'\n",
           "outcome": "violated",
           "expected_score": 59,
           "expected_grade": "E"
@@ -2836,11 +2843,357 @@
           "expected_grade": "A"
         }
       ]
+    },
+    {
+      "id": "AI-INTEGRATION",
+      "positive_only": true,
+      "kind": "ai-integration",
+      "area": "ai",
+      "severity": "low",
+      "title": "AI SDK, model API or agent configuration recognized",
+      "criteria": "Inventory only. Recognize imports of LLM, agent and MCP SDKs in Python and JavaScript/TypeScript, their declarations in package.json, requirements files, pyproject.toml, Maven and Gradle builds, and parseable committed agent or MCP configuration. It makes the AI area applicable and never earns score credit.",
+      "next_action": "Review how model output, tools and agent permissions are constrained.",
+      "examples": [
+        {
+          "file": "assistant.py",
+          "source": "from openai import OpenAI\nclient = OpenAI()\n",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "package.json",
+          "source": "{\"dependencies\": {\"@anthropic-ai/sdk\": \"^0.30.0\"}}\n",
+          "outcome": "satisfied",
+          "expected_score": null,
+          "expected_grade": null
+        },
+        {
+          "file": "client.js",
+          "source": "// import OpenAI from 'openai';\nimport axios from 'axios';\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "AI-OUTPUT-EXEC",
+      "kind": "ai-output",
+      "area": "ai",
+      "severity": "high",
+      "title": "Model output reaches code, shell or SQL execution",
+      "criteria": "In a file that imports an AI SDK, follow values assigned from recognized model calls within one scope. Code evaluation, shell commands or SQL text built from them violate this check; model output passed only as a bound SQL parameter satisfies it. Flows across files are not followed.",
+      "next_action": "Treat model output as untrusted data: map it to fixed operations and bind it as a parameter.",
+      "examples": [
+        {
+          "file": "agent.py",
+          "source": "from openai import OpenAI\nclient = OpenAI()\nreply = client.chat.completions.create(model=MODEL, messages=messages)\ncode = reply.choices[0].message.content\neval(code)\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "tags.js",
+          "source": "import OpenAI from 'openai';\nconst reply = await client.chat.completions.create({ model, messages });\nconst label = reply.choices[0].message.content;\nawait pool.query('SELECT * FROM tags WHERE name = $1', [label]);\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "answer.py",
+          "source": "from openai import OpenAI\nreply = OpenAI().chat.completions.create(model=MODEL, messages=messages)\nprint(reply.choices[0].message.content)\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "AI-OUTPUT-HTML",
+      "kind": "ai-output",
+      "area": "ai",
+      "severity": "high",
+      "title": "Model output rendered as HTML",
+      "criteria": "In a file that imports an AI SDK, model output assigned to innerHTML, outerHTML, insertAdjacentHTML, document.write, dangerouslySetInnerHTML, bypassSecurityTrustHtml, Markup or mark_safe violates this check. Every model value in the sink must pass through a recognized sanitizer such as DOMPurify.sanitize; text sinks and escaping satisfy it.",
+      "next_action": "Render model output as text, or sanitize it before it reaches an HTML sink.",
+      "examples": [
+        {
+          "file": "chat.js",
+          "source": "import OpenAI from 'openai';\nconst reply = await client.chat.completions.create({ model, messages });\nconst answer = reply.choices[0].message.content;\noutput.innerHTML = answer;\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": "chat.js",
+          "source": "import OpenAI from 'openai';\nconst reply = await client.chat.completions.create({ model, messages });\nconst answer = reply.choices[0].message.content;\noutput.innerHTML = DOMPurify.sanitize(answer);\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "chat.js",
+          "source": "import OpenAI from 'openai';\noutput.innerHTML = '<p>Loading</p>';\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "AI-OUTPUT-PARSE",
+      "kind": "ai-output",
+      "area": "ai",
+      "severity": "medium",
+      "title": "Structured model output used without schema validation",
+      "criteria": "In a file that imports an AI SDK, JSON parsed from model output must reach a recognized schema validator such as Pydantic, zod, ajv or jsonschema in the same scope. SDK calls that validate against a supplied schema satisfy this check; parsed output returned or passed on unvalidated cannot be resolved locally.",
+      "next_action": "Validate structured model output against a strict schema before acting on it.",
+      "examples": [
+        {
+          "file": "planner.py",
+          "source": "import json\nfrom anthropic import Anthropic\nmessage = Anthropic().messages.create(model=MODEL, max_tokens=512, messages=messages)\nplan = json.loads(message.content[0].text)\nrun(plan['action'])\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "planner.py",
+          "source": "from anthropic import Anthropic\nmessage = Anthropic().messages.create(model=MODEL, max_tokens=512, messages=messages)\nplan = Plan.model_validate_json(message.content[0].text)\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "planner.py",
+          "source": "import json\nfrom anthropic import Anthropic\nsettings = json.loads(raw_settings)\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "AI-MCP-CREDENTIAL",
+      "kind": "agent-config",
+      "area": "ai",
+      "severity": "high",
+      "title": "MCP server configuration contains a literal credential",
+      "criteria": "In committed MCP configuration, a credential-named env, header or argument value that is not an environment reference violates this check; a reference such as ${TOKEN} satisfies it. Placeholders, short values, numbers, paths and URLs are not assessed, and output never contains the value.",
+      "next_action": "Revoke the credential and reference it from the environment or a secret store.",
+      "examples": [
+        {
+          "file": ".mcp.json",
+          "source": "{\n  \"mcpServers\": {\n    \"tracker\": {\n      \"command\": \"node\",\n      \"args\": [\"server.js\"],\n      \"env\": {\"TRACKER_TOKEN\": \"trk_93hf72kd02ld83jfq\"}\n    }\n  }\n}\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": ".mcp.json",
+          "source": "{\n  \"mcpServers\": {\n    \"tracker\": {\n      \"command\": \"node\",\n      \"args\": [\"server.js\"],\n      \"env\": {\"TRACKER_TOKEN\": \"${TRACKER_TOKEN}\"}\n    }\n  }\n}\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": ".mcp.json",
+          "source": "{\"mcpServers\": {\"tracker\": {\"command\": \"node\", \"env\": {\"LOG_LEVEL\": \"debug\"}}}}\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "AI-MCP-SOURCE",
+      "kind": "agent-config",
+      "area": "ai",
+      "severity": "medium",
+      "title": "MCP server package is fetched without a fixed version",
+      "criteria": "An MCP server started through npx, bunx, pnpm dlx, yarn dlx, uvx or pipx violates this check unless the package names an exact version or a Git commit. Local commands and container images are not assessed.",
+      "next_action": "Pin the MCP server package to an exact, reviewed version.",
+      "examples": [
+        {
+          "file": ".mcp.json",
+          "source": "{\"mcpServers\": {\"github\": {\"command\": \"npx\", \"args\": [\"-y\", \"@modelcontextprotocol/server-github\"]}}}\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": ".mcp.json",
+          "source": "{\"mcpServers\": {\"github\": {\"command\": \"npx\", \"args\": [\"-y\", \"@modelcontextprotocol/server-github@2025.4.8\"]}}}\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": ".mcp.json",
+          "source": "{\"mcpServers\": {\"local\": {\"command\": \"node\", \"args\": [\"build/index.js\"]}}}\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "AI-MCP-TRANSPORT",
+      "kind": "agent-config",
+      "area": "ai",
+      "severity": "high",
+      "title": "Remote MCP server uses an unencrypted connection",
+      "criteria": "A remote MCP server URL with http or ws violates this check and https or wss satisfies it. Loopback addresses are not assessed, and URLs built from variables remain unresolved.",
+      "next_action": "Connect to remote MCP servers over HTTPS only.",
+      "examples": [
+        {
+          "file": ".cursor/mcp.json",
+          "source": "{\"mcpServers\": {\"docs\": {\"url\": \"http://mcp.internal.test/mcp\"}}}\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": ".cursor/mcp.json",
+          "source": "{\"mcpServers\": {\"docs\": {\"url\": \"https://mcp.internal.test/mcp\"}}}\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": ".cursor/mcp.json",
+          "source": "{\"mcpServers\": {\"docs\": {\"url\": \"http://localhost:3000/mcp\"}}}\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "AI-AGENT-BYPASS",
+      "kind": "agent-config",
+      "area": "ai",
+      "severity": "high",
+      "title": "Agent configuration runs tools without confirmation",
+      "criteria": "Committed Claude Code bypassPermissions mode, Gemini CLI autoAccept, and MCP servers marked trust: true violate this check. Claude Code disableBypassPermissionsMode set to disable satisfies it.",
+      "next_action": "Keep tool confirmation enabled and disable the bypass mode in shared settings.",
+      "examples": [
+        {
+          "file": ".claude/settings.json",
+          "source": "{\"permissions\": {\"defaultMode\": \"bypassPermissions\"}}\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": ".claude/settings.json",
+          "source": "{\"permissions\": {\"disableBypassPermissionsMode\": \"disable\"}}\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": ".claude/settings.json",
+          "source": "{\"permissions\": {\"allow\": [\"Read\"]}}\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "AI-AGENT-AUTO-APPROVE",
+      "kind": "agent-config",
+      "area": "ai",
+      "severity": "medium",
+      "title": "Agent configuration pre-approves MCP servers or tools",
+      "criteria": "Committed enableAllProjectMcpServers: true and non-empty autoApprove or alwaysAllow tool lists on enabled MCP servers violate this check. Explicitly named approved servers are not assessed.",
+      "next_action": "Approve MCP servers and tools individually after review.",
+      "examples": [
+        {
+          "file": ".claude/settings.json",
+          "source": "{\"enableAllProjectMcpServers\": true}\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": ".kiro/settings/mcp.json",
+          "source": "{\"mcpServers\": {\"files\": {\"command\": \"node\", \"args\": [\"server.js\"], \"autoApprove\": [\"write_file\"]}}}\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": ".claude/settings.json",
+          "source": "{\"enabledMcpjsonServers\": [\"docs\"]}\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "AI-AGENT-PERMISSIONS",
+      "kind": "agent-config",
+      "area": "ai",
+      "severity": "high",
+      "title": "Committed permission rule pre-approves shell or unrestricted writes",
+      "criteria": "Claude Code allow rules for unrestricted Bash, wildcard rules for high-risk commands such as curl, rm or sudo, and Write or Edit rules for any path or credential paths violate this check. Scoped commands are not assessed.",
+      "next_action": "Allow only the specific commands and paths the agent needs.",
+      "examples": [
+        {
+          "file": ".claude/settings.json",
+          "source": "{\"permissions\": {\"allow\": [\"Bash(*)\"]}}\n",
+          "outcome": "violated",
+          "expected_score": 59,
+          "expected_grade": "E"
+        },
+        {
+          "file": ".claude/settings.json",
+          "source": "{\"permissions\": {\"allow\": [\"Bash(npm test:*)\", \"Read\"]}}\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "AI-AGENT-SANDBOX",
+      "kind": "agent-config",
+      "area": "ai",
+      "severity": "medium",
+      "title": "Agent with pre-approved tools runs without a sandbox",
+      "criteria": "Claude Code or Gemini CLI settings that pre-approve more than read access without enabling the sandbox violate this check; an enabled sandbox satisfies it. Settings that grant read access only are not assessed.",
+      "next_action": "Enable the agent sandbox wherever tools run without confirmation.",
+      "examples": [
+        {
+          "file": ".claude/settings.json",
+          "source": "{\"permissions\": {\"allow\": [\"Bash(npm test:*)\"]}}\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": ".claude/settings.json",
+          "source": "{\"sandbox\": {\"enabled\": true}, \"permissions\": {\"allow\": [\"Bash(npm test:*)\"]}}\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": ".claude/settings.json",
+          "source": "{\"permissions\": {\"allow\": [\"Read(./src/**)\"]}}\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
     }
   ],
-  "rule_version": 12,
+  "rule_version": 13,
   "change_relevance": {
-    "version": 7,
+    "version": 8,
     "documentation_extensions": [
       ".md",
       ".rst",
@@ -2854,6 +3207,13 @@
         "aspect": "agent authority",
         "pattern": "(?i)(^|/)(AGENTS|SKILL|CLAUDE|GEMINI)\\.md$|(^|/)(agents|prompts)/",
         "reason": "Agent instructions or prompts changed; review action authority and trusted context."
+      },
+      {
+        "id": "REL-AGENT-CONFIG",
+        "level": "high",
+        "aspect": "agent authority",
+        "pattern": "(?i)(^|/)(\\.?mcp\\.json|mcp_config\\.json|mcp_settings\\.json|cline_mcp_settings\\.json|claude_desktop_config\\.json)$|(^|/)\\.(claude|gemini|cursor|kiro|codex|windsurf)/",
+        "reason": "Agent or MCP configuration changed; review which servers, tools and permissions an assistant receives."
       },
       {
         "id": "REL-DEPENDENCIES",
@@ -3028,6 +3388,12 @@
         "level": "high",
         "aspect": "infrastructure",
         "reason": "A recognized security operation or control is in the affected change context; inspect its behavior even when no weakness is detected."
+      },
+      "ai": {
+        "id": "REL-CONTROL-AI",
+        "level": "high",
+        "aspect": "AI and agents",
+        "reason": "A recognized security operation or control is in the affected change context; inspect its behavior even when no weakness is detected."
       }
     },
     "documentation_rule": {
@@ -3189,11 +3555,17 @@
         "before": "type: ClusterIP\n",
         "after": "type: LoadBalancer\n",
         "expected_relevance": "high"
+      },
+      {
+        "file": ".mcp.json",
+        "before": "{\"mcpServers\": {}}\n",
+        "after": "{\"mcpServers\": {\"docs\": {\"command\": \"node\", \"args\": [\"server.js\"]}}}\n",
+        "expected_relevance": "high"
       }
     ]
   },
   "subscore_policy": {
-    "version": 2,
+    "version": 3,
     "deductions": {
       "critical": 61,
       "high": 41,
@@ -3302,9 +3674,34 @@
         ],
         "criteria": {},
         "required": []
+      },
+      {
+        "id": "ai",
+        "title": "AI & agents",
+        "areas": [
+          "ai"
+        ],
+        "criteria": {},
+        "required": [],
+        "optional": true,
+        "limitations": [
+          "Model-output flows are followed within one file and scope for Python and JavaScript/TypeScript; flows across files, callbacks or frameworks are not established.",
+          "Prompt-injection resistance, tool authorization and the trust of retrieved content require design review.",
+          "Only committed agent and MCP configuration in JSON is read; user-level settings and instruction files are not."
+        ]
       }
     ],
     "families": {
+      "AI-OUTPUT-EXEC": "model-output-execution",
+      "AI-OUTPUT-HTML": "model-output-encoding",
+      "AI-OUTPUT-PARSE": "model-output-validation",
+      "AI-MCP-CREDENTIAL": "mcp-credential",
+      "AI-MCP-SOURCE": "mcp-server-pin",
+      "AI-MCP-TRANSPORT": "mcp-transport",
+      "AI-AGENT-BYPASS": "agent-approval",
+      "AI-AGENT-AUTO-APPROVE": "agent-approval",
+      "AI-AGENT-PERMISSIONS": "agent-permissions",
+      "AI-AGENT-SANDBOX": "agent-sandbox",
       "PY-TLS": "tls-validation",
       "PY-TLS-CONTEXT": "tls-validation",
       "JS-TLS": "tls-validation",
@@ -3351,6 +3748,22 @@
     ],
     "owners": {
       "password-or-crypto-hash": "PASSWORD-HASH"
+    },
+    "location_owners": {
+      "AI-OUTPUT-EXEC": [
+        "PY-EXEC",
+        "JS-EVAL",
+        "PY-SHELL",
+        "JS-SHELL",
+        "PY-SQL",
+        "JS-SQL"
+      ],
+      "AI-OUTPUT-HTML": [
+        "JS-HTML"
+      ],
+      "AI-MCP-CREDENTIAL": [
+        "SECRET-TOKEN"
+      ]
     }
   }
 }

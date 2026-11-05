@@ -138,6 +138,7 @@ SUBCATEGORIES = (
         "Deployment & transport",
         ("hardening", "transport", "infrastructure"),
     ),
+    ("ai", "AI & agents", ("ai",)),
 )
 
 POSITIVE_REASONS = {
@@ -833,6 +834,7 @@ def overview_section(style, overview, *, concise=False):
             ("Languages", counted(overview["languages"], "language", "files")),
             ("Files", f"{overview['files']['read']:,} read, {overview['files']['lines']:,} lines" if concise else file_row(overview["files"])),
             ("Frameworks", names(overview["frameworks"])),
+            ("AI SDKs", names(overview.get("ai_sdks", []))),
             ("Test tools", names(overview["test_tools"])),
             ("Runtimes", runtimes),
             ("Package tools", names(overview["package_tools"])),

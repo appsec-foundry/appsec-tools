@@ -778,6 +778,9 @@ SECRET_FORMATS = re.compile(
     r"|\bnpm_[A-Za-z0-9]{36}\b"
     r"|\bsk_live_[0-9a-zA-Z]{24,}\b"
     r"|\bsk-ant-[A-Za-z0-9_-]{32,}"
+    r"|\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{40,}"
+    r"|\bsk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}\b"
+    r"|\bhf_[A-Za-z0-9]{34,}\b"
 )
 PRIVATE_KEY = re.compile(
     r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----(?:\\r|\\n|\s)+[A-Za-z0-9+/]{40,}"

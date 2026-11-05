@@ -1,6 +1,6 @@
 # How Security Score works
 
-For the default repository assessment, see [Five security subscores](subscores.md). The repository arithmetic below describes the legacy interface selected with `--legacy-score`.
+For the default repository assessment, see [Security subscores](subscores.md). The repository arithmetic below describes the legacy interface selected with `--legacy-score`.
 
 Security Score answers two different questions:
 
@@ -209,3 +209,5 @@ Rule version 7 and relevance version 6 add WEB-HEADERS. It never deducts points.
 Scoring version 6, rule version 8 and relevance version 7 count at most three findings per rule and stop positive-only rules from making an area or a repository assessable; until then, WEB-HEADERS alone could earn a repository 100 (A). They add the Secrets topic, GitLab CI, CI download and install checks, lockfile and manifest source checks, committed binaries, password hashing, cookie, CORS and session settings, Terraform and further positive evidence. IAC-USER returns as a positive-only rule for the final stage. GitHub rulesets now establish required reviews, status checks and signatures. Scores from earlier versions are not comparable: repeated findings deduct less, and repositories can receive findings they did not have before.
 
 Rule version 9 adds DEP-LOCK, counts an exact Python requirement as pinned where it was unclear before, and recognizes more Renovate configuration paths. Repositories without a lockfile can lose points, and a repository whose only unclear checks were exact requirements can now receive a grade. A provider's sign-in URL in source code now shows SSO in the profile.
+
+Rule version 13, relevance version 8 and subscore policy version 3 add the `ai` area with the AI & agents rules, OpenAI and Hugging Face token formats in SECRET-TOKEN, and the `ai` check group. Changes to MCP or agent configuration (REL-AGENT-CONFIG) and in the affected context of AI checks are high relevance. Repositories using AI SDKs or committing agent configuration can receive new findings; others show the area as Not applicable. `scoring_policy` is now `area-subscores`.

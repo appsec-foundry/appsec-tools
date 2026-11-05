@@ -87,6 +87,9 @@ def validate_policy():
         "tf-iam",
         "tf-module",
         "security-controls",
+        "ai-integration",
+        "ai-output",
+        "agent-config",
     }
     catalog = POLICY["rules"]  # Disabled rules still reserve their IDs.
     if (
@@ -181,6 +184,7 @@ def check_groups():
         "cryptography": {"cryptography"},
         "deployment": {"hardening", "infrastructure"},
         "repository": {"repository-host"},
+        "ai": {"ai"},
     }
     return {
         "all": [rule["id"] for rule in RULES],
@@ -238,6 +242,7 @@ IMPLEMENTATION_HASH = hashlib.sha256(
             "score_infrastructure.py",
             "score_overview.py",
             "score_relevance.py",
+            "score_ai.py",
             "score.py",
         )
     )
@@ -977,6 +982,21 @@ def applies(rule, path):
         return suffix == ".py"
     if kind.startswith("tf-"):
         return suffix == ".tf"
+    if kind in {"ai-integration", "ai-output", "agent-config"}:
+        from score_ai import agent_config
+
+        if agent_config(path):
+            return kind != "ai-output"
+        if kind == "agent-config":
+            return False
+        name = Path(path).name
+        return suffix in JS_EXTENSIONS | {".py"} or (
+            kind == "ai-integration"
+            and (
+                name in {"package.json", "pyproject.toml", "pom.xml"} | GRADLE_BUILD_FILES
+                or (name.startswith("requirements") and suffix == ".txt")
+            )
+        )
     return container_build_file(Path(path).name)
 
 
@@ -1088,6 +1108,7 @@ def scan_source(
         parse_reason = f"JavaScript lexer limitation: {error.msg}"
     code_lines = code.splitlines()
     controls = None
+    ai = None
     control_profile = {}
     signatures = {}
     signatures_ready = False
@@ -1125,6 +1146,12 @@ def scan_source(
 
                 controls = inspect_controls(path, text, code, control_profile)
             observed = controls.get(rule["id"], [])
+        elif rule["kind"] in {"ai-integration", "ai-output", "agent-config"}:
+            if ai is None:
+                from score_ai import inspect as inspect_ai
+
+                ai = inspect_ai(path, text, code, tree)
+            observed = ai.get(rule["id"], [])
         elif rule["kind"].startswith("py-"):
             observed = python_observations(rule, text, tree)[0]
         elif rule["kind"] in {

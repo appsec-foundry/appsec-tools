@@ -319,11 +319,12 @@ class JuiceShopE2ETests(unittest.TestCase):
         self.assertRegex(result.stdout, r"\A(?:100|[1-9]?\d)\n\Z")
         self.assertEqual(result.stderr, "")
 
-    def test_five_subscores_and_endpoint_profiles_from_installed_cli(self):
-        result = self.run_mode("five-subscores", "--details", "--json")
+    def test_area_subscores_and_endpoint_profiles_from_installed_cli(self):
+        result = self.run_mode("area-subscores", "--details", "--json")
         data = json.loads(result.stdout)
         self.assertEqual(data["analysis"], "security-assessment")
-        self.assertEqual(len(data["subscores"]), 5)
+        self.assertEqual([row["id"] for row in data["subscores"]],
+                         ["architecture", "identity", "data", "dependencies", "deployment", "ai"])
         self.assertFalse({"score", "grade", "observed_score"} & data.keys())
         self.assertTrue(data["findings"])
         self.assertTrue(data["architecture"]["compose"]["services"])
@@ -343,11 +344,11 @@ class JuiceShopE2ETests(unittest.TestCase):
         self.assertRegex(result.stdout, r"\A(?:100|[1-9]?\d)/100 \((?:Bad|Very bad)\)\n\Z")
         self.assertIn("Reading selected sources...", result.stderr)
 
-    def test_details_show_five_subscores_bars_grouped_findings_and_version(self):
+    def test_details_show_area_subscores_bars_grouped_findings_and_version(self):
         result = self.run_mode("details", "--details")
         self.assertRegex(result.stdout, r"\Asecurity-score \S+\n\nSecurity score . \d+/100 \((?:Bad|Very bad)\)")
         for area in ("Architecture & isolation", "Identity & access", "Data & processing",
-                     "Dependencies & supply chain", "Deployment & operations"):
+                     "Dependencies & supply chain", "Deployment & operations", "AI & agents"):
             self.assertRegex(result.stdout, rf"(?m)^{re.escape(area)} +(?:—|\d+/100) +[█░]{{10}} +")
         self.assertIn("PASSWORD-HASH", result.stdout)
         self.assertRegex(result.stdout, r"(?m)^Architecture & isolation +\d+/100 +")
