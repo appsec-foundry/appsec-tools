@@ -20,6 +20,7 @@ from score_infrastructure import document, logical_lines
 
 
 INTEGRATION = "AI-INTEGRATION"
+CLIENT = "AI-CLIENT-MESSAGES"
 EXEC = "AI-OUTPUT-EXEC"
 HTML = "AI-OUTPUT-HTML"
 PARSE = "AI-OUTPUT-PARSE"
@@ -110,14 +111,70 @@ def js_module(specifier):
     return package_name("npm", specifier) is not None or package_name("npm", root) is not None
 
 
+def in_code(text, code, position):
+    """Whether raw text at `position` is code; comments and strings are blank in `code`."""
+    return len(code) != len(text) or code[position] == text[position]
+
+
 def js_imports(text, code):
-    """Lines importing an AI SDK; comments are blank in `code`, so they do not count."""
+    """Lines importing an AI SDK outside comments."""
     lines = set()
     for match in JS_IMPORT.finditer(text):
         start = match.start() + len(match[0]) - len(match[0].lstrip())
-        if js_module(match[2]) and (len(code) != len(text) or code[start] == text[start]):
+        if js_module(match[2]) and in_code(text, code, start):
             lines.add(line_at(text, match.start()))
     return sorted(lines)
+
+
+def call_label(value):
+    label = re.sub(r"\s+", "", value).strip(".(")
+    return re.sub(r"^new(?=[A-Z])", "", label)
+
+
+def js_inventory(text, code):
+    """Imports, model calls and model-callable tools of a file that imports an AI SDK."""
+    imports = js_imports(text, code)
+    if not imports:
+        return []
+    rows = [(line, "satisfied", "import") for line in imports]
+    rows += [(line_at(code, m.start()), "satisfied", f"model call: {call_label(m[0])}") for m in JS_MODEL_CALL.finditer(code)]
+    rows += [(line_at(code, m.start()), "satisfied", f"tool: {m[1]}") for m in JS_TOOL.finditer(code)]
+    for match in JS_REGISTERED_TOOL.finditer(text):
+        if in_code(text, code, match.start()):
+            rows.append((line_at(text, match.start()), "satisfied", f"tool: {match[2]}"))
+    for match in JS_FUNCTION_TOOL.finditer(text):
+        name = JS_TOOL_NAME.search(text, match.end(), match.end() + 400)
+        if name and in_code(text, code, match.start()):
+            rows.append((line_at(text, match.start()), "satisfied", f"tool: {name[2]}"))
+    return rows
+
+
+def python_inventory(tree):
+    """Imports, model calls and model-callable tools of a module that imports an AI SDK."""
+    imports = python_imports(tree)
+    if not imports:
+        return []
+    rows = [(line, "satisfied", "import") for line in imports]
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and PY_MODEL_CALL.search(dotted(node.func)):
+            label = ".".join(part for part in dotted(node.func).split(".") if part != "()")
+            rows.append((node.lineno, "satisfied", f"model call: {'.'.join(label.split('.')[-3:])}"))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for decorator in node.decorator_list:
+                target = decorator.func if isinstance(decorator, ast.Call) else decorator
+                if re.search(r"(?:^|\.)tool(?:_plain)?$", dotted(target)):
+                    first = decorator.args[0] if isinstance(decorator, ast.Call) and decorator.args else None
+                    name = first.value if isinstance(first, ast.Constant) and isinstance(first.value, str) else node.name
+                    rows.append((node.lineno, "satisfied", f"tool: {name[:64]}"))
+        elif isinstance(node, ast.Dict):
+            fields = {key.value: value for key, value in zip(node.keys, node.values) if isinstance(key, ast.Constant)}
+            kind, inner = fields.get("type"), fields.get("function")
+            if isinstance(inner, ast.Dict):
+                fields.update({k.value: v for k, v in zip(inner.keys, inner.values) if isinstance(k, ast.Constant)})
+            name = fields.get("name")
+            if isinstance(kind, ast.Constant) and kind.value == "function" and isinstance(name, ast.Constant) and isinstance(name.value, str):
+                rows.append((node.lineno, "satisfied", f"tool: {name.value[:64]}"))
+    return rows
 
 
 def python_imports(tree):
@@ -176,6 +233,20 @@ JS_MODEL_CALL = re.compile(
     r"|\b(?:llm|model|chatModel|chain|agent|agentExecutor|executor|queryEngine|chatEngine)"
     r"\s*\.\s*(?:invoke|call|predict|generate|stream|run|query|chat)\s*\("
 )
+JS_TOOL = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*:\s*tool\s*\(")
+JS_REGISTERED_TOOL = re.compile(r"""\.(?:tool|registerTool)\s*\(\s*(['"])([\w.-]{1,64})\1""")
+JS_FUNCTION_TOOL = re.compile(r"""\btype\s*:\s*(['"])function\1""")
+JS_TOOL_NAME = re.compile(r"""\bname\s*:\s*(['"])([\w.-]{1,64})\1""")
+# Request data that a client controls; the conversation keys carry roles.
+JS_CLIENT_SOURCE = re.compile(
+    r"\b(?:req|request|ctx\s*\.\s*request)\s*(?:\?\.|\.)\s*(?:body|query)\b|\b(?:req|request)\s*\.\s*json\s*\("
+)
+JS_CONVERSATION = re.compile(r"(?<![\w$.'\"])(messages|contents|history)\b\s*(:)?")
+USER_ROLE = re.compile(r"""\brole\s*:\s*(['"`])user\1""")
+DATA_ROLE = re.compile(r"""\brole\s*:(?!\s*['"`])|(?<![\w$.'"`])role\s*[,}]""")
+JS_CONTENT_ONLY = re.compile(r"\bcontent\s*:\s*[\w$.?\[\]\s]{0,200}$")
+JS_MAPPED = re.compile(r"(?:\s*(?:\?\.|\.)\s*[A-Za-z_$][\w$]*){0,10}\s*(?:\?\.|\.)\s*map\s*\(")
+MAX_CALL_LINES, MAX_CALL_CHARS = 80, 8000
 # The SDK validates these results against the schema it is given.
 JS_SCHEMA_CALL = re.compile(r"(?<![\w$.])(?:generateObject|streamObject)\s*\(")
 JS_FORMAT_HELPER = re.compile(r"\bzod(?:ResponseFormat|TextFormat)\s*\(")
@@ -214,7 +285,8 @@ JS_WRAPPED = re.compile(JS_VALIDATOR + r"$")
 
 
 def reference(name):
-    return re.compile(rf"(?<![\w$.]){re.escape(name)}(?![\w$])")
+    """A variable use, including a spread such as ...name, but not a property such as obj.name."""
+    return re.compile(rf"(?:(?<=\.\.\.)|(?<![\w$.])){re.escape(name)}(?![\w$])")
 
 
 def arguments(line, start):
@@ -247,25 +319,74 @@ def js_targets(target):
     return names
 
 
-def js_flows(code, schema_helper):
+def call_region(lines, index, start):
+    """Text of the call opened at lines[index][start:], bounded in lines and characters."""
+    parts, depth, total = [], 0, 0
+    for offset, line in enumerate(lines[index:index + MAX_CALL_LINES]):
+        segment = line[start:] if offset == 0 else line
+        for position, char in enumerate(segment):
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    return "\n".join(parts + [segment[:position]])
+        parts.append(segment)
+        total += len(segment)
+        if total > MAX_CALL_CHARS:
+            break
+    return "\n".join(parts)
+
+
+def js_conversation(value, raw, client):
+    """'violated' when client data supplies whole messages, 'satisfied' when only their content."""
+    refs = [m for name in client for m in reference(name).finditer(value)] + list(JS_CLIENT_SOURCE.finditer(value))
+    if not refs:
+        return None
+    fixed_role = USER_ROLE.search(raw) and not DATA_ROLE.search(raw)
+    for ref in refs:
+        if JS_CONTENT_ONLY.search(value[max(ref.start() - 200, 0):ref.start()]):
+            continue
+        if fixed_role and JS_MAPPED.match(value, ref.end()):
+            continue
+        return "violated"
+    return "satisfied"
+
+
+def js_flows(text, code):
     rows = defaultdict(list)
-    tainted, sanitized, pending = {}, {}, {}
+    schema_helper = JS_FORMAT_HELPER.search(code) is not None
+    lines = code.splitlines()
+    raw_lines = text.splitlines() if len(text) == len(code) else lines
+    tainted, sanitized, pending, client = {}, {}, {}, {}
     depth = 0
 
     def flowing(segment):
         return JS_MODEL_CALL.search(segment) is not None or any(reference(n).search(segment) for n in tainted)
 
     def close(level):
-        for state in (tainted, sanitized):
+        for state in (tainted, sanitized, client):
             for name in [n for n, d in state.items() if d > level]:
                 del state[name]
         for name in [n for n, (_, d) in pending.items() if d > level]:
             rows[PARSE].append((pending.pop(name)[0], "violated"))
 
-    for number, line in enumerate(code.splitlines(), 1):
+    for index, line in enumerate(lines):
+        number = index + 1
         stripped = line.lstrip()
         start_depth = max(depth - (len(stripped) - len(stripped.lstrip("}"))), 0)
         model = JS_MODEL_CALL.search(line)
+        if model:
+            region = call_region(lines, index, model.start())
+            raw = call_region(raw_lines, index, model.start())
+            for match in JS_CONVERSATION.finditer(region):
+                if region[:match.start()].rstrip()[-1:] not in {"{", ","}:
+                    continue
+                value = arguments(region, match.end())[0] if match[2] else match[1]
+                start = match.end() if match[2] else match.start()
+                status = js_conversation(value, raw[start:start + len(value)], client)
+                if status:
+                    rows[CLIENT].append((number + region.count("\n", 0, match.start()), status))
         if model and (JS_SCHEMA_CALL.search(line) or (schema_helper and JS_SDK_PARSE.search(line))):
             rows[PARSE].append((number, "satisfied"))
         for match in JS_EXEC.finditer(line):
@@ -312,10 +433,14 @@ def js_flows(code, schema_helper):
         if assignment:
             declared, target, value = assignment.groups()
             carries = flowing(value)
+            supplied = JS_CLIENT_SOURCE.search(value) is not None or any(reference(n).search(value) for n in client)
             for name in js_targets(target):
-                level = start_depth if declared else tainted.get(name, sanitized.get(name, start_depth))
+                level = start_depth if declared else tainted.get(name, sanitized.get(name, client.get(name, start_depth)))
                 tainted.pop(name, None)
                 sanitized.pop(name, None)
+                client.pop(name, None)
+                if supplied:
+                    client[name] = level
                 if carries and JS_SANITIZER.search(value):
                     sanitized[name] = level
                 elif carries:
@@ -325,6 +450,8 @@ def js_flows(code, schema_helper):
         loop = JS_FOR_OF.search(line)
         if loop and flowing(loop[2]):
             tainted[loop[1]] = start_depth + 1
+        if loop and (JS_CLIENT_SOURCE.search(loop[2]) or any(reference(n).search(loop[2]) for n in client)):
+            client[loop[1]] = start_depth + 1
         depth = max(depth + line.count("{") - line.count("}"), 0)
         close(depth)
     for number, _ in pending.values():
@@ -356,6 +483,27 @@ PY_HTML = {"Markup", "markupsafe.Markup", "mark_safe", "django.utils.safestring.
 PY_SANITIZER = {"escape", "html.escape", "markupsafe.escape", "bleach.clean", "nh3.clean"}
 PY_JSON = {"json.loads", "loads", "orjson.loads", "ujson.loads"}
 PY_VALIDATOR = {"model_validate", "model_validate_json", "parse_obj", "parse_raw", "validate_python", "validate_json", "validate"}
+PY_REQUEST = {
+    f"request.{name}"
+    for name in ("json", "get_json", "form", "args", "values", "data", "POST", "GET", "body", "query_params", "stream")
+}
+PY_ROUTE = re.compile(r"\.(?:get|post|put|patch|delete|route|api_route|websocket)$")
+CONVERSATION_KEYS = {"messages", "contents", "history"}
+
+
+def route_parameters(function):
+    """Parameters a web framework fills from the request; injected dependencies excluded."""
+    if not any(PY_ROUTE.search(dotted(d.func if isinstance(d, ast.Call) else d)) for d in function.decorator_list):
+        return set()
+    arguments_ = function.args
+    positional = arguments_.posonlyargs + arguments_.args
+    defaults = [None] * (len(positional) - len(arguments_.defaults)) + list(arguments_.defaults)
+    pairs = list(zip(positional, defaults)) + list(zip(arguments_.kwonlyargs, arguments_.kw_defaults))
+    return {
+        argument.arg for argument, default in pairs
+        if argument.arg not in {"self", "cls", "request"}
+        and not (isinstance(default, ast.Call) and dotted(default.func).rsplit(".", 1)[-1] in {"Depends", "Security"})
+    }
 
 
 def dotted(node):
@@ -391,8 +539,45 @@ def unwrap(node):
 class PythonFlow:
     """Statement-ordered flow from model calls to sinks within one scope."""
 
-    def __init__(self, rows):
+    def __init__(self, rows, client=()):
         self.rows, self.tainted, self.sanitized, self.pending, self.assigned = rows, set(), set(), {}, set()
+        self.client = set(client)
+
+    def supplied(self, node):
+        return node is not None and any(
+            (isinstance(item, ast.Name) and item.id in self.client)
+            or (isinstance(item, ast.Attribute) and dotted(item) in PY_REQUEST)
+            for item in nodes(node)
+        )
+
+    def conversation(self, value):
+        """'violated' when client data supplies whole messages, 'satisfied' when only their content."""
+        parents = {child: parent for parent in ast.walk(value) for child in ast.iter_child_nodes(parent)}
+        refs = [
+            item for item in ast.walk(value)
+            if (isinstance(item, ast.Name) and item.id in self.client)
+            or (isinstance(item, ast.Attribute) and dotted(item) in PY_REQUEST)
+        ]
+        if not refs:
+            return None
+        for ref in refs:
+            node, guarded = ref, False
+            while node is not value and node in parents and not guarded:
+                parent = parents[node]
+                if isinstance(parent, ast.Dict) and node in parent.values:
+                    key = parent.keys[parent.values.index(node)]
+                    guarded = isinstance(key, ast.Constant) and key.value == "content"
+                elif isinstance(parent, ast.comprehension) and node is parent.iter:
+                    element = getattr(parents.get(parent), "elt", None)
+                    roles = {
+                        k.value: v for k, v in zip(getattr(element, "keys", []), getattr(element, "values", []))
+                        if isinstance(k, ast.Constant)
+                    }
+                    guarded = isinstance(roles.get("role"), ast.Constant) and roles["role"].value == "user"
+                node = parent
+            if not guarded:
+                return "violated"
+        return "satisfied"
 
     def flows(self, node):
         return node is not None and any(
@@ -452,12 +637,16 @@ class PythonFlow:
     def bind(self, target, value, loop=False):
         if not isinstance(target, (ast.Name, ast.Tuple, ast.List, ast.Starred)):
             return
-        carries = self.flows(value)
+        carries, supplied = self.flows(value), self.supplied(value)
+        names = [n.id for n in nodes(target) if isinstance(n, ast.Name)]
+        if supplied or not loop:
+            for name in names:
+                (self.client.add if supplied else self.client.discard)(name)
         if loop and not carries:
             return
         inner = unwrap(value)
         clean = isinstance(inner, ast.Call) and dotted(inner.func) in PY_SANITIZER
-        for name in (n.id for n in nodes(target) if isinstance(n, ast.Name)):
+        for name in names:
             self.tainted.discard(name)
             self.sanitized.discard(name)
             if carries and clean:
@@ -482,6 +671,11 @@ class PythonFlow:
         args = [self.flows(arg) for arg in call.args]
         hot = any(args) or any(self.flows(keyword.value) for keyword in call.keywords)
         line = call.lineno
+        if PY_MODEL_CALL.search(name):
+            for keyword in call.keywords:
+                status = self.conversation(keyword.value) if keyword.arg in CONVERSATION_KEYS else None
+                if status:
+                    self.rows[CLIENT].append((keyword.value.lineno, status))
         if PY_SDK_PARSE.search(name) and {"response_format", "text_format"} & {k.arg for k in call.keywords}:
             self.rows[PARSE].append((line, "satisfied"))
         if last in PY_VALIDATOR and name not in PY_JSON:
@@ -526,7 +720,7 @@ def python_flows(tree):
     rows = defaultdict(list)
     scopes = [tree] + [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
     for scope in scopes:
-        flow = PythonFlow(rows)
+        flow = PythonFlow(rows, route_parameters(scope) if scope is not tree else ())
         flow.block(scope.body)
         flow.finish()
     return rows
@@ -771,7 +965,7 @@ def config_observations(path, text):
         for rule in dict.fromkeys(rules):
             rows[rule].append((1, "unclear"))
         return rows
-    rows[INTEGRATION].append((1, "satisfied"))
+    rows[INTEGRATION].append((1, "satisfied", "agent configuration"))
     find = Locator(text)
     server_observations(rows, find, data)
     if claude:
@@ -793,15 +987,15 @@ def observations(path, text, code, tree):
     suffix = PurePosixPath(path).suffix.lower()
     rows = defaultdict(list)
     if suffix == ".py":
-        imports = python_imports(tree) if tree is not None else []
-        if imports:
+        inventory = python_inventory(tree) if tree is not None else []
+        if inventory:
             rows.update(python_flows(tree))
     elif suffix in JS_EXTENSIONS:
         code = text if code is None else code
-        imports = js_imports(text, code)
-        if imports:
-            rows.update(js_flows(code, JS_FORMAT_HELPER.search(code) is not None))
+        inventory = js_inventory(text, code)
+        if inventory:
+            rows.update(js_flows(text, code))
     else:
-        imports = manifest_lines(path, text)
-    rows[INTEGRATION] = [(line, "satisfied") for line in imports]
+        inventory = [(line, "satisfied", "declared package") for line in manifest_lines(path, text)]
+    rows[INTEGRATION] = inventory
     return rows

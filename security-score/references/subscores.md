@@ -131,6 +131,7 @@ coverage never establish absence; the area is then Not assessed.
 | `AI-OUTPUT-EXEC` | high | Model output in `eval`, `exec`, `new Function`, shell commands or SQL text | Model output only as a bound SQL parameter |
 | `AI-OUTPUT-HTML` | high | Model output in `innerHTML`, `document.write`, `dangerouslySetInnerHTML`, `Markup`, `mark_safe` and similar sinks | Sanitizer around every model value, text sinks, escaping |
 | `AI-OUTPUT-PARSE` | medium | JSON parsed from model output without a schema validator in the same scope | Pydantic, zod, ajv or jsonschema validation; SDK calls with a schema |
+| `AI-CLIENT-MESSAGES` | medium | Request data passed as `messages`, `contents` or `history` to a model call, so the client can add system, assistant or tool turns | Request data only as `content` with roles set by the server |
 | `AI-MCP-CREDENTIAL` | high | Literal credential in MCP `env`, `headers` or arguments | Environment reference such as `${TOKEN}` |
 | `AI-MCP-SOURCE` | medium | `npx`, `uvx`, `pipx`, `pnpm dlx` and similar without an exact version | Exact version or Git commit |
 | `AI-MCP-TRANSPORT` | high | Remote `http`/`ws` server URL | `https`/`wss` |
@@ -140,7 +141,12 @@ coverage never establish absence; the area is then Not assessed.
 | `AI-AGENT-SANDBOX` | medium | Pre-approved tools beyond read access without a sandbox | Enabled sandbox |
 
 `AI-INTEGRATION` is a positive-only inventory rule: it makes the area applicable
-and never earns credit. Model output is followed only in Python and
+and never earns credit. Its locations name SDK imports, model calls and
+model-callable tools (AI SDK `tool()`, MCP `server.tool()`, Python `@tool`
+decorators and function-tool definitions), which `--details` shows as the AI
+profile. Request data means `req.body`, `req.query`, `request.json()` and similar
+request objects, plus parameters of Python route functions except injected
+dependencies. Model output is followed only in Python and
 JavaScript/TypeScript files that import an AI SDK, from the assignment of a
 recognized model call through further assignments and loops within the same
 function or block. A value passed to another function or file is not followed.

@@ -144,6 +144,57 @@ class ModelOutputFlowTests(unittest.TestCase):
         self.assertEqual(observed({"chat.js": source}, "AI-INTEGRATION"), [])
 
 
+class ClientConversationTests(unittest.TestCase):
+    def test_request_history_in_a_multiline_model_call_violates(self):
+        source = "import { streamText } from 'ai';\n" + (
+            "export function chat () {\n"
+            "  return async (req, res) => {\n"
+            "    const history = req.body?.messages ?? []\n"
+            "    try {\n"
+            "      const result = streamText({\n"
+            "        model: provider(name),\n"
+            "        system: prompt,\n"
+            "        messages: history,\n"
+            "      })\n"
+            "    } catch (error) {}\n"
+            "  }\n"
+            "}\n"
+        )
+        self.assertEqual(observed({"chat.ts": source}, "AI-CLIENT-MESSAGES"), [("chat.ts", 9, "violated")])
+
+    def test_roles_set_by_the_server_satisfy(self):
+        head = "import OpenAI from 'openai';\nconst { question, turns } = req.body;\n"
+        cases = (
+            ("await client.chat.completions.create({ model, messages: [{ role: 'user', content: question }] });\n", "satisfied"),
+            ("await client.chat.completions.create({ model, messages: turns.map(t => ({ role: 'user', content: t.text })) });\n", "satisfied"),
+            ("await client.chat.completions.create({ model, messages: turns.map(t => ({ role: t.role, content: t.text })) });\n", "violated"),
+            ("await client.chat.completions.create({ model, messages: [system, ...turns] });\n", "violated"),
+            ("await client.chat.completions.create({ model, messages: convert(turns) });\n", "violated"),
+            ("await client.chat.completions.create({ model, messages: stored });\n", None),
+        )
+        for tail, status in cases:
+            with self.subTest(tail=tail):
+                rows = observed({"chat.js": head + tail}, "AI-CLIENT-MESSAGES")
+                self.assertEqual(rows, [("chat.js", 3, status)] if status else [])
+
+    def test_python_route_parameters_and_request_data_are_client_supplied(self):
+        source = OPENAI_PY + (
+            "@router.post('/chat')\n"
+            "async def chat(body: ChatRequest, user=Depends(current_user)):\n"
+            "    client.chat.completions.create(model=MODEL, messages=body.messages)\n"
+            "    client.chat.completions.create(model=MODEL, messages=[{'role': 'user', 'content': body.question}])\n"
+            "    client.chat.completions.create(model=MODEL, messages=[{'role': 'user', 'content': m.text} for m in body.turns])\n"
+            "    client.chat.completions.create(model=MODEL, messages=user.history)\n"
+            "def flask_chat():\n"
+            "    turns = request.get_json()['messages']\n"
+            "    client.chat.completions.create(model=MODEL, messages=turns)\n"
+        )
+        self.assertEqual(
+            observed({"api.py": source}, "AI-CLIENT-MESSAGES"),
+            [("api.py", 5, "violated"), ("api.py", 6, "satisfied"), ("api.py", 7, "satisfied"), ("api.py", 11, "violated")],
+        )
+
+
 class AgentConfigurationTests(unittest.TestCase):
     def test_mcp_credentials_are_located_but_never_reported(self):
         secret = "trk_" + "93hf72kd02ld83jfq"
@@ -282,6 +333,28 @@ class AreaAssessmentTests(unittest.TestCase):
         _, output = invoke({"app.py": "print(1)\n"}, "--details")
         self.assertRegex(output, r"(?m)^AI & agents +\S+ +\S+ +Not applicable$")
         self.assertIn("No AI integration or agent configuration was recognized.", output)
+        self.assertNotIn("AI profile:", output)
+
+    def test_ai_profile_lists_model_calls_tools_and_agent_configuration(self):
+        files = {
+            "chat.ts": "import { generateText, tool } from 'ai';\n"
+                       "const tools = { lookupOrder: tool({ execute: async ({ id }) => find(id) }) };\n"
+                       "const result = await generateText({ model, tools, prompt: 'Hi' });\n",
+            "agent.py": "from langchain_core.tools import tool\nfrom openai import OpenAI\n"
+                        "@tool\ndef refund(order_id: str) -> str:\n    return issue(order_id)\n"
+                        "TOOLS = [{'type': 'function', 'function': {'name': 'get_weather'}}]\n"
+                        "reply = OpenAI().chat.completions.create(model=MODEL, messages=m, tools=TOOLS)\n",
+            ".mcp.json": '{"mcpServers": {"docs": {"command": "node", "args": ["server.js"]}}}\n',
+        }
+        _, output = invoke(files, "--details")
+        profile = output.split("AI profile:", 1)[1].split("\nCoverage", 1)[0]
+        self.assertRegex(profile, r"Model calls +.*chat\.completions\.create \(agent\.py:7\)")
+        self.assertRegex(profile, r"generateText \(chat\.ts:3\)")
+        for tool in ("lookupOrder", "refund", "get_weather"):
+            self.assertIn(tool, profile)
+        self.assertRegex(profile, r"Agent config +\.mcp\.json")
+        _, output = invoke(files, "--json")
+        self.assertTrue(area(json.loads(output), "ai")["applicable"])
 
 
 if __name__ == "__main__":

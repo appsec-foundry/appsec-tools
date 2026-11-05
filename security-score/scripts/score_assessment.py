@@ -343,7 +343,7 @@ def assess(result, files, budget):
 
 def render(result, details=False, style=None):
     from score_reporting import (
-        architecture_profile, dependency_profile, entry, identity_profile,
+        ai_profile, architecture_profile, dependency_profile, entry, identity_profile,
         infrastructure_profile, note, overview_section, plural, source_priority,
         supply_chain_profile, compose_profile,
     )
@@ -403,7 +403,9 @@ def render(result, details=False, style=None):
                 "ai": "Needs two independent AI controls, such as validated model output and an enabled agent sandbox.",
             }.get(row["id"], "Not enough evidence to rate this area.")
             lines += note(style, reason)
-        if row["id"] == "identity":
+        if row["id"] == "ai":
+            lines += ai_profile(style, result["checks"], concise=True)
+        elif row["id"] == "identity":
             lines += identity_profile(style, architecture, concise=True)
         elif row["id"] == "architecture":
             if row["score"] is not None:

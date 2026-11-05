@@ -2851,7 +2851,7 @@
       "area": "ai",
       "severity": "low",
       "title": "AI SDK, model API or agent configuration recognized",
-      "criteria": "Inventory only. Recognize imports of LLM, agent and MCP SDKs in Python and JavaScript/TypeScript, their declarations in package.json, requirements files, pyproject.toml, Maven and Gradle builds, and parseable committed agent or MCP configuration. It makes the AI area applicable and never earns score credit.",
+      "criteria": "Inventory only. Recognize imports of LLM, agent and MCP SDKs in Python and JavaScript/TypeScript with the model calls and model-callable tools in those files, their declarations in package.json, requirements files, pyproject.toml, Maven and Gradle builds, and parseable committed agent or MCP configuration. It makes the AI area applicable, fills the AI profile and never earns score credit.",
       "next_action": "Review how model output, tools and agent permissions are constrained.",
       "examples": [
         {
@@ -2967,6 +2967,38 @@
         {
           "file": "planner.py",
           "source": "import json\nfrom anthropic import Anthropic\nsettings = json.loads(raw_settings)\n",
+          "outcome": "not_applicable",
+          "expected_score": null,
+          "expected_grade": null
+        }
+      ]
+    },
+    {
+      "id": "AI-CLIENT-MESSAGES",
+      "kind": "ai-output",
+      "area": "ai",
+      "severity": "medium",
+      "title": "Client supplies the model conversation",
+      "criteria": "In a file that imports an AI SDK, request data passed as messages, contents or history to a recognized model call violates this check, because the client can then add system, assistant or tool turns. Request data used only as message content, with roles set by the server, satisfies it. Request data comes from req.body, req.query, request.json() and similar, and from parameters of Python route functions.",
+      "next_action": "Accept only user text from the client and build the conversation, including roles and history, on the server.",
+      "examples": [
+        {
+          "file": "chat.js",
+          "source": "import { streamText } from 'ai';\nexport async function POST(req) {\n  const { messages } = await req.json();\n  const result = streamText({ model, messages });\n  return result.toTextStreamResponse();\n}\n",
+          "outcome": "violated",
+          "expected_score": 79,
+          "expected_grade": "C"
+        },
+        {
+          "file": "chat.js",
+          "source": "import { streamText } from 'ai';\nexport async function POST(req) {\n  const { question } = await req.json();\n  const result = streamText({ model, system, messages: [{ role: 'user', content: question }] });\n  return result.toTextStreamResponse();\n}\n",
+          "outcome": "satisfied",
+          "expected_score": 100,
+          "expected_grade": "A"
+        },
+        {
+          "file": "chat.js",
+          "source": "import { streamText } from 'ai';\nconst result = streamText({ model, prompt: 'Summarize the release notes.' });\n",
           "outcome": "not_applicable",
           "expected_score": null,
           "expected_grade": null
@@ -3191,7 +3223,7 @@
       ]
     }
   ],
-  "rule_version": 13,
+  "rule_version": 14,
   "change_relevance": {
     "version": 8,
     "documentation_extensions": [
@@ -3565,7 +3597,7 @@
     ]
   },
   "subscore_policy": {
-    "version": 3,
+    "version": 4,
     "deductions": {
       "critical": 61,
       "high": 41,
@@ -3695,6 +3727,7 @@
       "AI-OUTPUT-EXEC": "model-output-execution",
       "AI-OUTPUT-HTML": "model-output-encoding",
       "AI-OUTPUT-PARSE": "model-output-validation",
+      "AI-CLIENT-MESSAGES": "model-conversation",
       "AI-MCP-CREDENTIAL": "mcp-credential",
       "AI-MCP-SOURCE": "mcp-server-pin",
       "AI-MCP-TRANSPORT": "mcp-transport",

@@ -211,3 +211,5 @@ Scoring version 6, rule version 8 and relevance version 7 count at most three fi
 Rule version 9 adds DEP-LOCK, counts an exact Python requirement as pinned where it was unclear before, and recognizes more Renovate configuration paths. Repositories without a lockfile can lose points, and a repository whose only unclear checks were exact requirements can now receive a grade. A provider's sign-in URL in source code now shows SSO in the profile.
 
 Rule version 13, relevance version 8 and subscore policy version 3 add the `ai` area with the AI & agents rules, OpenAI and Hugging Face token formats in SECRET-TOKEN, and the `ai` check group. Changes to MCP or agent configuration (REL-AGENT-CONFIG) and in the affected context of AI checks are high relevance. Repositories using AI SDKs or committing agent configuration can receive new findings; others show the area as Not applicable. `scoring_policy` is now `area-subscores`.
+
+Rule version 14 and subscore policy version 4 add AI-CLIENT-MESSAGES for request data passed as the model conversation, and name recognized model calls and tools in AI-INTEGRATION locations for the AI profile.

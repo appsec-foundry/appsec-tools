@@ -351,6 +351,8 @@ class JuiceShopE2ETests(unittest.TestCase):
                      "Dependencies & supply chain", "Deployment & operations", "AI & agents"):
             self.assertRegex(result.stdout, rf"(?m)^{re.escape(area)} +(?:—|\d+/100) +[█░]{{10}} +")
         self.assertIn("PASSWORD-HASH", result.stdout)
+        self.assertIn("AI-CLIENT-MESSAGES", result.stdout)
+        self.assertRegex(result.stdout, r"(?m)^ +Model calls +streamText \(routes/chat\.ts:\d+\)")
         self.assertRegex(result.stdout, r"(?m)^Architecture & isolation +\d+/100 +")
         self.assertIn("DESIGN-DATA-BOUNDARY", result.stdout)
         self.assertIn("https://accounts.google.com", result.stdout)

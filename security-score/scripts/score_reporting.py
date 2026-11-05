@@ -481,6 +481,45 @@ def identity_profile(style, architecture, *, concise=False):
     )
 
 
+def ai_profile(style, checks, *, concise=False):
+    """Recognized SDK imports, model calls, tools and agent configuration; no score credit."""
+    found = {}
+    for check in checks:
+        if check["rule"] != "AI-INTEGRATION":
+            continue
+        for row in check.get("locations", []):
+            kind, _, name = row.get("detail", "").partition(": ")
+            found.setdefault(kind, []).append((name, check["file"], row["line"]))
+    if not found:
+        return []
+
+    def limited(values, limit=3):
+        values = list(dict.fromkeys(values))
+        return ", ".join(values[:limit]) + (f", +{len(values) - limit} more" if len(values) > limit else "")
+
+    def calls(kind):
+        return limited(f"{safe(name)} ({safe(path)}:{line})" for name, path, line in found.get(kind, []))
+
+    def files(kind):
+        return limited(safe(path) for _, path, _ in found.get(kind, []))
+
+    tools = found.get("tool", [])
+    tool_text = limited((safe(name) for name, _, _ in tools), 6)
+    if tools:
+        tool_text += f" ({safe(tools[0][1])}:{tools[0][2]})"
+    return profile_rows(
+        style,
+        (
+            ("Model calls", calls("model call")),
+            ("Tools", tool_text),
+            ("SDK imports", files("import")),
+            ("Agent config", files("agent configuration")),
+        ),
+        "AI profile",
+        concise=concise,
+    )
+
+
 def architecture_profile(style, architecture, *, concise=False):
     """Recognized traits as context; 'none recognized' is no proof of absence."""
     if "sql_queries" not in architecture:

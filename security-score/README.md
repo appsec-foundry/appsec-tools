@@ -90,8 +90,9 @@ is a separate limitation and no longer blocks these supported criteria. Identity
 still requires wider resource-authorization evidence for a favorable rating. See [criteria and examples](references/subscores.md).
 
 AI & agents follows model output in Python and JavaScript/TypeScript files that
-import an AI SDK into code, shell, SQL and HTML sinks and checks whether parsed
-structured output is schema-validated. It also reads committed MCP and agent
+import an AI SDK into code, shell, SQL and HTML sinks, checks whether parsed
+structured output is schema-validated, and flags request data passed as the
+model conversation, which lets a client forge system or assistant turns. It also reads committed MCP and agent
 configuration (`.mcp.json`, `mcp.json`, `.claude/settings*.json`,
 `.gemini/settings.json`) for literal credentials, unpinned or unencrypted MCP
 servers, bypassed confirmations, broad permission rules and missing sandboxes:
@@ -107,10 +108,15 @@ AI & agents                    0/100  ░░░░░░░░░░  Very bad
   HIGH      Model output reaches code, shell or SQL execution (-41.0 points)
             AI-OUTPUT-EXEC, JS-EVAL · src/chat.js:8
   +4 more finding types (-77.0 points).
+  AI profile:
+    Model calls     chat.completions.create (src/chat.js:5)
+    SDK imports     src/chat.js
+    Agent config    .claude/settings.json, .mcp.json
 ```
 
-The overview lists recognized AI SDKs, which earn no points. Model-chosen tool
-arguments, URLs and file paths are not yet followed; see the
+The AI profile lists recognized model calls, model-callable tools, SDK imports and
+agent configuration; it and the AI SDKs row of the overview earn no points.
+Model-chosen tool arguments, URLs and file paths are not yet followed; see the
 [AI & agents criteria](references/subscores.md#ai--agents).
 
 ## Usage
