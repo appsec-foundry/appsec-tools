@@ -218,9 +218,13 @@ class JuiceShopE2ETests(unittest.TestCase):
         else:
             self.assertEqual(result.returncode, 0)
 
-    def test_default_shows_progress_and_one_result_without_details(self):
-        result = self.run_mode("default")
-        self.check_score(re.fullmatch(SCORE_LINE + r"\n", result.stdout), result)
+    def test_legacy_shows_progress_and_one_result_without_details(self):
+        result = self.run_mode("legacy", "--legacy-score")
+        self.assertRegex(result.stdout, r"\Asecurity-score \S+ · ")
+        self.check_score(
+            re.fullmatch(r"security-score \S+ · " + SCORE_LINE + r"\n", result.stdout),
+            result,
+        )
         self.assertIn("Reading selected sources...", result.stderr)
         self.assertIn("Checking source patterns...", result.stderr)
         self.assertNotIn("Categories", result.stdout)
@@ -228,7 +232,7 @@ class JuiceShopE2ETests(unittest.TestCase):
         self.assertNotIn("Calculation", result.stdout)
 
     def test_detail_has_topic_subscores_with_a_few_examples_directly_below(self):
-        result = self.run_mode("detail", "--details")
+        result = self.run_mode("legacy-detail", "--legacy-score", "--details")
         overall = re.search(
             r"(?m)^Security score . " + SCORE_LINE + r"$", result.stdout
         )
@@ -317,7 +321,7 @@ class JuiceShopE2ETests(unittest.TestCase):
         self.assertEqual(result.stderr, "")
 
     def test_five_subscores_and_endpoint_profiles_from_installed_cli(self):
-        result = self.run_mode("five-subscores", "--score", "--details", "--json")
+        result = self.run_mode("five-subscores", "--details", "--json")
         data = json.loads(result.stdout)
         self.assertEqual(data["analysis"], "security-assessment")
         self.assertEqual(len(data["subscores"]), 5)
@@ -328,6 +332,16 @@ class JuiceShopE2ETests(unittest.TestCase):
         self.assertIn(data["overall"]["rating"], {"Bad", "Very bad"})
         self.assertTrue(data["overall"]["reason"])
         self.assertNotIn("Traceback", result.stderr)
+
+    def test_default_shows_five_subscores_and_tool_version(self):
+        result = self.run_mode("default")
+        self.assertRegex(result.stdout, r"\Asecurity-score \S+\n\n")
+        for area in ("Architecture & isolation", "Identity & access", "Data & processing",
+                     "Dependencies & supply chain", "Deployment & operations"):
+            self.assertIn(area, result.stdout)
+        self.assertRegex(result.stdout, r"(?m)^Overall: (Bad|Very bad)$")
+        self.assertIn("Reason:", result.stdout)
+        self.assertIn("Reading selected sources...", result.stderr)
 
 
 if __name__ == "__main__":

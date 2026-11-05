@@ -6,7 +6,14 @@ import re
 import subprocess
 
 
-def source_identity(root=None):
+def package_version(root=None):
+    """Read the release number without starting Git for help or scan output."""
+    if root is None and Path(__file__).with_name("_security_score_build.py").is_file():
+        try:
+            from _security_score_build import BUILD
+            return BUILD["version"]
+        except ImportError:
+            pass
     root = root or Path(__file__).resolve().parent.parent
     manifest = root / "pyproject.toml"
     release = "unknown"
@@ -16,6 +23,12 @@ def source_identity(root=None):
         )
         if match:
             release = match[1]
+    return release
+
+
+def source_identity(root=None):
+    root = root or Path(__file__).resolve().parent.parent
+    release = package_version(root)
     commit, dirty = "unknown", False
     try:
         result = subprocess.run(

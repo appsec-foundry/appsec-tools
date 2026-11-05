@@ -1,6 +1,6 @@
 # How Security Score works
 
-For the new `--score` mode, see [Five security subscores](subscores.md). The repository arithmetic below describes the legacy interface without that flag.
+For the default repository assessment, see [Five security subscores](subscores.md). The repository arithmetic below describes the legacy interface selected with `--legacy-score`.
 
 Security Score answers two different questions:
 

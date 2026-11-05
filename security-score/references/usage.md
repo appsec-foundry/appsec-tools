@@ -4,14 +4,14 @@ Details for the [README](../README.md). The calculation is described in
 [Security Score explained](<../security score.md>), rule coverage and limits in the
 [technical reference](scoring.md).
 
-## Reading `--score --details`
+## Reading the default `--details`
 
 Five area assessments show points, ratings, coverage, deductions and open questions,
 followed by the overall qualitative verdict. The repository overview and service,
 cloud/IaC and supply-chain profiles provide located context. See the
 [five-subscore reference](subscores.md) for criteria, arithmetic and profile limits.
 
-## Reading legacy `--details` (without `--score`)
+## Reading legacy `--legacy-score --details`
 
 The report starts with an overview of the repository, then lists the score and
 findings per topic.
@@ -338,4 +338,4 @@ How to change rules and weights is described in the
 
 ## Five security subscores
 
-Use `--score` for five evidence-qualified area assessments and an overall verdict without a numeric average. Combine it with `--details`, `--json` or `--yaml`. See [criteria, endpoint profiles and compatibility](subscores.md).
+Repository scans report five evidence-qualified area assessments and an overall verdict without a numeric average by default. `--score` remains a compatible alias; `--legacy-score` selects the previous single score. Combine it with `--details`, `--json` or `--yaml`. See [criteria, endpoint profiles and compatibility](subscores.md).

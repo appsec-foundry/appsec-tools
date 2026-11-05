@@ -92,7 +92,7 @@ class PackagingTests(unittest.TestCase):
                 cwd=root,
                 env={**os.environ, "PATH": ""},
             )
-            self.assertEqual(output, f"security-score 0.2.0 (commit {commit})")
+            self.assertEqual(output, f"security-score 0.2.1 (commit {commit})")
 
 
 if __name__ == "__main__":

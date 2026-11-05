@@ -18,6 +18,7 @@ import time
 import threading
 from urllib.parse import urlsplit
 from score_update import UpdateAction
+import score_version
 from score_version import VersionAction
 
 try:
@@ -144,7 +145,8 @@ def announce(options, message):
 
 def parser():
     result = argparse.ArgumentParser(
-        description="Repository scores (0–100/A–F) or change security relevance; no model calls."
+        prog=f"security-score {score_version.package_version()}",
+        description="Five repository security subscores (0–100) or change security relevance; no model calls."
     )
     result.add_argument(
         "--version",
@@ -164,9 +166,14 @@ def parser():
         help="Local source directory or HTTPS GitHub/GitLab URL; defaults to the current directory",
     )
     result.add_argument("--repo", help="Alternative local repository selection")
-    result.add_argument(
+    scoring = result.add_mutually_exclusive_group()
+    scoring.add_argument(
         "--score", action="store_true",
-        help="Show five evidence-qualified subscores and an overall verdict (internal repositories only)",
+        help="Compatibility alias for the default five-subscore repository assessment",
+    )
+    scoring.add_argument(
+        "--legacy-score", action="store_true",
+        help="Show the previous single repository score (0–100/A–F)",
     )
     result.add_argument(
         "--detail",
@@ -1085,6 +1092,13 @@ def execute(argv):
         selected_rules(options.checks, options.skip_checks)
     except ValueError as error:
         arguments.error(str(error))
+    if not options.legacy_score:
+        options.score = options.score or not (
+            options.engine != "internal" or options.quiet
+            or options.patch or options.base or options.commit
+            or options.staged or options.unstaged or options.worktree or options.pr or options.mr
+            or options.list_rules or options.list_checks or options.verify_rules
+        )
     try:
         started = time.monotonic()
         with Progress(
@@ -1139,6 +1153,8 @@ def execute(argv):
         else:
             style = Style.detect(sys.stdout)
             output = render(result, options.details, style)
+            separator = "\n\n" if options.details or options.score else f" {style.dot} "
+            output = arguments.prog + separator + output
             if "network" in result:
                 network = result["network"]
                 rows = [

@@ -22,7 +22,7 @@ Tests pin the exact behavior.
   chain, including GitLab CI. Terraform stays a narrow set; a full policy catalog is
   left to dedicated tools.
 
-- **REQ-03 — Five security subscores.** With `--score`, report five repository subscores from 0–100 with plain-language ratings: Architecture & isolation, Identity & access, Data & processing, Dependencies & supply chain, and Deployment & operations. Add an overall verdict with its main reason, without an overall numeric score; serious weaknesses, including security-design flaws, must limit that verdict. Changes retain a separate security-relevance assessment without a numeric score; direct CLI calls without `--score` retain the legacy score interface.
+- **REQ-03 — Five security subscores.** By default, report five repository subscores from 0–100 with plain-language ratings: Architecture & isolation, Identity & access, Data & processing, Dependencies & supply chain, and Deployment & operations. Add an overall verdict with its main reason, without an overall numeric score; serious weaknesses, including security-design flaws, must limit that verdict. Changes retain a separate security-relevance assessment without a numeric score.
 
 - **REQ-04 — Evidence and limits.** Distinguish findings, supported controls, unknowns and exclusions, and report coverage and incomplete checks separately from ratings. Leave areas without sufficient evidence unassessed; positive ratings require evidence of effective protection. Technology presence, high scores and absence of findings do not establish safety, and missing evidence does not establish low change relevance.
 
@@ -33,7 +33,7 @@ Tests pin the exact behavior.
 
 - **REQ-07 — Explainable calculation.** Publish understandable, manually reproducible criteria and calculations, centrally editable scoring values, and comparison examples. Count each underlying weakness once, and prevent unrelated strengths from offsetting serious weaknesses. Detailed output explains the subscores, decisive evidence and gaps.
 
-- **REQ-08 — Console and structured output.** `--score` shows five subscores and an overall verdict; `--details` explains results, while JSON/YAML preserve the structured evidence. Legacy direct calls retain one-line output and numeric `--quiet`; all modes preserve actual completion status, keep progress on stderr, and prevent terminal-control injection. Detailed output includes elapsed time as observational metadata only.
+- **REQ-08 — Console and structured output.** Repository scans show five subscores and an overall verdict; `--details` explains results, while JSON/YAML preserve the structured evidence. `--quiet` retains numeric output; all modes preserve actual completion status, keep progress on stderr, and prevent terminal-control injection. Detailed output includes elapsed time as observational metadata only.
 
 - **REQ-09 — End-to-end check before release.** Changes to URL scanning or console
   output need a live run of the installed CLI against

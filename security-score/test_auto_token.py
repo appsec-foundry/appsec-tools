@@ -303,7 +303,7 @@ class AutomaticTokenTests(unittest.TestCase):
         (project / "app.py").write_text("requests.get(url, verify=True)\n")
         with mock.patch.object(remote, "token_hosts", side_effect=AssertionError("read config")):
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(cli.main([str(project), "--json"]), 0)
+                self.assertEqual(cli.main(["--legacy-score", str(project), "--json"]), 0)
 
     def test_remote_cli_authenticates_only_after_a_challenge_and_keeps_details_on_same_session(self):
         self.configure()
@@ -338,7 +338,7 @@ class AutomaticTokenTests(unittest.TestCase):
         output, errors = io.StringIO(), io.StringIO()
         with mock.patch.object(remote, "get", side_effect=get):
             with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-                status = cli.main([self.ORIGIN + "/group/project", "--details", "--json"])
+                status = cli.main(["--legacy-score", self.ORIGIN + "/group/project", "--details", "--json"])
         self.assertEqual(status, 0, errors.getvalue())
         result = json.loads(output.getvalue())
         self.assertEqual(result["scope"]["revision"], "a" * 40)
@@ -351,7 +351,7 @@ class AutomaticTokenTests(unittest.TestCase):
         output, errors = io.StringIO(), io.StringIO()
         with mock.patch.object(remote, "get", return_value=(None, 404)) as get:
             with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-                status = cli.main([self.ORIGIN + "/group/project", "--json"])
+                status = cli.main(["--legacy-score", self.ORIGIN + "/group/project", "--json"])
         self.assertEqual(status, 1)
         self.assertEqual(get.call_count, 2)
         self.assertIsNone(get.call_args_list[0].kwargs["token"])

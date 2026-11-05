@@ -36,13 +36,61 @@ import score_reporting as reporting  # noqa: E402
 import score_style as style  # noqa: E402
 
 
+PROGRAM = f"security-score {score_version.identity()['version']}"
+
+
 def topic_block(details, title):
     """The heading line and everything beneath it up to the next blank line."""
     match = re.search(rf"(?ms)^{re.escape(title)}\s.*?(?:\n\n|\Z)", details)
     return match.group(0) if match else ""
 
 
+def legacy_main(arguments):
+    return cli.main(["--legacy-score", *arguments])
+
+
 class ScoreTests(unittest.TestCase):
+    def test_help_and_invalid_arguments_show_tool_version_without_scanning(self):
+        for flags, expected_status in ((["--help"], 0), (["--unknown-option"], 2)):
+            with (
+                self.subTest(flags=flags),
+                mock.patch.object(
+                    score_version, "package_version", return_value="7.8.9"
+                ),
+                mock.patch.object(cli, "run") as run,
+                contextlib.redirect_stdout(io.StringIO()) as output,
+                contextlib.redirect_stderr(io.StringIO()) as errors,
+                self.assertRaises(SystemExit) as exited,
+            ):
+                cli.main(flags)
+            self.assertEqual(exited.exception.code, expected_status)
+            text = output.getvalue() if expected_status == 0 else errors.getvalue()
+            self.assertTrue(text.startswith("usage: security-score 7.8.9 "), text)
+            self.assertIn("--score", text)
+            run.assert_not_called()
+
+    def test_text_assessments_show_tool_version_and_preserve_one_line_summary(self):
+        self.write("app.py", "eval(payload)\n")
+        for flags in ([], ["--details"], ["--score"], ["--score", "--details"], ["--legacy-score"]):
+            with (
+                self.subTest(flags=flags),
+                mock.patch.object(
+                    score_version, "package_version", return_value="7.8.9"
+                ),
+                contextlib.redirect_stdout(io.StringIO()) as output,
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                status = cli.main([str(self.repo), *flags])
+            self.assertEqual(status, 0 if "--legacy-score" in flags else 2)
+            self.assertTrue(output.getvalue().startswith("security-score 7.8.9"))
+            if "--legacy-score" in flags:
+                self.assertEqual(output.getvalue(), "security-score 7.8.9 · 59/100 (E)\n")
+            else:
+                for area in ("Architecture & isolation", "Identity & access", "Data & processing",
+                             "Dependencies & supply chain", "Deployment & operations"):
+                    self.assertIn(area, output.getvalue())
+                self.assertIn("Overall:", output.getvalue())
+
     def test_deep_python_parser_failure_keeps_other_files_and_reports_location(self):
         self.write("a.py", "eval(payload)\n")
         self.write("deep.py", "x = " + "+".join(["a"] * 1200) + "\neval(payload)\n")
@@ -89,7 +137,7 @@ class ScoreTests(unittest.TestCase):
             contextlib.redirect_stdout(io.StringIO()) as output,
             contextlib.redirect_stderr(io.StringIO()) as errors,
         ):
-            status = cli.main(["--json"])
+            status = legacy_main(["--json"])
         self.assertEqual(status, 1)
         self.assertEqual(output.getvalue(), "")
         self.assertNotIn("Traceback", errors.getvalue())
@@ -104,7 +152,7 @@ class ScoreTests(unittest.TestCase):
             contextlib.redirect_stdout(output),
             contextlib.redirect_stderr(errors),
         ):
-            status = cli.main([str(self.repo), "--quiet"])
+            status = legacy_main([str(self.repo), "--quiet"])
         self.assertEqual(status, 1)
         self.assertEqual(output.getvalue(), "0\n")
         self.assertEqual(errors.getvalue(), "")
@@ -134,7 +182,7 @@ class ScoreTests(unittest.TestCase):
                 contextlib.redirect_stdout(output),
                 contextlib.redirect_stderr(io.StringIO()),
             ):
-                self.assertEqual(cli.main([str(self.repo), *flags]), status)
+                self.assertEqual(legacy_main([str(self.repo), *flags]), status)
             if ending:
                 self.assertTrue(output.getvalue().rstrip().endswith(ending))
             else:
@@ -145,7 +193,7 @@ class ScoreTests(unittest.TestCase):
         for args in (["--quite"], ["--quiet", "--details"], ["--quite", "--detail"]):
             output, errors = io.StringIO(), io.StringIO()
             with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-                status = cli.main([str(self.repo), *args])
+                status = legacy_main([str(self.repo), *args])
             self.assertEqual(status, 0)
             self.assertEqual(output.getvalue(), "59\n")
             self.assertEqual(errors.getvalue(), "")
@@ -154,7 +202,7 @@ class ScoreTests(unittest.TestCase):
         for path in (str(self.repo), str(self.repo / "missing")):
             output, errors = io.StringIO(), io.StringIO()
             with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-                status = cli.main([path, "--quite"])
+                status = legacy_main([path, "--quite"])
             self.assertNotEqual(status, 0)
             self.assertEqual(output.getvalue(), "")
             self.assertEqual(errors.getvalue(), "")
@@ -166,7 +214,7 @@ class ScoreTests(unittest.TestCase):
             contextlib.redirect_stderr(errors),
             self.assertRaises(SystemExit) as exited,
         ):
-            cli.main([str(self.repo), "--quiet", "--json"])
+            legacy_main([str(self.repo), "--quiet", "--json"])
         self.assertEqual(exited.exception.code, 2)
         self.assertEqual(output.getvalue(), "")
         self.assertEqual(errors.getvalue(), "")
@@ -322,7 +370,7 @@ class ScoreTests(unittest.TestCase):
             contextlib.redirect_stdout(output),
             self.assertRaises(SystemExit) as exited,
         ):
-            cli.main(["--version"])
+            legacy_main(["--version"])
         self.assertEqual(exited.exception.code, 0)
         self.assertRegex(
             output.getvalue(), r"^security-score 0\.1\.1 \(commit [0-9a-f]{40}"
@@ -345,6 +393,19 @@ class ScoreTests(unittest.TestCase):
             build, {"version": "0.1.1", "commit": "unknown", "dirty": False}
         )
 
+    def test_help_version_does_not_start_git_or_scan_the_target(self):
+        with (
+            mock.patch.object(score_version.subprocess, "run") as command,
+            mock.patch.object(cli, "run") as scan,
+            contextlib.redirect_stdout(io.StringIO()) as output,
+            self.assertRaises(SystemExit) as exited,
+        ):
+            cli.main(["--help"])
+        self.assertEqual(exited.exception.code, 0)
+        self.assertIn(PROGRAM, output.getvalue())
+        command.assert_not_called()
+        scan.assert_not_called()
+
     def update(self, which, status=0):
         with (
             mock.patch.object(score_update.shutil, "which", side_effect=which),
@@ -361,7 +422,7 @@ class ScoreTests(unittest.TestCase):
             contextlib.redirect_stderr(io.StringIO()) as errors,
             self.assertRaises(SystemExit) as exited,
         ):
-            cli.main(["--update", "ignored-repository"])
+            legacy_main(["--update", "ignored-repository"])
         return exited.exception.code, run, errors.getvalue()
 
     def test_update_reinstalls_through_pipx_with_fixed_arguments(self):
@@ -793,7 +854,7 @@ class ScoreTests(unittest.TestCase):
     def invoke(self, *args):
         output, errors = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-            status = cli.main([str(self.repo), "--json", *args])
+            status = legacy_main([str(self.repo), "--json", *args])
         return (
             status,
             json.loads(output.getvalue()) if output.getvalue() else None,
@@ -991,6 +1052,7 @@ class ScoreTests(unittest.TestCase):
                     "-B",
                     str(installed / "scripts/score.py"),
                     str(self.repo),
+                    "--legacy-score",
                     "--json",
                 ],
                 capture_output=True,
@@ -1074,7 +1136,7 @@ class ScoreTests(unittest.TestCase):
     def test_missing_local_source_has_an_actionable_error(self):
         output, errors = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-            status = cli.main([str(self.repo / "missing"), "--json"])
+            status = legacy_main([str(self.repo / "missing"), "--json"])
         self.assertEqual(status, 1)
         self.assertEqual(output.getvalue(), "")
         self.assertIn(
@@ -1099,7 +1161,7 @@ class ScoreTests(unittest.TestCase):
                 contextlib.redirect_stdout(output),
                 contextlib.redirect_stderr(errors),
             ):
-                status = cli.main([url, "--json"])
+                status = legacy_main([url, "--json"])
             self.assertEqual(status, 1)
             self.assertEqual(output.getvalue(), "")
             self.assertNotIn("Local source directory", errors.getvalue())
@@ -1128,7 +1190,7 @@ class ScoreTests(unittest.TestCase):
             contextlib.redirect_stdout(output),
             contextlib.redirect_stderr(errors),
         ):
-            status = cli.main(["https://github.com/example/project", "--json"])
+            status = legacy_main(["https://github.com/example/project", "--json"])
         self.assertEqual(status, 1)
         result = json.loads(output.getvalue())
         self.assertEqual(result["verdict"], "incomplete")
@@ -1445,13 +1507,13 @@ class ScoreTests(unittest.TestCase):
     ):
         self.write("app.py", "eval(payload)\n")
         for args, expected in (
-            ([], "59/100 (E)\n"),
+            ([], f"{PROGRAM} · 59/100 (E)\n"),
             (["--detail"], r"(?m)^Architecture\s+59/100"),
             (["--details"], r"(?m)^Architecture\s+59/100"),
         ):
             output, errors = io.StringIO(), io.StringIO()
             with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-                status = cli.main([str(self.repo), *args])
+                status = legacy_main([str(self.repo), *args])
             self.assertEqual(status, 0)
             if args:
                 self.assertRegex(output.getvalue(), expected)
@@ -1880,9 +1942,9 @@ class ScoreTests(unittest.TestCase):
         self.write("large.js", "x" * (sources.MAX_FILE + 1))
         output, errors = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-            status = cli.main([str(self.repo)])
+            status = legacy_main([str(self.repo)])
         self.assertEqual(status, 1)
-        self.assertEqual(output.getvalue(), "59/100 (partial)\n")
+        self.assertEqual(output.getvalue(), f"{PROGRAM} · 59/100 (partial)\n")
         self.assertIn("Reading selected sources...", errors.getvalue())
         self.assertNotIn("Source coverage:", output.getvalue())
 
@@ -1895,7 +1957,7 @@ class ScoreTests(unittest.TestCase):
         self.write("app.py", "eval(payload)\n")
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
-            status = cli.main([str(self.repo), "--yaml"])
+            status = legacy_main([str(self.repo), "--yaml"])
         self.assertEqual(status, 0)
         self.assertEqual(yaml.safe_load(output.getvalue()), self.invoke()[1])
 
@@ -2943,7 +3005,7 @@ class ScoreTests(unittest.TestCase):
         shutil.copytree(ROOT, installed)
         self.write("app.py", "eval(payload)\n")
         result = subprocess.run(
-            [sys.executable, "-B", str(installed / "scripts/score.py"), str(self.repo)],
+            [sys.executable, "-B", str(installed / "scripts/score.py"), str(self.repo), "--legacy-score"],
             cwd=self.root,
             env={**os.environ, "PATH": "", "PYTHONPATH": ""},
             capture_output=True,
@@ -2951,7 +3013,7 @@ class ScoreTests(unittest.TestCase):
             timeout=5,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "59/100 (E)\n")
+        self.assertEqual(result.stdout, f"{PROGRAM} · 59/100 (E)\n")
         self.assertIn("Reading selected sources...", result.stderr)
 
     def test_malformed_human_edited_catalog_fails_without_traceback(self):
@@ -3378,7 +3440,8 @@ class ScoreTests(unittest.TestCase):
             ):
                 status = cli.main([str(self.repo), "--worktree", *extra])
             self.assertEqual(status, 0)
-            self.assertTrue(output.getvalue().startswith("Security relevance: high"))
+            separator = "\n\n" if extra else " · "
+            self.assertTrue(output.getvalue().startswith(f"{PROGRAM}{separator}Security relevance: high"))
             self.assertNotIn("/100", output.getvalue())
             self.assertNotIn("grade", output.getvalue())
             if extra:
@@ -3420,7 +3483,7 @@ class ScoreTests(unittest.TestCase):
                     contextlib.redirect_stdout(io.StringIO()),
                     contextlib.redirect_stderr(io.StringIO()),
                 ):
-                    cli.main([str(self.repo), *arguments])
+                    legacy_main([str(self.repo), *arguments])
         context.assert_not_called()
         history.assert_not_called()
 
@@ -4025,7 +4088,7 @@ class NetworkUsageTests(unittest.TestCase):
                 contextlib.redirect_stderr(io.StringIO()),
             ):
                 calls.clear()
-                status = cli.main(["https://github.com/example/project", *flags])
+                status = legacy_main(["https://github.com/example/project", *flags])
                 if "--quiet" in flags:
                     self.assertEqual(output.getvalue(), "59\n")
                     self.assertEqual(len(calls), 4)
@@ -4215,7 +4278,7 @@ class RemoteTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as output,
                 contextlib.redirect_stderr(io.StringIO()) as errors,
             ):
-                status = cli.main(["https://github.com/example/project", "--json"])
+                status = legacy_main(["https://github.com/example/project", "--json"])
             self.assertEqual(status, 1)
             self.assertEqual(output.getvalue(), "")
             self.assertIn("invalid commit ID", errors.getvalue())
@@ -4269,7 +4332,7 @@ class RemoteTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as output,
                 contextlib.redirect_stderr(io.StringIO()),
             ):
-                status = cli.main(["https://github.com/example/project", "--details"])
+                status = legacy_main(["https://github.com/example/project", "--details"])
             self.assertEqual(status, 1)
             self.assertIn(
                 f"source download failed (HTTP {status_code}): z.py", output.getvalue()
@@ -4338,7 +4401,7 @@ class RemoteTests(unittest.TestCase):
                         contextlib.redirect_stdout(output),
                         contextlib.redirect_stderr(errors),
                     ):
-                        status = cli.main(
+                        status = legacy_main(
                             ["https://github.com/example/project", *flags]
                         )
                     self.assertEqual(status, 1)
@@ -4372,7 +4435,7 @@ class RemoteTests(unittest.TestCase):
                         self.assertIn("59/100 (partial)", output.getvalue())
                         self.assertIn(reason, output.getvalue())
                     else:
-                        self.assertEqual(output.getvalue(), "59/100 (partial)\n")
+                        self.assertEqual(output.getvalue(), f"{PROGRAM} · 59/100 (partial)\n")
                         self.assertIn("Reading selected sources...", errors.getvalue())
 
     def test_truncated_tree_yields_an_explicitly_incomplete_indication(self):
@@ -4391,7 +4454,7 @@ class RemoteTests(unittest.TestCase):
             ),
             contextlib.redirect_stdout(io.StringIO()) as output,
         ):
-            status = cli.main(["https://github.com/example/project", "--json"])
+            status = legacy_main(["https://github.com/example/project", "--json"])
         result = json.loads(output.getvalue())
         self.assertEqual(status, 1)
         self.assertEqual(result["observed_score"], 59)
@@ -4414,7 +4477,7 @@ class RemoteTests(unittest.TestCase):
             ),
             contextlib.redirect_stdout(io.StringIO()) as output,
         ):
-            cli.main(["https://github.com/example/project", "--json"])
+            legacy_main(["https://github.com/example/project", "--json"])
         return {row["rule"] for row in json.loads(output.getvalue())["findings"]}
 
     def test_absent_lockfile_counts_only_for_a_complete_listing(self):
@@ -4958,7 +5021,7 @@ class RemoteTests(unittest.TestCase):
             ) as fetch,
             contextlib.redirect_stdout(output),
         ):
-            status = cli.main(["https://github.com/example/project.git", "--json"])
+            status = legacy_main(["https://github.com/example/project.git", "--json"])
         result = json.loads(output.getvalue())
         self.assertEqual(status, 0)
         self.assertEqual(result["scope"]["revision"], "a" * 40)
@@ -4996,7 +5059,7 @@ class RemoteTests(unittest.TestCase):
             ) as fetch,
             contextlib.redirect_stdout(output),
         ):
-            status = cli.main(["https://github.com/example/project", "--json"])
+            status = legacy_main(["https://github.com/example/project", "--json"])
         self.assertEqual(status, 2)
         result = json.loads(output.getvalue())
         self.assertIsNone(result["grade"])
@@ -5267,7 +5330,7 @@ class RemoteTests(unittest.TestCase):
             contextlib.redirect_stdout(output),
             contextlib.redirect_stderr(errors),
         ):
-            status = cli.main(["https://github.com/example/project", "--json"])
+            status = legacy_main(["https://github.com/example/project", "--json"])
         self.assertEqual(status, 1)
         self.assertEqual(output.getvalue(), "")
         self.assertIn("GitHub API rate limit reached", errors.getvalue())
@@ -5310,7 +5373,7 @@ class RemoteTests(unittest.TestCase):
             mock.patch.object(remote, "get", side_effect=fetch),
             contextlib.redirect_stdout(io.StringIO()),
         ):
-            cli.main(
+            legacy_main(
                 [
                     "https://github.com/example/project",
                     "--json",
@@ -5372,7 +5435,7 @@ class RemoteTests(unittest.TestCase):
                     contextlib.redirect_stdout(output),
                     contextlib.redirect_stderr(errors),
                 ):
-                    result = cli.main(["https://github.com/example/project", "--json"])
+                    result = legacy_main(["https://github.com/example/project", "--json"])
                 self.assertEqual(result, 1)
                 self.assertEqual(output.getvalue(), "")
                 self.assertIn(expected, errors.getvalue())
@@ -5403,7 +5466,7 @@ class RemoteTests(unittest.TestCase):
             contextlib.redirect_stdout(io.StringIO()),
             contextlib.redirect_stderr(io.StringIO()),
         ):
-            cli.main(["https://github.com/example/project"])
+            legacy_main(["https://github.com/example/project"])
         history.assert_not_called()
         self.assertEqual(requests.call_count, 2)
 

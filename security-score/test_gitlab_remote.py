@@ -46,7 +46,7 @@ class GitLabRemoteTests(unittest.TestCase):
                 contextlib.redirect_stdout(output),
                 contextlib.redirect_stderr(io.StringIO()),
             ):
-                cli.main([self.REPO + suffix, "--json"])
+                cli.main(["--legacy-score", self.REPO + suffix, "--json"])
             selected.append((settings.call_args.args[:2], get.call_args.args[0]))
         self.assertEqual(selected[0], selected[1])
         self.assertEqual(selected[0], selected[2])
@@ -71,7 +71,7 @@ class GitLabRemoteTests(unittest.TestCase):
             with self.subTest(url=url), mock.patch.object(remote, "get") as get:
                 output, errors = io.StringIO(), io.StringIO()
                 with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-                    self.assertEqual(cli.main([url, "--json"]), 1)
+                    self.assertEqual(cli.main(["--legacy-score", url, "--json"]), 1)
                 get.assert_not_called()
                 self.assertEqual(output.getvalue(), "")
                 self.assertNotIn("secret", errors.getvalue())
@@ -249,7 +249,7 @@ class GitLabRemoteTests(unittest.TestCase):
             mock.patch.object(sources, "command", side_effect=AssertionError("Git must not run")),
             contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors),
         ):
-            status = cli.main(args)
+            status = cli.main(["--legacy-score", *args])
         return status, output.getvalue(), errors.getvalue(), requests
 
     def test_remote_cli_reads_pinned_files_and_host_settings_without_a_clone(self):
@@ -289,7 +289,7 @@ class GitLabRemoteTests(unittest.TestCase):
             with mock.patch.dict(os.environ, environment, clear=True), mock.patch.object(remote, "get") as get:
                 output, errors = io.StringIO(), io.StringIO()
                 with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-                    status = cli.main([self.REPO, "--token-env", "ISOLATED_GITLAB_READ_TOKEN", "--json"])
+                    status = cli.main(["--legacy-score", self.REPO, "--token-env", "ISOLATED_GITLAB_READ_TOKEN", "--json"])
                 self.assertEqual(status, 1)
                 self.assertEqual(output.getvalue(), "")
                 get.assert_not_called()
@@ -307,7 +307,7 @@ class GitLabRemoteTests(unittest.TestCase):
     def test_analyzer_is_not_invoked_for_a_self_managed_url(self):
         with mock.patch.object(cli, "command") as command:
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(cli.main([self.REPO, "--engine", "analyzer"]), 1)
+                self.assertEqual(cli.main(["--legacy-score", self.REPO, "--engine", "analyzer"]), 1)
             command.assert_not_called()
 
 

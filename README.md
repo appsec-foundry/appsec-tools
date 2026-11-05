@@ -10,7 +10,7 @@ appsec-analyzer repository.
 
 | Tool | Reads | Produces |
 | --- | --- | --- |
-| [Security Score](#security-score) | A GitHub or GitLab URL, a local directory, or a single change | A score from 0 to 100 with a grade from A to F and findings per topic, or the security relevance of the change |
+| [Security Score](#security-score) | A GitHub or GitLab URL, a local directory, or a single change | Five security subscores from 0 to 100 and an overall verdict, or the security relevance of the change |
 | [Requirement Harvester](#requirement-harvester) | Websites and wikis named in a configuration file | A catalog of security requirements in OSCAL YAML |
 
 All tools need Python 3.10 or newer, `pipx`, and Git. Installation uses
@@ -18,8 +18,8 @@ HTTPS; public repositories need no GitHub account or SSH key.
 
 ## Security Score
 
-Scans a repository and gives it a security score from 0 to 100 and a grade from
-A to F. It also rates how security-relevant a single change is. The checks are
+Scans a repository and reports five security subscores from 0 to 100 with ratings
+and an overall verdict by default. It also rates how security-relevant a single change is. The checks are
 fixed rules, and the scanned code is never run.
 
 ```sh
@@ -31,15 +31,26 @@ need no token:
 
 ```console
 $ security-score https://github.com/juice-shop/juice-shop
-0/100 (partial)
+security-score 0.2.1
+
+Architecture & isolation               — · Not assessed · limited evidence
+Identity & access                  0/100 · Very bad · limited evidence
+Data & processing                  0/100 · Very bad · limited evidence
+Dependencies & supply chain        0/100 · Very bad · limited evidence
+Deployment & operations                — · Not assessed · limited evidence
+
+Overall: Very bad
+Reason: Identity & access: Password reaches a fast general-purpose hash
+Processing incomplete; available evidence is retained.
 ```
 
 [Juice Shop](https://github.com/juice-shop/juice-shop) is insecure on purpose,
-so the low score is expected. `partial` means that some topics could not be
-assessed, so there is no grade.
+so the low subscores are expected. Areas without sufficient evidence remain
+Not assessed; incomplete processing is reported separately.
 
-`--details` adds an overview of the repository and lists the score and findings
-per topic, with rule, file and line. Click the excerpt for the full screenshot:
+`--details` adds the repository overview, evidence, gaps and calculation for each
+area. `--legacy-score` selects the previous A–F output; `--score` remains an alias
+for the default assessment. The screenshot shows `--legacy-score --details`:
 
 <a href="security-score/docs/details-juice-shop.png">
   <img src="security-score/docs/details-juice-shop-crop.png" alt="Excerpt of security-score --details on Juice Shop: repository overview, then the score and findings for the Repository and Authentication topics">
@@ -60,10 +71,10 @@ security-score https://gitlab.company.example/team/project --token-env GITLAB_RE
 Local directories and single changes work too:
 
 ```console
-$ security-score /path/to/repository
-59/100 (E)
+$ security-score /path/to/repository --legacy-score
+security-score 0.2.1 · 59/100 (E)
 $ security-score /path/to/repository --commit HEAD
-Security relevance: high · 0 introduced, 0 worsened findings
+security-score 0.2.1 · Security relevance: high · 0 introduced, 0 worsened findings
 ```
 
 [Installation, options and how the score works](security-score/README.md)

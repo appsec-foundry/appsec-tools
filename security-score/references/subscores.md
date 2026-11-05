@@ -1,8 +1,8 @@
 # Five security subscores
 
-Use `--score` for five area assessments and an overall qualitative verdict.
+Repository scans report five area assessments and an overall qualitative verdict by default.
 This is a separate, versioned scoring policy from the legacy A–F index returned
-by direct calls without `--score`. It makes no model calls and runs no target code.
+with `--legacy-score`. It makes no model calls and runs no target code.
 
 ## Criteria and evidence
 
@@ -185,16 +185,17 @@ builds use it. Sensitive package configuration remains unread as described above
 ## CLI and compatibility
 
 ```sh
-security-score /selected/repository --score
-security-score /selected/repository --score --details
-security-score /selected/repository --score --json
-security-score /selected/repository --score --yaml
+security-score /selected/repository
+security-score /selected/repository --details
+security-score /selected/repository --json
+security-score /selected/repository --yaml
 ```
 
-`--score` supports internal repository scans only. It cannot be combined with
-change selection, Analyzer, `--quiet`, or rule-listing operations. Existing direct
-calls without `--score`, including legacy JSON/quiet output and change relevance,
-retain their interface. The new structured result uses `analysis:
+The default assessment supports internal repository scans. `--score` remains a
+compatible alias; it cannot be combined with change selection, Analyzer,
+`--quiet`, or rule-listing operations. Use `--legacy-score` for the previous text
+or structured single-score result. Numeric `--quiet`, change relevance and
+explicit Analyzer requests retain their interfaces. The structured result uses `analysis:
 security-assessment`, `scoring_policy: five-subscores`, `subscores` and `overall`;
 legacy top-level score, grade, observed index and area indices are absent.
 

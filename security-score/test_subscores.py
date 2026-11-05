@@ -26,7 +26,7 @@ class Invocation:
                 target.write_text(source)
             out, err = io.StringIO(), io.StringIO()
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-                status = score.main([directory, "--score", "--json", *flags])
+                status = score.main([directory, "--json", *flags])
             return status, json.loads(out.getvalue())
 
     def area(self, result, name):
@@ -34,6 +34,34 @@ class Invocation:
 
 
 class SubscoreTests(Invocation, unittest.TestCase):
+    def test_score_alias_matches_default_in_text_json_and_yaml(self):
+        with tempfile.TemporaryDirectory(prefix="default-score-test-") as directory:
+            Path(directory, "app.py").write_text("requests.get(url, verify=False)\n")
+            for flags in ([], ["--json"], ["--yaml"]):
+                results = []
+                for alias in ([], ["--score"]):
+                    out, err = io.StringIO(), io.StringIO()
+                    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                        status = score.main([directory, *flags, *alias])
+                    results.append((status, out.getvalue(), err.getvalue()))
+                self.assertEqual(results[0], results[1])
+                self.assertEqual(results[0][0], 2)
+                if flags == ["--json"]:
+                    self.assertEqual(json.loads(results[0][1])["analysis"], "security-assessment")
+                elif flags == ["--yaml"]:
+                    self.assertFalse(results[0][1].startswith("security-score "))
+                    self.assertIn('"security-assessment"', results[0][1])
+
+    def test_default_quiet_output_keeps_legacy_number(self):
+        with tempfile.TemporaryDirectory(prefix="default-quiet-test-") as directory:
+            Path(directory, "app.py").write_text("eval(payload)\n")
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                status = score.main([directory, "--quiet"])
+            self.assertEqual(status, 0)
+            self.assertEqual(out.getvalue(), "59\n")
+            self.assertEqual(err.getvalue(), "")
+
     def test_one_safe_pattern_does_not_award_a_subscore(self):
         status, result = self.invoke({"app.py": "import ast\nast.literal_eval(value)\n"})
         self.assertEqual(status, 2)

@@ -1,6 +1,6 @@
 # Security Score
 
-Reports five security subscores with `--score`: Architecture & isolation,
+Reports five security subscores by default: Architecture & isolation,
 Identity & access, Data & processing, Dependencies & supply chain, and Deployment
 & operations. Each supported score has a plain-language rating and separate
 evidence coverage; an overall verdict explains the decisive weakness without
@@ -8,8 +8,9 @@ averaging the numbers. Insufficient evidence leaves an area Not assessed.
 
 It reads selected source and configuration with fixed rules, without model calls
 or executing the target. The [scoring reference](references/subscores.md) explains
-the criteria, worked calculations and architecture limits. Direct calls without
-`--score` retain the legacy 0–100/A–F output; changes retain security relevance.
+the criteria, worked calculations and architecture limits. `--score` remains a
+compatibility alias; `--legacy-score` selects the previous 0–100/A–F output.
+Changes retain security relevance.
 
 ## Quick start
 
@@ -21,7 +22,9 @@ pipx install "git+https://github.com/appsec-foundry/appsec-tools.git#subdirector
 ```
 
 ```console
-$ security-score /path/to/repository --score
+$ security-score /path/to/repository
+security-score 0.2.1
+
 Architecture & isolation               — · Not assessed · limited evidence
 Identity & access                      — · Not assessed · limited evidence
 Data & processing                      — · Not assessed · limited evidence
@@ -32,14 +35,20 @@ Overall: Bad
 Reason: Deployment & operations: Python certificate verification disabled
 
 $ security-score /path/to/repository --commit HEAD
-Security relevance: high · 0 introduced, 0 worsened findings
+security-score 0.2.1 · Security relevance: high · 0 introduced, 0 worsened findings
 ```
 
 The repository example contains one explicitly disabled certificate check.
 Unavailable evidence remains separate from that established weakness.
 
+Text assessments, help and argument errors show the installed tool version.
+`security-score --version` also shows the source commit. JSON/YAML contain no text
+banner; `--quiet` remains numeric. Use `--legacy-score` to retain the previous
+single-score JSON/YAML schema.
+
 `--details` adds the repository overview, evidence, gaps and calculation for each
-area. The following screenshot shows the legacy detail mode without `--score`.
+area. The following screenshot shows the legacy detail mode with
+`--legacy-score --details`.
 
 <a href="docs/details-juice-shop.png">
   <img src="docs/details-juice-shop-crop.png" alt="Excerpt of security-score --details on Juice Shop: repository overview, then the score and findings for the Repository and Authentication topics">
@@ -48,9 +57,9 @@ area. The following screenshot shows the legacy detail mode without `--score`.
 ## Five-subscore assessment
 
 ```sh
-security-score /path/to/repository --score
-security-score /path/to/repository --score --details
-security-score /path/to/repository --score --json
+security-score /path/to/repository
+security-score /path/to/repository --details
+security-score /path/to/repository --json
 ```
 
 For a fixture with one explicitly disabled certificate check, Deployment is
@@ -156,6 +165,8 @@ verified HTTPS tunnel. Proxy failures are reported separately from a repository
 
 ## Reading the legacy result
 
+Use `--legacy-score` for the previous one-line score and A–F grade.
+
 Each area, such as execution or transport, starts at 100 and loses points per
 finding. The lowest area score is the repository score, so a strong area cannot
 offset a weak one.
@@ -185,6 +196,10 @@ for a partial result.
   source code is not found.
 
 ## Update
+
+The five-subscore default requires tool version 0.2.1 or later. Installing or
+pushing the separate `appsec-skills` repository does not update this Python tool. When publishing a
+local tool change, commit and push it from the `appsec-tools` checkout first.
 
 ```sh
 security-score --update

@@ -21,7 +21,7 @@ class SecurityControlTests(unittest.TestCase):
     def run_cli(self, directory, *flags):
         output, errors = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
-            status = cli.main([str(directory), *flags])
+            status = cli.main(["--legacy-score", str(directory), *flags])
         return status, output.getvalue(), errors.getvalue()
 
     def test_check_groups_cover_the_catalog_and_default_selection_is_all(self):
@@ -132,7 +132,7 @@ class SecurityControlTests(unittest.TestCase):
             contextlib.redirect_stderr(io.StringIO()) as errors,
             self.assertRaises(SystemExit),
         ):
-            cli.main(["--quite", "--checks", "missing"])
+            cli.main(["--legacy-score", "--quite", "--checks", "missing"])
         self.assertEqual(errors.getvalue(), "")
 
     def test_details_shows_scan_steps_while_quite_and_json_hide_progress(self):
