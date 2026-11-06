@@ -866,6 +866,14 @@ def overview_section(style, overview, *, concise=False):
     if ci and development["ci_steps"]:
         ci += "; runs " + " and ".join(development["ci_steps"])
     risks = risk_rows(overview["technology_risks"])
+    routes = overview.get("routes")
+    route_summary = ""
+    if routes is not None:
+        route_summary = f"{routes['total']} recognized"
+        if routes["by_type"]:
+            route_summary += "; " + ", ".join(
+                f"{safe(kind)} {count}" for kind, count in routes["by_type"].items()
+            )
     lines = ["", style.paint("Overview", "bold")]
     lines += profile_rows(
         style,
@@ -873,6 +881,7 @@ def overview_section(style, overview, *, concise=False):
             ("Languages", counted(overview["languages"], "language", "files")),
             ("Files", f"{overview['files']['read']:,} read, {overview['files']['lines']:,} lines" if concise else file_row(overview["files"])),
             ("Frameworks", names(overview["frameworks"])),
+            ("Routes", route_summary),
             ("AI SDKs", names(overview.get("ai_sdks", []))),
             ("Test tools", names(overview["test_tools"])),
             ("Runtimes", runtimes),

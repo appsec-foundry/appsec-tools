@@ -36,6 +36,19 @@ class Invocation:
 
 
 class SubscoreTests(Invocation, unittest.TestCase):
+    def test_route_summary_is_details_only_and_does_not_change_assessment(self):
+        files = {"app.py": "@app.get('/items')\ndef items(): pass\n"}
+        plain_status, plain = self.invoke(files)
+        detail_status, detailed = self.invoke(files, "--details")
+        self.assertEqual(plain_status, detail_status)
+        self.assertNotIn("overview", plain)
+        self.assertEqual(detailed["overview"]["routes"], {"total": 1, "by_type": {"GET": 1}})
+        for key in ("overall", "subscores", "findings", "checks"):
+            self.assertEqual(plain[key], detailed[key])
+        self.assertIn("Routes 1 recognized; GET 1",
+                      " ".join(score.render(detailed, details=True).split()))
+        self.assertNotIn("Routes", score.render(detailed))
+
     def test_score_alias_matches_default_in_text_json_and_yaml(self):
         with tempfile.TemporaryDirectory(prefix="default-score-test-") as directory:
             Path(directory, "app.py").write_text("requests.get(url, verify=False)\n")

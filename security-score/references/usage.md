@@ -77,7 +77,7 @@ scan does not load this code, reads no Git history and sends no extra API reques
 
 | Block | Content |
 | --- | --- |
-| Technology | Languages, files by kind, frameworks, test tools, declared runtimes, package tools |
+| Technology | Languages, files by kind, frameworks, route counts by HTTP method or WebSocket, test tools, declared runtimes, package tools |
 | Technology risks | Entries of a bundled list: dependencies that are insecure in every version or end of life, such as `node-serialize` or Log4j 1; runtimes and base images past end of life; DES, RC4, ECB mode and TLS below 1.2; Flash and Silverlight content |
 | Development | Branches, up to the last 100 commits with pull or merge request markers, merges, authors and latest date; CODEOWNERS and other process files; CI system, whether it runs on pull or merge requests and runs tests; quality and security tools |
 
@@ -86,6 +86,21 @@ status. That includes technology risks: they run only with `--details`, and a sc
 must not depend on the output mode. An empty row says nothing was recognized, not
 that the technology is absent. Risk entries cover manifests, source and build files
 outside `tests` and `examples`, and Go and Ruby manifests are not read.
+
+`Routes` counts recognized declarations in already-read source files, excluding
+tests, examples, dependencies and patch fragments. JavaScript/TypeScript recognizes
+literal paths in `app`, `router` or `server` calls such as `app.get('/items', handler)`;
+Python recognizes path decorators such as `@app.get('/items')`,
+`@app.route('/items', methods=['GET', 'POST'])` and `@app.websocket('/events')`.
+The total counts declarations; a declaration with several methods contributes to
+each method count. Python `route`/`api_route` without `methods` counts as GET;
+dynamic or unsupported method lists count as `unspecified`. JavaScript `.all()`
+counts as ALL. Implicit HEAD/OPTIONS handlers, dynamic paths, chained registrations,
+other receiver names in JavaScript, and other frameworks or languages are not
+resolved, so these counts are not a complete inventory of deployed endpoints.
+No route paths or handlers are emitted. `--details --json` and `--details --yaml`
+include the same counts under `overview.routes` (`total` and `by_type`); without
+`--details`, route collection does not run.
 
 Commits follow the first-parent line. A commit without a marker may still have been
 reviewed, because a rebase or an unmarked squash merge leaves no trace in the

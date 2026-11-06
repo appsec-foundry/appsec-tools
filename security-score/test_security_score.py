@@ -3595,6 +3595,89 @@ class ScoreTests(unittest.TestCase):
             {path: {"text": text}}, [path], True, sources.Budget()
         )
 
+    def test_route_counts_recognize_http_methods_and_websockets_without_paths(self):
+        text = '''
+@app.get('/items')
+def items(): pass
+@app.route('/submit', methods=['GET', 'POST', 'POST'])
+async def submit(): pass
+@router.api_route(path='/update', methods=('PUT', 'PATCH'))
+def update(): pass
+@app.route(rule='/default')
+def default(): pass
+@app.websocket('/events')
+async def events(): pass
+@router.api_route('/dynamic', methods=allowed_methods)
+def dynamic(): pass
+'''
+        routes = self.overview_of("app.py", text)["routes"]
+        self.assertEqual(routes, {
+            "total": 6,
+            "by_type": {"GET": 3, "PATCH": 1, "POST": 1, "PUT": 1,
+                        "WebSocket": 1, "unspecified": 1},
+        })
+        self.assertNotIn("/items", json.dumps(routes))
+        self.assertNotIn("allowed_methods", json.dumps(routes))
+
+    def test_javascript_route_counts_ignore_comments_strings_clients_and_dynamic_paths(self):
+        text = '''
+app.get('/items', handler);
+router.post(
+  '/submit', middleware, handler);
+server.delete('/items/:id', handler); app.get('/more', handler);
+app.all('/any', handler);
+app.websocket('/events', handler);
+// app.put('/comment', handler);
+/* router.patch('/block', handler); */
+const example = "app.get('/string', handler)";
+const pattern = /app.get[(]'[/]regex', handler[)]/;
+client.get('/outbound', handler);
+axios.post('/outbound', payload);
+app.get('setting');
+app.get(dynamicPath, handler);
+app.get(`/dynamic/${id}`, handler);
+app.use('/middleware', middleware);
+object.app.get('/nested', handler);
+'''
+        for suffix in ("js", "ts"):
+            with self.subTest(suffix=suffix):
+                self.assertEqual(self.overview_of(f"app.{suffix}", text)["routes"], {
+                    "total": 6,
+                    "by_type": {"ALL": 1, "DELETE": 1, "GET": 2, "POST": 1, "WebSocket": 1},
+                })
+
+    def test_python_route_counts_ignore_comments_strings_calls_and_malformed_source(self):
+        for text in (
+            "# @app.get('/comment')\nexample = \"@app.get('/string')\"\n",
+            "client.get('/outbound')\napp.route('/unattached')\n",
+            "@app.get(dynamic_path)\ndef dynamic(): pass\n",
+            "@app.get('/broken')\ndef broken(\n",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.overview_of("app.py", text)["routes"], {
+                    "total": 0, "by_type": {},
+                })
+
+    def test_routes_exclude_tests_examples_dependencies_and_fragments(self):
+        paths = ["tests/app.py", "examples/app.py", "vendor/app.py", "src/app.py"]
+        files = {path: {"text": "@app.get('/items')\ndef items(): pass\n"} for path in paths}
+        files["src/app.py"]["fragment"] = True
+        result = overview.repository_overview(files, paths, True, sources.Budget())
+        self.assertEqual(result["routes"], {"total": 0, "by_type": {}})
+
+    def test_route_summary_appears_only_in_details_and_adds_no_score_credit(self):
+        self.write("app.js", "app.get('/private-route', handler);\nrouter.post('/submit', handler);\n")
+        plain_status, plain, _ = self.invoke()
+        detail_status, detailed, _ = self.invoke("--details")
+        self.assertEqual(detail_status, plain_status)
+        self.assertNotIn("overview", plain)
+        for key in ("score", "grade", "findings", "checks", "areas"):
+            self.assertEqual(detailed[key], plain[key])
+        self.assertIn("Routes 2 recognized; GET 1, POST 1",
+                      " ".join(cli.render(detailed, details=True).split()))
+        self.assertNotIn("Routes", cli.render(detailed))
+        self.assertNotIn("/private-route", json.dumps(detailed["overview"]))
+
     def test_req16_recognized_technology_risks(self):
         for path, text, expected in (
             ("Dockerfile", "FROM python:2.7-slim\n", "Python 2.7"),

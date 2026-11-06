@@ -8,6 +8,7 @@ the fixed tables below. Apart from paths and version specifications of a
 restricted shape, everything in the output comes from these tables.
 """
 
+import ast
 from collections import Counter
 from pathlib import Path
 import re
@@ -15,7 +16,7 @@ from urllib.parse import quote
 
 from score_ai import package_name as ai_package
 from score_architecture import COMMENT_LINE
-from score_core import GRADLE_BUILD_FILES, JS_EXTENSIONS
+from score_core import GRADLE_BUILD_FILES, JS_EXTENSIONS, javascript_code
 from score_infrastructure import OWN_CODE, ci_file, document, line_of, logical_lines
 from score_remote import json_get, repository_url, select_token
 from score_reporting import container_build_file, origin, source_priority
@@ -24,6 +25,81 @@ from score_sources import SourceError, git
 COMMIT_SAMPLE = 100
 BRANCH_PAGE = 100
 HISTORY_OUTPUT = 1024 * 1024
+
+HTTP_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT")
+ROUTE_METHODS = {method.lower(): method for method in HTTP_METHODS}
+ROUTE_METHODS.update(all="ALL", websocket="WebSocket")
+# Narrow declaration shapes, rather than every .get() call (HTTP clients, maps).
+JS_ROUTE = re.compile(
+    r"(?<![\w$.])(?:app|router|server)\s*\.\s*("
+    + "|".join(ROUTE_METHODS)
+    + r")\s*\("
+)
+JS_ROUTE_PATH = re.compile(r"\s*(['\"`])/[^'\"`\n]{0,2048}\1\s*,")
+
+
+def route_counts(path, text, budget):
+    """Count recognized declarations, never retain paths or execute source.
+
+    Method counts can overlap: one Python decorator can declare GET and POST.
+    Framework-generated HEAD/OPTIONS routes and dynamic registrations stay out.
+    """
+    counts, total = Counter(), 0
+    suffix = Path(path).suffix.lower()
+    if suffix in JS_EXTENSIONS:
+        try:
+            code = javascript_code(text)
+        except SyntaxError:
+            return 0, counts
+        for match in JS_ROUTE.finditer(code):
+            budget.check()
+            path_match = JS_ROUTE_PATH.match(text, match.end())
+            if path_match and not (path_match[1] == "`" and "${" in path_match[0]):
+                counts[ROUTE_METHODS[match[1]]] += 1
+                total += 1
+    elif suffix == ".py":
+        try:
+            tree = ast.parse(text)
+        except (SyntaxError, ValueError, RecursionError):
+            return 0, counts
+        for node in ast.walk(tree):
+            budget.check()
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for decorator in node.decorator_list:
+                if not (
+                    isinstance(decorator, ast.Call)
+                    and isinstance(decorator.func, ast.Attribute)
+                    and decorator.func.attr in {*ROUTE_METHODS, "route", "api_route"}
+                ):
+                    continue
+                path_node = decorator.args[0] if decorator.args else next(
+                    (kw.value for kw in decorator.keywords if kw.arg in {"path", "rule"}), None
+                )
+                if not (isinstance(path_node, ast.Constant)
+                        and isinstance(path_node.value, str)
+                        and path_node.value.startswith("/")):
+                    continue
+                method = decorator.func.attr
+                if method in {"route", "api_route"}:
+                    methods = next(
+                        (kw.value for kw in decorator.keywords if kw.arg == "methods"), None
+                    )
+                    if methods is None:
+                        recognized = {"GET"}
+                    elif isinstance(methods, (ast.List, ast.Tuple, ast.Set)) and methods.elts and all(
+                        isinstance(item, ast.Constant) and isinstance(item.value, str)
+                        and item.value.upper() in HTTP_METHODS for item in methods.elts
+                    ):
+                        recognized = {item.value.upper() for item in methods.elts}
+                    else:
+                        recognized = {"unspecified"}
+                else:
+                    recognized = {ROUTE_METHODS[method]}
+                counts.update(recognized)
+                total += 1
+    return total, counts
+
 
 LANGUAGES = {
     ".py": "Python",
@@ -428,6 +504,7 @@ def repository_overview(files, paths, listed, budget):
     frameworks, test_tools, runtimes, risks = set(), set(), {}, {}
     ai_sdks = set()
     ci_steps, security_tools = set(), set()
+    routes, route_types = 0, Counter()
 
     def risk(category, technology, reason, path, line=None):
         row = risks.setdefault(
@@ -448,6 +525,10 @@ def repository_overview(files, paths, listed, budget):
         if origin(path) not in OWN_CODE:
             continue
         text = files[path]["text"]
+        if not files[path].get("fragment") and not files[path].get("fragments"):
+            count, types = route_counts(path, text, budget)
+            routes += count
+            route_types.update(types)
         for ecosystem, package, line in declared_packages(path, text):
             key = (ecosystem, package)
             group = (ecosystem, package.split(":")[0])
@@ -511,6 +592,10 @@ def repository_overview(files, paths, listed, budget):
             "by_origin": dict(sorted(Counter(map(origin, paths)).items())),
         },
         "frameworks": sorted(frameworks),
+        "routes": {
+            "total": routes,
+            "by_type": dict(sorted(route_types.items())),
+        },
         "ai_sdks": sorted(ai_sdks),
         "test_tools": sorted(test_tools),
         "runtimes": sorted(

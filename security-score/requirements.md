@@ -64,8 +64,9 @@ Tests pin the exact behavior.
 
 - **REQ-15 — Repository overview only with `--details`.** A repository scan with
   `--details` adds languages, files, technologies and development signals such as
-  branches, pull or merge request markers, process files and CI. Only such a run
-  collects them: any other scan does no extra file, Git or host API work and does
+  branches, pull or merge request markers, process files and CI, plus recognized
+  route declaration counts by HTTP method or WebSocket, without individual paths.
+  Only such a run collects them: any other scan does no extra file, Git or host API work and does
   not load this code. The overview never changes score, grade, findings or exit
   status, and author addresses stay out of the output.
 

@@ -44,6 +44,10 @@ to retain the previous single-score JSON/YAML schema.
 `--details` adds the tool version, repository overview, colored bars and up to
 three grouped finding types per area, with point deductions, readable dependency
 check outcomes and one coverage summary.
+The overview counts recognized route declarations by HTTP method or WebSocket,
+for example `Routes 12 recognized; GET 8, POST 3, WebSocket 1`, without listing paths.
+Route collection runs only with `--details` and adds no score credit; supported
+patterns and counting limits are described in the [usage reference](references/usage.md#overview).
 JSON/YAML retain every occurrence, deduction and gap. The screenshot below shows
 the earlier legacy layout; the default details use the six areas with the same styling.
 
