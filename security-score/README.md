@@ -246,13 +246,23 @@ local tool change, commit and push it from the `appsec-tools` checkout first.
 security-score --update
 ```
 
-This reinstalls from the source pipx recorded at installation, not from a signed
-release. To switch an existing SSH installation to HTTPS or repair a broken
-installation:
+This reinstalls from the original installation source, not from a signed
+release. Local directory installations use their recorded absolute source path,
+so updates work from any directory. They install the current local files without
+pulling Git changes. To switch an existing SSH installation to HTTPS or repair a
+broken installation:
 
 ```sh
 pipx install --force --pip-args="--upgrade --force-reinstall --no-cache-dir" \
   "git+https://github.com/appsec-foundry/appsec-tools.git#subdirectory=security-score"
+```
+
+For a local installation, run this once from the `appsec-tools` repository root
+to repair an older updater that fails with `Directory '.' is not installable`:
+
+```sh
+pipx install --force --pip-args="--upgrade --force-reinstall --no-cache-dir" \
+  "$PWD/security-score"
 ```
 
 ## Development

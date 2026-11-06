@@ -316,13 +316,22 @@ security-score --update
 security-score --version
 ```
 
-`--update` runs `pipx upgrade --pip-args="--upgrade --force-reinstall --no-cache-dir" appsec-security-score`.
-It reinstalls from the source pipx recorded at installation: the default branch
-of this repository or your local clone, not a signed release. Review changes
+For Git, package-index and archive installations, `--update` runs
+`pipx upgrade --pip-args="--upgrade --force-reinstall --no-cache-dir" appsec-security-score`.
+For local directory installations, it reads the absolute source path from pip's
+`direct_url.json` and runs `pipx install --force` with the same pip arguments and
+that path, preserving editable mode. This also repairs relative source paths
+recorded by older pipx versions. A missing local source stops the update; restore
+the checkout or reinstall explicitly from another source.
+
+It reinstalls from the original source: the default branch
+of this repository or the current files in your local clone, not a signed release.
+Local updates do not pull Git changes. Review changes
 you do not trust before updating.
 
-From a clone of this repository, `pipx install ./security-score` installs the tool,
-and the repair command in the README takes `./security-score` instead of the URL.
+From the root of a clone of this repository, `pipx install "$PWD/security-score"`
+installs the tool with an absolute source path. The repair command in the README
+also accepts this path instead of the URL.
 
 ## Development
 

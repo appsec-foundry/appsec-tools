@@ -409,10 +409,15 @@ class ScoreTests(unittest.TestCase):
         command.assert_not_called()
         scan.assert_not_called()
 
-    def update(self, which, status=0):
+    def update(self, which, status=0, provenance=None):
         with (
             mock.patch.object(score_update.shutil, "which", side_effect=which),
             mock.patch.object(score_update, "version_text", return_value="old"),
+            mock.patch.object(
+                score_update.metadata,
+                "distribution",
+                return_value=mock.Mock(read_text=mock.Mock(return_value=provenance)),
+            ),
             mock.patch.object(
                 score_update.subprocess,
                 "run",
@@ -457,6 +462,77 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(code, 3)
         self.assertEqual(run.call_count, 1)
         self.assertIn("Update failed", errors)
+
+    def test_local_update_uses_original_absolute_source_from_another_directory(self):
+        source = self.repo / "local tool"
+        source.mkdir()
+        # pip records the absolute source even when pipx recorded only '.'.
+        provenance = json.dumps({"url": source.as_uri(), "dir_info": {}})
+        previous = Path.cwd()
+        try:
+            os.chdir(self.root)
+            code, run, _ = self.update(
+                lambda name: f"/bin/{name}", provenance=provenance
+            )
+        finally:
+            os.chdir(previous)
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            run.call_args_list[0].args[0],
+            [
+                "/bin/pipx",
+                "install",
+                "--force",
+                "--pip-args=--upgrade --force-reinstall --no-cache-dir",
+                str(source),
+            ],
+        )
+        self.assertEqual(
+            run.call_args_list[1].args[0], ["/bin/security-score", "--version"]
+        )
+        self.assertFalse(run.call_args_list[0].kwargs.get("shell"))
+
+    def test_local_editable_update_preserves_editable_installation(self):
+        provenance = json.dumps(
+            {"url": self.repo.as_uri(), "dir_info": {"editable": True}}
+        )
+        code, run, _ = self.update(lambda name: f"/bin/{name}", provenance=provenance)
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            run.call_args_list[0].args[0][-2:], ["--editable", str(self.repo)]
+        )
+
+    def test_git_and_archive_updates_keep_pipx_source(self):
+        for direct in (
+            {"url": "https://example.invalid/tool.git", "vcs_info": {"vcs": "git"}},
+            {"url": "file:///tmp/tool.whl", "archive_info": {}},
+        ):
+            with self.subTest(direct=direct):
+                code, run, _ = self.update(
+                    lambda name: f"/bin/{name}", provenance=json.dumps(direct)
+                )
+                self.assertEqual(code, 0)
+                self.assertEqual(run.call_args_list[0].args[0][1], "upgrade")
+                self.assertEqual(run.call_args_list[0].args[0][-1], score_update.PACKAGE)
+
+    def test_invalid_or_missing_local_source_never_installs_from_current_directory(self):
+        for provenance in (
+            "{",
+            "[]",
+            '{"dir_info": {}}',
+            json.dumps({"url": self.repo.as_uri(), "dir_info": []}),
+            json.dumps({"url": "file:relative", "dir_info": {}}),
+            json.dumps({"url": (self.repo / "removed").as_uri(), "dir_info": {}}),
+            json.dumps({"url": "file://remote/tool", "dir_info": {}}),
+            json.dumps({"url": "https://example.invalid/tool", "dir_info": {}}),
+        ):
+            with self.subTest(provenance=provenance):
+                code, run, errors = self.update(
+                    lambda name: f"/bin/{name}", provenance=provenance
+                )
+                self.assertEqual(code, 1)
+                run.assert_not_called()
+                self.assertIn("forced installation from the README", errors)
 
     def test_unknown_application_checks_withhold_score_despite_safe_evidence(self):
         self.write(
