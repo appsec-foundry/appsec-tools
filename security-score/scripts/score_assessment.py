@@ -400,7 +400,7 @@ def render(result, details=False, style=None):
             reason = {
                 "architecture": "No sufficient evidence from the supported data-access and isolation checks.",
                 "identity": "Access permissions need manual review.",
-                "ai": "Needs two independent AI controls, such as validated model output and an enabled agent sandbox.",
+                "ai": "Not enough evidence to rate AI controls.",
             }.get(row["id"], "Not enough evidence to rate this area.")
             lines += note(style, reason)
         if row["id"] == "ai":

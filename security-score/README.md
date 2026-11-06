@@ -124,37 +124,31 @@ AI & agents                    0/100  ░░░░░░░░░░  Very bad
             AI-OUTPUT-EXEC, JS-EVAL · src/chat.js:8
   +4 more finding types (-77.0 points).
   AI profile:
-    Provider APIs   OpenAI-compatible (src/chat.js:1)
-    Models          unresolved (options or model not literal) (src/chat.js:5)
-    Model calls     chat.completions.create (src/chat.js:5)
-    SDK imports     src/chat.js
+    Model           not resolved
+    API             OpenAI-compatible
     Agent config    .claude/settings.json, .mcp.json
 ```
 
-The AI profile lists provider API families, declared models, selected call options,
-model-callable tools, SDK imports and agent configuration. It also reads model
-declarations in explicit LLM sections of JSON/YAML files under `config/` or
-`configs/`, showing each file independently. For example:
+The AI profile keeps the essentials: declared models, API/endpoint classes,
+explicit token and step limits, tools and tool policies. Identical values appear
+once. Model declarations can come from code or explicit LLM sections in JSON/YAML
+files under `config/` or `configs/`:
 
 ```text
   AI profile:
-    Provider APIs     OpenAI-compatible (routes/chat.ts:9)
-    Models            unresolved (dynamic expression) (routes/chat.ts:203)
-    Configured models gemma-example:4b (declared) (config/default.yml:21)
-    Model endpoints   loopback HTTP (declared) (config/default.yml:22)
-    Model calls       streamText (routes/chat.ts:203)
-    Call options      stopWhen=stepCountIs(10) (routes/chat.ts:203)
+    Model (config)  gemma-example:4b
+    API             OpenAI-compatible; loopback HTTP
+    Limits          steps 10
+    Tools           searchProducts, getProductReviews, getOrderById, generateCoupon
 ```
 
-Model identifiers are captured from literal call options, supported constructors
-and provider factories; direct environment/config references are marked unresolved.
-The profile does not resolve variable aliases, merge configuration overrides or
-verify which model is running. An OpenAI-compatible API can serve another vendor's
-model, and a declared loopback endpoint does not establish a local-only deployment.
-Options include sampling, token limits, tool choice, retries and step limits when
-explicitly recognized; an omitted option does not mean the application lacks a limit.
-Model/provider names, declarations and call options earn no points; neither does
-the AI SDKs row of the overview. These profile additions require version 0.3.3 or later.
+JSON/YAML retain every source location, SDK import, model call and captured option,
+including sampling, retries and unresolved values. Text omits these technical
+details and shows `Model: not resolved` only when no literal model is recognized.
+Configuration files are not merged and the active model is not verified;
+OpenAI-compatible does not identify the model vendor. Profiles earn no points,
+and omitted limits do not establish a weakness. Model profiles require version
+0.3.3 or later.
 Model-chosen tool arguments, URLs and file paths are not yet followed; see the
 [AI & agents criteria](references/subscores.md#ai--agents).
 

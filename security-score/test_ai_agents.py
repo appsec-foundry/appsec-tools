@@ -189,16 +189,42 @@ class ModelProfileTests(unittest.TestCase):
     def test_profile_details_and_structured_modes_keep_same_security_result(self):
         files = {"chat.js": OPENAI_JS + "client.responses.create({model: 'example-model', max_output_tokens: 512});\n"}
         status, output = invoke(files, "--details")
-        self.assertIn("Provider APIs", output)
-        self.assertIn("OpenAI-compatible (chat.js:1)", output)
-        self.assertIn("example-model (chat.js:3)", output)
-        self.assertIn("max_output_tokens=512 (chat.js:3)", output)
+        self.assertRegex(output, r"(?m)^ +API +OpenAI-compatible$")
+        self.assertRegex(output, r"(?m)^ +Model \(code\) +example-model$")
+        self.assertRegex(output, r"(?m)^ +Limits +output tokens 512$")
         plain_status, plain = invoke(files, "--json")
         detail_status, detailed = invoke(files, "--json", "--details")
         self.assertEqual((status, plain_status, detail_status), (2, 2, 2))
         plain, detailed = json.loads(plain), json.loads(detailed)
         for key in ("subscores", "overall", "checks", "findings"):
             self.assertEqual(plain[key], detailed[key])
+
+    def test_compact_profile_keeps_essential_declarations_and_full_structured_evidence(self):
+        files = {
+            "chat.ts": "import { streamText, tool, stepCountIs } from 'ai';\n"
+                       "import { createOpenAICompatible } from '@ai-sdk/openai-compatible';\n"
+                       "const tools = { searchProducts: tool({execute: search}) };\n"
+                       "streamText({model: provider(model), tools, maxRetries: retries,\n"
+                       "  temperature: 0.2, stopWhen: stepCountIs(10)});\n",
+            "config/default.yml": "chatBot:\n  model: 'gemma-example:4b'\n  llmApiUrl: http://localhost:11434/v1\n",
+            "config/test.yml": "chatBot:\n  llmApiUrl: http://localhost:11434/v1\n",
+        }
+        _, output = invoke(files, "--details")
+        profile = output.split("AI profile:", 1)[1].split("\nCoverage", 1)[0]
+        self.assertEqual([line.strip() for line in profile.splitlines() if line.strip()], [
+            "Model (config)  gemma-example:4b",
+            "API             OpenAI-compatible; loopback HTTP",
+            "Limits          steps 10",
+            "Tools           searchProducts",
+        ])
+        for omitted in ("unresolved", "SDK imports", "Model calls", "maxRetries", "temperature", "chat.ts:", "config/test.yml"):
+            self.assertNotIn(omitted, profile)
+        _, output = invoke(files, "--json")
+        checks = [check for check in json.loads(output)["checks"] if check["rule"] == "AI-INTEGRATION"]
+        details = [row.get("detail", "") for check in checks for row in check["locations"]]
+        self.assertIn("model: unresolved (dynamic expression)", details)
+        self.assertIn("call options: maxRetries=unresolved, temperature=0.2, stopWhen=stepCountIs(10)", details)
+        self.assertEqual(sum("model endpoint: loopback HTTP (declared)" == detail for detail in details), 2)
 
 
 class ModelOutputFlowTests(unittest.TestCase):
@@ -491,7 +517,7 @@ class AreaAssessmentTests(unittest.TestCase):
         self.assertIn("No AI integration or agent configuration was recognized.", output)
         self.assertNotIn("AI profile:", output)
 
-    def test_ai_profile_lists_model_calls_tools_and_agent_configuration(self):
+    def test_ai_profile_lists_tools_and_agent_configuration_with_unknown_model(self):
         files = {
             "chat.ts": "import { generateText, tool } from 'ai';\n"
                        "const tools = { lookupOrder: tool({ execute: async ({ id }) => find(id) }) };\n"
@@ -504,11 +530,14 @@ class AreaAssessmentTests(unittest.TestCase):
         }
         _, output = invoke(files, "--details")
         profile = output.split("AI profile:", 1)[1].split("\nCoverage", 1)[0]
-        self.assertRegex(profile, r"Model calls +.*chat\.completions\.create \(agent\.py:7\)")
-        self.assertRegex(profile, r"generateText \(chat\.ts:3\)")
+        self.assertRegex(profile, r"Model +not resolved")
+        self.assertNotIn("Model calls", profile)
         for tool in ("lookupOrder", "refund", "get_weather"):
             self.assertIn(tool, profile)
         self.assertRegex(profile, r"Agent config +\.mcp\.json")
+        rows = inventory(files)
+        self.assertIn(("agent.py", 7, "model call: chat.completions.create"), rows)
+        self.assertIn(("chat.ts", 3, "model call: generateText"), rows)
         _, output = invoke(files, "--json")
         self.assertTrue(area(json.loads(output), "ai")["applicable"])
 

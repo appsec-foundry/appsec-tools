@@ -481,6 +481,59 @@ def identity_profile(style, architecture, *, concise=False):
     )
 
 
+def compact_ai_profile(style, found):
+    """Decision-useful declarations; full locations and options stay in checks."""
+    def limited(values, limit=3):
+        values = list(dict.fromkeys(safe(value) for value in values))
+        return ", ".join(values[:limit]) + (f", +{len(values) - limit} more" if len(values) > limit else "")
+
+    def names(kind):
+        return [name.removesuffix(" (declared)") for name, _, _ in found.get(kind, [])]
+
+    def resolved(values):
+        return [value for value in values if not value.startswith("unresolved") and not value.endswith("(unresolved)")]
+
+    code_models = limited(resolved(names("model")))
+    config_models = limited(resolved(names("configured model")))
+    unknown_model = "not resolved" if not code_models and not config_models and (
+        found.get("model") or found.get("configured model")
+    ) else ""
+    api = "; ".join(value for value in (
+        limited(names("provider API")), limited(resolved(names("model endpoint"))),
+    ) if value)
+
+    limit_labels = {
+        "max_tokens": "output tokens", "max_completion_tokens": "output tokens",
+        "max_output_tokens": "output tokens", "maxTokens": "output tokens",
+        "maxOutputTokens": "output tokens", "maxSteps": "steps",
+    }
+    limits, policies = [], []
+    for name, _, _ in found.get("call options", []):
+        for option in name.split(", "):
+            key, _, value = option.partition("=")
+            if key in limit_labels and value.isascii() and value.isdecimal():
+                limits.append(f"{limit_labels[key]} {value}")
+            elif key == "stopWhen":
+                steps = value.removeprefix("stepCountIs(").removesuffix(")")
+                if steps.isascii() and steps.isdecimal() and value == f"stepCountIs({steps})":
+                    limits.append(f"steps {steps}")
+            elif key in {"tool_choice", "toolChoice"} and value in {"auto", "none", "required", "any"}:
+                policies.append(f"choice {value}")
+            elif key == "parallel_tool_calls" and value in {"true", "false"}:
+                policies.append(f"parallel calls {value}")
+
+    return profile_rows(style, (
+        ("Model (config)", config_models),
+        ("Model (code)", code_models),
+        ("Model", unknown_model),
+        ("API", api),
+        ("Limits", limited(limits)),
+        ("Tools", limited(names("tool"), 6)),
+        ("Tool policy", limited(policies)),
+        ("Agent config", limited(path for _, path, _ in found.get("agent configuration", []))),
+    ), "AI profile", concise=True)
+
+
 def ai_profile(style, checks, *, concise=False):
     """Declared models, provider APIs, calls, tools and agent configuration; no score credit."""
     found = {}
@@ -492,6 +545,8 @@ def ai_profile(style, checks, *, concise=False):
             found.setdefault(kind, []).append((name, check["file"], row["line"]))
     if not found:
         return []
+    if concise:
+        return compact_ai_profile(style, found)
 
     def limited(values, limit=3):
         values = list(dict.fromkeys(values))

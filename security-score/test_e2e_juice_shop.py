@@ -359,10 +359,12 @@ class JuiceShopE2ETests(unittest.TestCase):
             self.assertRegex(result.stdout, rf"(?m)^{re.escape(area)} +(?:—|\d+/100) +[█░]{{10}} +")
         self.assertIn("PASSWORD-HASH", result.stdout)
         self.assertIn("AI-CLIENT-MESSAGES", result.stdout)
-        self.assertRegex(result.stdout, r"(?m)^ +Model calls +streamText \(routes/chat\.ts:\d+\)")
-        self.assertRegex(result.stdout, r"(?m)^ +Provider APIs +OpenAI-compatible \(routes/chat\.ts:\d+\)")
-        self.assertRegex(result.stdout, r"(?m)^ +Configured models +.*\(declared\).*config/default\.yml:\d+")
-        self.assertRegex(result.stdout, r"(?m)^ +Call options +.*stopWhen=stepCountIs\(10\)")
+        self.assertRegex(result.stdout, r"(?m)^ +Model \(config\) +\S+")
+        self.assertRegex(result.stdout, r"(?m)^ +API +OpenAI-compatible; loopback HTTP$")
+        self.assertRegex(result.stdout, r"(?m)^ +Limits +steps 10$")
+        ai_profile = result.stdout.split("AI profile:", 1)[1].split("\nCoverage", 1)[0]
+        for redundant in ("Model calls", "SDK imports", "unresolved", "maxRetries", "(declared)"):
+            self.assertNotIn(redundant, ai_profile)
         self.assertRegex(result.stdout, r"(?m)^Architecture & isolation +\d+/100 +")
         self.assertIn("DESIGN-DATA-BOUNDARY", result.stdout)
         self.assertIn("https://accounts.google.com", result.stdout)

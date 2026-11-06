@@ -145,7 +145,12 @@ coverage never establish absence; the area is then Not assessed.
 and never earns credit. Its locations name SDK imports, provider API families,
 model calls, declared models, selected call options and model-callable tools
 (AI SDK `tool()`, MCP `server.tool()`, Python `@tool` decorators and function-tool
-definitions), which `--details` shows as the AI profile. Provider families come
+definitions). `--details` shows a compact AI profile: distinct model declarations,
+API/endpoint classes, explicit token/step limits, tools and tool policies.
+Locations, SDK imports, model calls, sampling, retries and unresolved options stay
+in JSON/YAML. If no literal model is recognized, text shows `Model: not resolved`;
+a recognized configuration declaration does not resolve dynamic model selection.
+Provider families come
 from imports and do not identify the service behind a configurable endpoint.
 Literal model options and supported provider factories/constructors are recognized;
 variable aliases, imported settings and dynamic expressions stay unresolved.
