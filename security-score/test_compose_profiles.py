@@ -70,7 +70,8 @@ class ComposeProfiles(Invocation, unittest.TestCase):
         output = render(result, details=True, style=Style('never', 'never'))
         block = output.split('Deployment & operations', 1)[1]
         self.assertIn('Compose service profiles:', block)
-        self.assertIn('web (compose.yaml:2)', block)
+        self.assertIn('    compose.yaml', block)
+        self.assertIn('      web (line 2):', block)
         self.assertIn('loopback', block)
         self.assertIn('Docker socket', block)
 
@@ -204,7 +205,8 @@ services:
         output = render(result, details=True, style=Style('never', 'never'))
         block = output.split('Compose service profiles:', 1)[1].split('Coverage', 1)[0]
         self.assertNotIn('sut (', block)
-        self.assertIn('app (docker-compose.test.yml:5)', block)
+        self.assertIn('    docker-compose.test.yml', block)
+        self.assertIn('      app (line 5):', block)
         self.assertIn('bkimminich/juice-shop:latest', block)
         for label in ('Ports', 'Networks', 'Privileges', 'Filesystem', 'Operations'):
             self.assertNotIn(label, block)
@@ -217,6 +219,46 @@ services:
         self.assertNotIn('Compose service profiles:', output)
         self.assertIn('Declared deployment targets: Docker Compose', output)
         self.assertEqual(len(result['architecture']['compose']['services']), 1)
+
+    def test_file_grouping_keeps_services_settings_and_source_lines(self):
+        files = {
+            'compose.yaml': ('services:\n  web:\n    image: example/web:1\n'
+                             '    ports: ["127.0.0.1:8080:80"]\n'
+                             '    volumes: ["./config:/etc/web:ro"]\n'
+                             '    networks: [private]\n'
+                             '    restart: unless-stopped\n'
+                             '  db:\n    image: example/db:2\n'),
+            'infrastructure/compose.yaml': 'services:\n  web:\n    image: example/other:3\n',
+        }
+        _, result = self.invoke(files)
+        before = json.dumps(result, sort_keys=True)
+        output = render(result, details=True)
+        first = output.split('    compose.yaml\n', 1)[1].split('    infrastructure/compose.yaml\n', 1)[0]
+        second = output.split('    infrastructure/compose.yaml\n', 1)[1]
+        self.assertIn('      web (line 2):', first)
+        self.assertIn('      db (line 8):', first)
+        self.assertIn('      web (line 2):', second)
+        normalized = ' '.join(first.split())
+        for setting in ('image: example/web:1 (digest not declared) (line 3)',
+                        'ports: 127.0.0.1:8080 -> 80/tcp (loopback) (line 4)',
+                        'volumes: bind ./config -> /etc/web (read-only) (line 5)',
+                        'networks: private (line 6)',
+                        'restart: unless-stopped (line 7)',
+                        'image: example/db:2 (digest not declared) (line 9)'):
+            self.assertIn(setting, normalized)
+        self.assertIn('image: example/other:3', second)
+        self.assertIn('override order', second)
+        self.assertEqual(before, json.dumps(result, sort_keys=True))
+
+    def test_group_headings_never_emit_repository_control_characters(self):
+        _, result = self.invoke({'compose.yaml': 'services:\n  web:\n    image: example/web:1\n'})
+        service = result['architecture']['compose']['services'][0]
+        service['file'] = 'bad\x1b[2J\ncompose.yaml'
+        service['service'] = 'web\x1b]0;changed\x07'
+        output = render(result, details=True)
+        self.assertNotRegex(output, r'[\x00-\x09\x0b-\x1f\x7f-\x9f]')
+        self.assertIn('    bad?[2J?compose.yaml', output)
+        self.assertIn('      web?]0;changed? (line 2):', output)
 
     def test_unresolved_fields_and_parser_gaps_remain_visible(self):
         for source, expected in (

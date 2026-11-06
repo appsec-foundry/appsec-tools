@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
@@ -251,7 +252,7 @@ app.websocket('/private-events', handler);
         self.assertNotIn("(E)", text)
         self.assertEqual(sum(title in text for title in ("Architecture & isolation", "Identity & access", "Data & processing", "Dependencies & supply chain", "Deployment & operations", "AI & agents")), 6)
         self.assertIn("59/100 (Bad)", text)
-        self.assertEqual(text.count("░"), 54)
+        self.assertEqual(text.count("░"), 4)
 
     def test_compact_output_never_promotes_partial_positive_evidence_to_an_overall_score(self):
         for files in ({"README.md": "Example\n"}, {"app.py": "ast.literal_eval(value)\ncursor.execute('SELECT 1')\n"}):
@@ -319,6 +320,81 @@ app.websocket('/private-events', handler);
         self.assertTrue(any(row["gaps"] for row in result["subscores"]))
         self.assertTrue(any(row["controls"] for row in result["subscores"]) or result["review_hints"])
         self.assertEqual(json.dumps(result, sort_keys=True), before)
+
+
+class DetailPresentationTests(Invocation, unittest.TestCase):
+    def test_incomplete_status_precedes_overview_and_keeps_all_coverage_details(self):
+        status, result = self.invoke({
+            "app.py": "requests.get(url, verify=False)\n",
+            "bad.py": "def broken(\n",
+        }, "--details")
+        before = json.dumps(result, sort_keys=True)
+        self.assertEqual(status, 1)
+        for width in (60, 100, 120):
+            for unicode in (False, True):
+                with self.subTest(width=width, unicode=unicode):
+                    plain = score.render(result, details=True, style=Style(width=width, unicode=unicode))
+                    colored = score.render(result, details=True,
+                                           style=Style(color=True, width=width, unicode=unicode))
+                    self.assertEqual(re.sub(r"\x1b\[[0-9;]*m", "", colored), plain)
+                    self.assertEqual(plain.count("Assessment incomplete"), 1)
+                    self.assertLess(plain.index("Assessment incomplete"), plain.index("Overview"))
+                    self.assertIn("\x1b[33mAssessment incomplete", colored)
+                    normalized = " ".join(plain.split())
+                    for detail in ("2 files checked", "1 finding", "1 file could not be parsed (bad.py)",
+                                   "PY-TLS", "app.py:1", "(-41.0 points)",
+                                   "runtime protection remains unverified",
+                                   "deductions accumulate; minimum score 0"):
+                        self.assertIn(detail, normalized)
+        self.assertEqual(before, json.dumps(result, sort_keys=True))
+        self.assertEqual(score.render(result), "59/100 (Bad)")
+
+    def test_unrated_headers_have_no_bar_and_rated_bars_keep_neutral_remainder(self):
+        _, result = self.invoke({"app.py": "requests.get(url, verify=False)\n"})
+        for unicode in (False, True):
+            style = Style(unicode=unicode)
+            details = score.render(result, details=True, style=style)
+            for row in result["subscores"]:
+                header = next(line for line in details.splitlines() if line.startswith(row["title"]))
+                self.assertIn(row["rating"], header)
+                if row["score"] is None:
+                    self.assertNotRegex(header, r"[█░\[\]#]")
+                else:
+                    self.assertIn(style.bar(row["score"]), header)
+        colored = Style(color=True).bar(59)
+        self.assertIn("\x1b[31m██████\x1b[0m", colored)
+        self.assertIn("\x1b[2m░░░░\x1b[0m", colored)
+
+    def test_width_aware_runtime_and_history_rows_preserve_every_detail(self):
+        _, result = self.invoke({"app.py": "eval(payload)\n"}, "--details")
+        overview = result["overview"]
+        overview["runtimes"] = [
+            {"runtime": "Node.js", "version": "20.19.2", "file": "infrastructure/Dockerfile", "line": 1},
+            {"runtime": "Node.js", "version": "22 - 26", "file": "package.json", "line": 211},
+            {"runtime": "Node.js", "version": "24", "file": "Dockerfile", "line": 1},
+        ]
+        overview["development"]["history"] = {
+            "branches": 12, "commits": 9, "ref": "default branch", "with_request_marker": 0,
+            "other_merges": 1, "without_marker": 8, "authors": 4, "latest_commit": "2026-10-23",
+        }
+        before = json.dumps(result, sort_keys=True)
+        for width in (60, 100, 120):
+            output = score.render(result, details=True, style=Style(width=width))
+            normalized = " ".join(output.split())
+            for runtime in overview["runtimes"]:
+                self.assertIn(f"{runtime['runtime']} {runtime['version']} "
+                              f"({runtime['file']}:{runtime['line']})", normalized)
+            self.assertIn("Branches 12", normalized)
+            self.assertIn("last 9 commits on default branch: 0 with a pull/merge request marker, "
+                          "1 other merge, 8 without marker; 4 authors; latest 2026-10-23", normalized)
+            self.assertRegex(output, r"(?m)^ +Node\.js 24 \(Dockerfile:1\)$")
+        self.assertEqual(before, json.dumps(result, sort_keys=True))
+        overview["runtimes"] = overview["runtimes"][2:]
+        overview["development"]["history"]["ref"] = "HEAD"
+        overview["development"]["history"]["latest_commit"] = ""
+        short = score.render(result, details=True, style=Style(width=160))
+        self.assertRegex(short, r"(?m)^ +Runtimes +Node\.js 24 \(Dockerfile:1\)$")
+        self.assertRegex(short, r"(?m)^ +Commits +last 9 commits on HEAD: 0 with a pull/merge request marker")
 
 
 class EndpointTests(Invocation, unittest.TestCase):

@@ -13,6 +13,20 @@ summary. Internal states and formula traces remain in JSON/YAML, which retain
 every occurrence and unresolved question. The repository overview and service,
 cloud/IaC and supply-chain profiles provide located context. See the
 [subscore reference](subscores.md) for criteria, arithmetic and profile limits.
+If processing is incomplete, the status appears once directly below the scope;
+the coverage section retains parsing errors, exclusions and review counts.
+Unrated areas show a dash and their status without a score bar. Rated bars use
+the rating color only for the filled portion, with a dim remainder. A short
+scoring note explains the lowest assessed area, cumulative deductions and the
+zero lower bound; the overall evidence gate still applies.
+
+Profiles remain directly below their area. Runtime and commit summaries use
+explicit continuation lines when they exceed the available terminal width.
+Compose profiles group services by source file, with each service's declaration
+line beneath the file heading. Property rows retain the configuration keys,
+values and source lines, including port bindings, mount access and unresolved
+declarations. The display changes do not alter scores or JSON/YAML evidence.
+
 AI & agents shows Not applicable when no AI SDK, model call, supported LLM
 configuration declaration or agent configuration is recognized; the overview
 then has no AI SDKs row.

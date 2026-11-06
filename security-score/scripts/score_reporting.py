@@ -293,9 +293,17 @@ def note(style, text, indent="  "):
     return [style.paint(line, "dim") for line in wrapped(text, style.width, indent)]
 
 
-def entry(style, tag, text, detail):
+def entry(style, tag, text, detail, *, suffix=""):
     """Tag column, then a wrapped description and a dimmed rule/location line."""
-    lines = wrapped(text, style.width, TEXT_INDENT)
+    lines = wrapped(text + suffix, style.width, TEXT_INDENT)
+    remaining = len(suffix)
+    for index in range(len(lines) - 1, -1, -1):
+        if remaining <= 0:
+            break
+        length = min(remaining, len(lines[index]) - len(TEXT_INDENT))
+        if length:
+            lines[index] = lines[index][:-length] + style.paint(lines[index][-length:], "dim")
+        remaining -= length + 1  # A wrap consumes the separating space.
     lines[0] = "  " + tag + "  " + lines[0][len(TEXT_INDENT) :]
     lines += [
         style.paint(line, "dim") for line in wrapped(detail, style.width, TEXT_INDENT)
@@ -671,18 +679,33 @@ def architecture_profile(style, architecture, *, concise=False):
     return profile_rows(style, rows, concise=concise)
 
 
-def profile_rows(style, rows, title="Profile", *, concise=False):
+def profile_rows(style, rows, title="Profile", *, concise=False, indent=2, value_style=None):
+    """Located context rows; lists retain explicit continuation boundaries."""
     if concise:
         rows = [(label, text) for label, text in rows if text]
     if not rows:
         return []
     heading = f"{title}:" if concise else f"{title} (context only, adds no score credit):"
-    lines = note(style, heading)
+    lines = [style.paint(line, "bold") for line in wrapped(
+        heading, style.width, " " * indent,
+    )]
     label_width = max(16, max(len(label) + 2 for label, _ in rows))
+    content_indent = " " * (indent + 2 + label_width)
     for label, text in rows:
-        lines += wrapped(
-            text or "none recognized", style.width, " " * (4 + label_width), f"    {label:<{label_width}}"
-        )
+        parts = text if isinstance(text, list) else [text or "none recognized"]
+        first = " " * (indent + 2) + f"{label:<{label_width}}"
+        for index, part in enumerate(parts):
+            row = wrapped(part, style.width, content_indent,
+                          first if index == 0 else content_indent)
+            if index == 0:
+                value = row[0][len(first):]
+                row[0] = (" " * (indent + 2)
+                          + style.paint(f"{label:<{label_width}}", "dim")
+                          + (style.paint(value, value_style) if value_style else value))
+            if value_style:
+                start = 1 if index == 0 else 0
+                row[start:] = [style.paint(line, value_style) for line in row[start:]]
+            lines += row
     return lines
 
 
@@ -777,7 +800,7 @@ def compose_profile(style, architecture, limit=3):
                 if service.get("properties") or service.get("unresolved")]
     if not profile.get("files") or not (services or profile.get("gaps")):
         return []
-    lines = note(style, "Compose service profiles:")
+    lines = [style.paint("  Compose service profiles:", "bold")]
 
     def display(value):
         if value is True:
@@ -798,16 +821,24 @@ def compose_profile(style, architecture, limit=3):
         ("Filesystem", ("read_only", "volumes")),
         ("Operations", ("cpus", "mem_limit", "pids_limit", "healthcheck", "restart", "init", "deploy")),
     )
+    files = {}
     for service in services[:limit]:
-        rows = []
-        for label, keys in groups:
-            properties = service["properties"]
-            declared = [f"{key}: {compose_value(key, properties[key]['value'], display)} (line {properties[key]['line']})" for key in keys if key in properties]
-            if declared:
-                rows.append((label, "; ".join(declared)))
-        for reason in service.get("unresolved", []):
-            rows.append(("Unresolved", safe(reason)))
-        lines += profile_rows(style, rows, f"  {safe(service['service'])} ({location(service)})", concise=True)
+        files.setdefault(service["file"], []).append(service)
+    for path, file_services in files.items():
+        lines += [style.paint(line, "bold") for line in wrapped(
+            safe(path), style.width, "    ",
+        )]
+        for service in file_services:
+            rows = []
+            for label, keys in groups:
+                properties = service["properties"]
+                declared = [f"{key}: {compose_value(key, properties[key]['value'], display)} (line {properties[key]['line']})" for key in keys if key in properties]
+                if declared:
+                    rows.append((label, "; ".join(declared)))
+            for reason in service.get("unresolved", []):
+                rows.append(("Unresolved", safe(reason)))
+            title = f"{safe(service['service'])} (line {service['line']})"
+            lines += profile_rows(style, rows, title, concise=True, indent=6)
     if len(services) > limit:
         lines += note(style, f"+{len(services) - limit} service declarations in JSON/YAML")
     for gap in profile.get("gaps", [])[:limit]:
@@ -869,7 +900,7 @@ def file_row(files):
     return text if files["listing_complete"] else text + "; listing cut short"
 
 
-def history_rows(history):
+def history_rows(history, *, width=None):
     if "unavailable" in history:
         reason = f"unavailable: {safe(history['unavailable'])}"
         return (("Branches", reason), ("Commits", reason))
@@ -882,6 +913,15 @@ def history_rows(history):
     )
     if history["latest_commit"]:
         summary += f"; latest {safe(history['latest_commit'])}"
+    if width is not None and len(summary) > width:
+        summary = [
+            f"last {plural(history['commits'], 'commit')} on {safe(history['ref'])}:",
+            f"{history['with_request_marker']} with a pull/merge request marker,",
+            f"{plural(history['other_merges'], 'other merge')}, "
+            f"{history['without_marker']} without marker;",
+            plural(history['authors'], 'author')
+            + (f"; latest {safe(history['latest_commit'])}" if history['latest_commit'] else ""),
+        ]
     branches = history["branches"]
     return (
         ("Branches", "" if branches is None else str(branches)),
@@ -915,10 +955,14 @@ def overview_section(style, overview, *, concise=False):
     def names(rows):
         return ", ".join(safe(name) for name in rows)
 
-    runtimes = ", ".join(
+    runtime_rows = [
         f"{safe(row['runtime'])} {safe(row['version'])} ({location(row)})"
         for row in overview["runtimes"][:6]
-    )
+    ]
+    runtimes = ", ".join(runtime_rows)
+    if concise and len(runtimes) > style.width - 20:
+        runtimes = [row + ("," if index < len(runtime_rows) - 1 else "")
+                    for index, row in enumerate(runtime_rows)]
     ci = ", ".join(
         f"{safe(row['system'])} ({plural(row['files'], 'file')})"
         for row in development["ci"]
@@ -958,7 +1002,8 @@ def overview_section(style, overview, *, concise=False):
         concise=concise,
     )
     if risks:
-        lines += profile_rows(style, risks, "Technology risks", concise=concise)
+        lines += profile_rows(style, risks, "Technology risks", concise=concise,
+                              value_style="yellow")
     elif not concise:
         lines += note(
             style,
@@ -967,7 +1012,8 @@ def overview_section(style, overview, *, concise=False):
     lines += profile_rows(
         style,
         (
-            *(history_rows(development["history"]) if not concise or "unavailable" not in development["history"] else ()),
+            *(history_rows(development["history"], width=style.width - 20 if concise else None)
+              if not concise or "unavailable" not in development["history"] else ()),
             ("Process files", names(development["process_files"])),
             ("CI", ci),
             ("Quality tools", names(development["quality_tools"])),

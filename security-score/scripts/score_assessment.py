@@ -345,9 +345,9 @@ def render(result, details=False, style=None):
     from score_reporting import (
         ai_profile, architecture_profile, dependency_profile, entry, identity_profile,
         infrastructure_profile, note, overview_section, plural, source_priority,
-        supply_chain_profile, compose_profile,
+        supply_chain_profile, compose_profile, wrapped,
     )
-    from score_style import Style
+    from score_style import BAR_WIDTH, Style
 
     style = style or Style()
     values = [row["score"] for row in result["subscores"] if row["score"] is not None]
@@ -361,18 +361,30 @@ def render(result, details=False, style=None):
     scope = result["scope"]
     revision = f" @ {safe(scope['revision'][:12])}" if scope.get("revision") else ""
     lines.append(f"Scope: {safe(scope['repository'])}{revision}")
+    if result["verdict"] == "incomplete":
+        lines += [style.paint(line, "yellow") for line in wrapped(
+            "Assessment incomplete; some files or checks could not be processed.",
+            style.width, "",
+        )]
     lines += overview_section(style, result.get("overview"), concise=True)
+    lines += ["", *note(
+        style,
+        "Scoring: lowest assessed area when assessable; deductions accumulate; minimum score 0.",
+        "",
+    )]
     width = max(len(row["title"]) for row in result["subscores"])
     architecture = result.get("architecture", {})
     for row in result["subscores"]:
         if row["score"] is None:
             points = "—" if style.unicode else "-"
+            bar = " " * (BAR_WIDTH if style.unicode else BAR_WIDTH + 2)
         else:
             points = f"{row['score']}/100"
+            bar = style.bar(row["score"])
         lines += ["", (
             style.paint(f"{row['title']:<{width}}", "bold") + "  "
             + style.paint(f"{points:>7}", style.band(row["score"]), "bold")
-            + f"  {style.bar(row['score'])}  "
+            + f"  {bar}  "
             + style.paint(row["rating"], style.band(row["score"]))
         )]
         groups = defaultdict(list)
@@ -389,8 +401,9 @@ def render(result, details=False, style=None):
             location = f"{safe(first['file'])}:{safe(first.get('pointer', first.get('line', '?')))}"
             more = f" (+{len(items) - 1} more)" if len(items) > 1 else ""
             title = first["reason"] if "DESIGN-CONTAINER-ISOLATION" in rules else first["title"]
-            lines += entry(style, style.tag(severity), f"{safe(title)} (-{deduction:.1f} points)",
-                           f"{', '.join(rules)} {style.dot} {location}{more}")
+            lines += entry(style, style.tag(severity), safe(title),
+                           f"{', '.join(rules)} {style.dot} {location}{more}",
+                           suffix=f" (-{deduction:.1f} points)")
         if len(ranked) > 3:
             hidden = sum(item["deduction"] for _, items in ranked[3:] for item in items)
             lines += note(style, f"+{len(ranked) - 3} more finding types (-{hidden:.1f} points).")
@@ -443,8 +456,6 @@ def render(result, details=False, style=None):
     weaknesses = plural(count, "finding")
     lines += note(style, f"{plural(result['coverage'].get('files_checked', 0), 'file')} checked {style.dot} "
                   f"{weaknesses}")
-    if result["verdict"] == "incomplete":
-        lines += note(style, "Assessment incomplete; some files or checks could not be processed.")
     hints = [hint for hint in result["review_hints"] if hint["disposition"] == "review"]
     if hints:
         lines += note(style, f"{len(hints)} further observations need manual review.")

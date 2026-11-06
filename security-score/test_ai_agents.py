@@ -513,7 +513,7 @@ class AreaAssessmentTests(unittest.TestCase):
         self.assertRegex(output, r"(?m)^ +AI SDKs +OpenAI SDK$")
         self.assertIn("AI-OUTPUT-EXEC, JS-EVAL", output)
         _, output = invoke({"app.py": "print(1)\n"}, "--details")
-        self.assertRegex(output, r"(?m)^AI & agents +\S+ +\S+ +Not applicable$")
+        self.assertRegex(output, r"(?m)^AI & agents +— +Not applicable$")
         self.assertIn("No AI integration or agent configuration was recognized.", output)
         self.assertNotIn("AI profile:", output)
 

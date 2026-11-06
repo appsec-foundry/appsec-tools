@@ -78,9 +78,9 @@ class Style:
     def bar(self, score):
         filled = 0 if score is None else round(score / 100 * BAR_WIDTH)
         full, empty = ("█", "░") if self.unicode else ("#", "-")
-        text = self.paint(
-            full * filled + empty * (BAR_WIDTH - filled), self.band(score)
-        )
+        text = self.paint(full * filled, self.band(score)) if filled else ""
+        if filled < BAR_WIDTH:
+            text += self.paint(empty * (BAR_WIDTH - filled), "dim")
         return text if self.unicode else f"[{text}]"
 
     @property

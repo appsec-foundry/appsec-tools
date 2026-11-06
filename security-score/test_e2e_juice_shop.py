@@ -356,7 +356,7 @@ class JuiceShopE2ETests(unittest.TestCase):
         self.assertRegex(result.stdout, r"\Asecurity-score \S+\n\nSecurity score . \d+/100 \((?:Bad|Very bad)\)")
         for area in ("Architecture & isolation", "Identity & access", "Data & processing",
                      "Dependencies & supply chain", "Deployment & operations", "AI & agents"):
-            self.assertRegex(result.stdout, rf"(?m)^{re.escape(area)} +(?:—|\d+/100) +[█░]{{10}} +")
+            self.assertRegex(result.stdout, rf"(?m)^{re.escape(area)} +(?:\d+/100 +[█░]{{10}} +|— +Not (?:assessed|applicable))")
         self.assertIn("PASSWORD-HASH", result.stdout)
         self.assertIn("AI-CLIENT-MESSAGES", result.stdout)
         self.assertRegex(result.stdout, r"(?m)^ +Model \(config\) +\S+")

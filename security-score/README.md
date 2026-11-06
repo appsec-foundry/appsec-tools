@@ -44,6 +44,11 @@ to retain the previous single-score JSON/YAML schema.
 `--details` adds the tool version, repository overview, colored bars and up to
 three grouped finding types per area, with point deductions, readable dependency
 check outcomes and one coverage summary.
+Incomplete processing is highlighted below the scope. Unrated areas have no bar;
+rated bars color the filled portion and leave the remainder dim. Profiles stay
+with their area, and Compose services are grouped by source file with their
+configuration keys, values and source lines retained. Long runtime and commit
+summaries wrap to the terminal width without dropping information.
 The overview separates route counts, HTTP methods and recognized API types,
 without listing paths:
 
