@@ -213,3 +213,8 @@ Rule version 9 adds DEP-LOCK, counts an exact Python requirement as pinned where
 Rule version 13, relevance version 8 and subscore policy version 3 add the `ai` area with the AI & agents rules, OpenAI and Hugging Face token formats in SECRET-TOKEN, and the `ai` check group. Changes to MCP or agent configuration (REL-AGENT-CONFIG) and in the affected context of AI checks are high relevance. Repositories using AI SDKs or committing agent configuration can receive new findings; others show the area as Not applicable. `scoring_policy` is now `area-subscores`.
 
 Rule version 14 and subscore policy version 4 add AI-CLIENT-MESSAGES for request data passed as the model conversation, and name recognized model calls and tools in AI-INTEGRATION locations for the AI profile.
+
+Rule version 15 extends AI-INTEGRATION with provider API families, declared models,
+selected call options and model endpoint classes. Supported LLM configuration
+declarations also make the AI area applicable; this inventory never earns credit
+and does not resolve runtime configuration or change deduction criteria.

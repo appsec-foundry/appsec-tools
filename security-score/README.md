@@ -124,13 +124,37 @@ AI & agents                    0/100  ░░░░░░░░░░  Very bad
             AI-OUTPUT-EXEC, JS-EVAL · src/chat.js:8
   +4 more finding types (-77.0 points).
   AI profile:
+    Provider APIs   OpenAI-compatible (src/chat.js:1)
+    Models          unresolved (options or model not literal) (src/chat.js:5)
     Model calls     chat.completions.create (src/chat.js:5)
     SDK imports     src/chat.js
     Agent config    .claude/settings.json, .mcp.json
 ```
 
-The AI profile lists recognized model calls, model-callable tools, SDK imports and
-agent configuration; it and the AI SDKs row of the overview earn no points.
+The AI profile lists provider API families, declared models, selected call options,
+model-callable tools, SDK imports and agent configuration. It also reads model
+declarations in explicit LLM sections of JSON/YAML files under `config/` or
+`configs/`, showing each file independently. For example:
+
+```text
+  AI profile:
+    Provider APIs     OpenAI-compatible (routes/chat.ts:9)
+    Models            unresolved (dynamic expression) (routes/chat.ts:203)
+    Configured models gemma-example:4b (declared) (config/default.yml:21)
+    Model endpoints   loopback HTTP (declared) (config/default.yml:22)
+    Model calls       streamText (routes/chat.ts:203)
+    Call options      stopWhen=stepCountIs(10) (routes/chat.ts:203)
+```
+
+Model identifiers are captured from literal call options, supported constructors
+and provider factories; direct environment/config references are marked unresolved.
+The profile does not resolve variable aliases, merge configuration overrides or
+verify which model is running. An OpenAI-compatible API can serve another vendor's
+model, and a declared loopback endpoint does not establish a local-only deployment.
+Options include sampling, token limits, tool choice, retries and step limits when
+explicitly recognized; an omitted option does not mean the application lacks a limit.
+Model/provider names, declarations and call options earn no points; neither does
+the AI SDKs row of the overview. These profile additions require version 0.3.3 or later.
 Model-chosen tool arguments, URLs and file paths are not yet followed; see the
 [AI & agents criteria](references/subscores.md#ai--agents).
 

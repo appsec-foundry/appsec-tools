@@ -2,14 +2,15 @@
 
 Reads only already-selected sources; nothing from the target is imported or
 executed. Model-output flows are followed within one file and one function or
-block scope, never across files. Matched values such as prompts or credentials
-never leave this module; observations carry line numbers only.
+block scope, never across files. Prompts and credentials never leave this
+module; inventory values are limited to model identifiers and selected options.
 """
 
 from __future__ import annotations
 
 import ast
 from collections import defaultdict
+import ipaddress
 import json
 from pathlib import PurePosixPath
 import re
@@ -131,13 +132,195 @@ def call_label(value):
     return re.sub(r"^new(?=[A-Z])", "", label)
 
 
+# API families, not claims about the service behind a configurable endpoint.
+PROVIDER_MODULES = {
+    "openai": "OpenAI-compatible", "@ai-sdk/openai": "OpenAI-compatible",
+    "@ai-sdk/openai-compatible": "OpenAI-compatible", "langchain_openai": "OpenAI-compatible",
+    "@langchain/openai": "OpenAI-compatible",
+    "anthropic": "Anthropic", "@anthropic-ai/sdk": "Anthropic", "@ai-sdk/anthropic": "Anthropic",
+    "langchain_anthropic": "Anthropic", "@langchain/anthropic": "Anthropic",
+    "google.genai": "Google Gemini", "google.generativeai": "Google Gemini",
+    "@google/genai": "Google Gemini", "@google/generative-ai": "Google Gemini",
+    "@ai-sdk/google": "Google Gemini", "@ai-sdk/azure": "Azure OpenAI",
+    "ollama": "Ollama", "@langchain/ollama": "Ollama",
+    "mistralai": "Mistral", "@mistralai/mistralai": "Mistral", "@ai-sdk/mistral": "Mistral",
+    "cohere": "Cohere", "cohere-ai": "Cohere", "@ai-sdk/cohere": "Cohere",
+    "@aws-sdk/client-bedrock-runtime": "Amazon Bedrock", "@ai-sdk/amazon-bedrock": "Amazon Bedrock",
+}
+MODEL_KEYS = {"model", "modelName", "model_name", "modelId", "model_id"}
+CALL_OPTIONS = {
+    "temperature", "top_p", "topP", "max_tokens", "max_completion_tokens", "max_output_tokens",
+    "maxTokens", "maxOutputTokens", "maxSteps", "maxRetries", "tool_choice", "toolChoice",
+    "parallel_tool_calls", "stream", "stopWhen",
+}
+LLM_SECTIONS = {"llm", "chatbot", "openai", "anthropic", "ollama"}
+MODEL_CONSTRUCTOR = re.compile(
+    r"\bnew\s+(?:ChatOpenAI|AzureChatOpenAI|ChatAnthropic|ChatGoogleGenerativeAI|ChatOllama|Ollama|GoogleGenerativeAI)\s*\("
+    r"|\.getGenerativeModel\s*\("
+)
+PROFILE_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/@+-]{0,127}", re.ASCII)
+
+
+def profile_identifier(value):
+    """Only short identifiers; never output credential-shaped or arbitrary strings."""
+    if not isinstance(value, str) or not PROFILE_IDENTIFIER.fullmatch(value):
+        return None
+    if re.search(r"(?i)(?:sk-|hf_|gh[pousr]_|github_pat_|AIza|AKIA|bearer|password|secret|token)", value):
+        return None
+    if "://" in value or re.search(r"@[^/]+\.[A-Za-z]{2,}$", value):
+        return None
+    return value
+
+
+def provider_name(module):
+    return next((label for name, label in PROVIDER_MODULES.items()
+                 if module == name or module.startswith(name + ("/" if module.startswith("@") else "."))), None)
+
+
+def js_fields(text, code, start):
+    """Top-level fields of a bounded, literal first-argument object; retain offsets.
+
+    Comments and strings are already masked in code. Spreads, duplicate fields,
+    computed keys and incomplete objects leave the options unresolved.
+    """
+    end = min(len(code), start + MAX_CALL_CHARS)
+    match = re.match(r"\s*\{", code[start:end])
+    if not match:
+        return {}
+    field_start = start + match.end()
+    stack, spans = ["}"], []
+    for pos in range(field_start, end):
+        char = code[pos]
+        if char in "({[":
+            stack.append({"(": ")", "{": "}", "[": "]"}[char])
+        elif char in ")}]":
+            if not stack or stack.pop() != char:
+                return {}
+            if not stack:
+                spans.append((field_start, pos))
+                break
+        elif char == "," and len(stack) == 1:
+            spans.append((field_start, pos))
+            field_start = pos + 1
+    else:
+        return {}
+    fields = {}
+    for left, right in spans:
+        if not code[left:right].strip() and not text[left:right].strip():
+            continue
+        field = re.match(r"\s*([A-Za-z_$][\w$]*)\s*:", code[left:right])
+        shorthand = re.fullmatch(r"\s*([A-Za-z_$][\w$]*)\s*", code[left:right])
+        if shorthand:
+            if shorthand[1] in fields:
+                return {}
+            fields[shorthand[1]] = shorthand[1]
+            continue
+        if not field or field[1] in fields:
+            return {}
+        value_start = left + field.end()
+        fields[field[1]] = text[value_start:right].strip()
+    return fields
+
+
+def js_model_value(value):
+    """A literal identifier or a configuration reference, without evaluating code."""
+    literal = re.fullmatch(r"(['\"`])([A-Za-z0-9_.:/@+-]{1,128})\1", value)
+    if literal:
+        return profile_identifier(literal[2]) or "unresolved"
+    env = re.fullmatch(r"process\.env\.([A-Za-z_][A-Za-z0-9_]{0,79})", value)
+    config = re.fullmatch(r"config\.get(?:<\w+>)?\(\s*(['\"])([\w.\-]{1,100})\1\s*\)", value)
+    if env:
+        return f"environment {env[1]} (unresolved)"
+    if config:
+        return f"config {config[2]} (unresolved)"
+    # Vercel provider factories: openai('model'), provider.chat('model'), etc.
+    factory = re.fullmatch(r"[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)?\(\s*(.{1,300}?)\s*\)", value, re.S)
+    if factory:
+        inner = factory[1]
+        if re.fullmatch(r"(['\"`])[A-Za-z0-9_.:/@+-]{1,128}\1", inner) or inner.startswith("process.env."):
+            return js_model_value(inner)
+    return "unresolved (dynamic expression)"
+
+
+def option_value(key, value):
+    """Only fixed scalar options; prompts, schemas, URLs and expressions stay private."""
+    if re.fullmatch(r"(?:0|[1-9][0-9]{0,7})(?:\.[0-9]{1,8})?|true|false", value):
+        return value
+    choice = re.fullmatch(r"(['\"])(auto|none|required|any)\1", value)
+    if key in {"tool_choice", "toolChoice"} and choice:
+        return choice[2]
+    steps = re.fullmatch(r"stepCountIs\(\s*([1-9][0-9]{0,5})\s*\)", value)
+    if key == "stopWhen" and steps:
+        return f"stepCountIs({steps[1]})"
+    return "unresolved"
+
+
+def python_model_value(node):
+    if isinstance(node, ast.Constant):
+        return profile_identifier(node.value) or "unresolved"
+    if isinstance(node, ast.Subscript) and dotted(node.value) == "os.environ":
+        key = node.slice
+    elif isinstance(node, ast.Call) and dotted(node.func) in {"os.getenv", "os.environ.get"} and node.args:
+        key = node.args[0]
+        if len(node.args) != 1 or node.keywords:
+            return "unresolved (dynamic expression)"
+    else:
+        return "unresolved (dynamic expression)"
+    if isinstance(key, ast.Constant) and isinstance(key.value, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,79}", key.value):
+        return f"environment {key.value} (unresolved)"
+    return "unresolved"
+
+
+def python_call_inventory(node):
+    # **options and repeated fields could override the visible values.
+    fields = {item.arg: item.value for item in node.keywords}
+    if None in fields or len(fields) != len(node.keywords):
+        fields = {}
+    rows = [(node.lineno, "satisfied", f"model: {python_model_value(value)}")
+            for key, value in fields.items() if key in MODEL_KEYS]
+    if not rows:
+        rows.append((node.lineno, "satisfied", "model: unresolved (options or model not literal)"))
+    options = []
+    for key, value in fields.items():
+        if key not in CALL_OPTIONS:
+            continue
+        if isinstance(value, ast.Constant) and isinstance(value.value, (str, int, float, bool)):
+            raw = json.dumps(value.value)
+        else:
+            raw = ""
+        options.append(f"{key}={option_value(key, raw)}")
+    if options:
+        rows.append((node.lineno, "satisfied", "call options: " + ", ".join(options)))
+    return rows
+
+
+def js_call_inventory(text, code, match):
+    line = line_at(code, match.start())
+    fields = js_fields(text, code, match.end())
+    models = [(line, "satisfied", f"model: {js_model_value(value)}")
+              for key, value in fields.items() if key in MODEL_KEYS]
+    if not models:
+        models = [(line, "satisfied", "model: unresolved (options or model not literal)")]
+    options = [f"{key}={option_value(key, value)}" for key, value in fields.items() if key in CALL_OPTIONS]
+    if options:
+        models.append((line, "satisfied", "call options: " + ", ".join(options)))
+    return models
+
+
 def js_inventory(text, code):
     """Imports, model calls and model-callable tools of a file that imports an AI SDK."""
     imports = js_imports(text, code)
     if not imports:
         return []
     rows = [(line, "satisfied", "import") for line in imports]
+    for match in JS_IMPORT.finditer(text):
+        provider = provider_name(match[2])
+        start = match.start() + len(match[0]) - len(match[0].lstrip())
+        if provider and in_code(text, code, start):
+            rows.append((line_at(text, match.start()), "satisfied", f"provider API: {provider}"))
     rows += [(line_at(code, m.start()), "satisfied", f"model call: {call_label(m[0])}") for m in JS_MODEL_CALL.finditer(code)]
+    for match in list(JS_MODEL_CALL.finditer(code)) + list(MODEL_CONSTRUCTOR.finditer(code)):
+        rows += js_call_inventory(text, code, match)
     rows += [(line_at(code, m.start()), "satisfied", f"tool: {m[1]}") for m in JS_TOOL.finditer(code)]
     for match in JS_REGISTERED_TOOL.finditer(text):
         if in_code(text, code, match.start()):
@@ -156,9 +339,20 @@ def python_inventory(tree):
         return []
     rows = [(line, "satisfied", "import") for line in imports]
     for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            modules = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module or ""]
+            for module in modules:
+                provider = provider_name(module)
+                if provider and not getattr(node, "level", 0):
+                    rows.append((node.lineno, "satisfied", f"provider API: {provider}"))
         if isinstance(node, ast.Call) and PY_MODEL_CALL.search(dotted(node.func)):
             label = ".".join(part for part in dotted(node.func).split(".") if part != "()")
             rows.append((node.lineno, "satisfied", f"model call: {'.'.join(label.split('.')[-3:])}"))
+            rows += python_call_inventory(node)
+        elif isinstance(node, ast.Call) and dotted(node.func).split(".")[-1] in {
+            "ChatOpenAI", "AzureChatOpenAI", "ChatAnthropic", "ChatGoogleGenerativeAI", "ChatOllama", "Ollama",
+        }:
+            rows += python_call_inventory(node)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             for decorator in node.decorator_list:
                 target = decorator.func if isinstance(decorator, ast.Call) else decorator
@@ -218,6 +412,81 @@ def manifest_lines(path, text):
         for match in re.finditer(rf"(?<![\w.])(?:{groups})(?!\w)", text):
             lines.add(line_at(text, match.start()))
     return sorted(lines)
+
+
+def model_config_path(path):
+    parts = PurePosixPath(path).parts
+    return bool(set(parts[:-1]) & {"config", "configs"}) and PurePosixPath(path).suffix.lower() in {".json", ".yaml", ".yml"}
+
+
+def endpoint_class(value):
+    """Describe a declared endpoint without copying hosts, credentials or URL tokens."""
+    if not isinstance(value, str) or re.search(r"[\x00-\x20\x7f${}<>\\]", value):
+        return "unresolved"
+    try:
+        parts = urlsplit(value)
+        if parts.scheme not in {"http", "https"} or not parts.hostname or parts.username or parts.password:
+            return "unresolved"
+        if parts.port is not None and parts.port == 0:
+            return "unresolved"
+        host = parts.hostname.lower()
+        try:
+            local = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            local = host == "localhost"
+        return f"{'loopback' if local else 'non-loopback'} {parts.scheme.upper()} (declared)"
+    except ValueError:
+        return "unresolved"
+
+
+def config_inventory(path, text):
+    """Selected declarations under explicit LLM sections; no configuration merging."""
+    if not model_config_path(path):
+        return []
+    # Reuse the existing bounded data-only YAML reader, including duplicate-key
+    # handling, nesting limits and rejection of tags/aliases for selected scalars.
+    from score_compose import Unsupported, decode, mapping as yaml_mapping, parse
+    from score_sources import Budget
+
+    if PurePosixPath(path).suffix.lower() == ".json":
+        data = strict_json(text)
+        if data is None:
+            return []
+        pending = [(data, False, 0)]
+        rows = []
+        while pending:
+            fields, active, depth = pending.pop()
+            if depth > 32:
+                continue
+            for key, value in fields.items():
+                if isinstance(value, dict):
+                    pending.append((value, key.lower() in LLM_SECTIONS, depth + 1))
+                elif active:
+                    # JSON evidence locates the document; repeated key names in
+                    # different sections cannot safely be located with find().
+                    rows += config_field(key, value, 1)
+        return rows
+    try:
+        root = parse(text, Budget())
+    except Unsupported:
+        return []
+    pending, rows = [(root, False)], []
+    while pending:
+        node, active = pending.pop()
+        for key, value in (yaml_mapping(node) or {}).items():
+            if value.children:
+                pending.append((value, key.lower() in LLM_SECTIONS))
+            elif active:
+                rows += config_field(key, decode(value), value.line)
+    return rows
+
+
+def config_field(key, value, line):
+    if key in MODEL_KEYS:
+        return [(line, "satisfied", f"configured model: {profile_identifier(value) or 'unresolved'} (declared)")]
+    if key in {"llmApiUrl", "baseURL", "base_url", "api_base", "endpoint"}:
+        return [(line, "satisfied", f"model endpoint: {endpoint_class(value)}")]
+    return []
 
 
 # --- Model-output flows: JavaScript and TypeScript --------------------------
@@ -997,5 +1266,6 @@ def observations(path, text, code, tree):
             rows.update(js_flows(text, code))
     else:
         inventory = [(line, "satisfied", "declared package") for line in manifest_lines(path, text)]
+        inventory += config_inventory(path, text)
     rows[INTEGRATION] = inventory
     return rows

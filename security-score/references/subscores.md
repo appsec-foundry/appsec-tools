@@ -120,8 +120,9 @@ never changes point weights.
 
 ## AI & agents
 
-The area applies when an AI SDK import or declaration, a model call or parseable
-committed agent or MCP configuration is recognized. Otherwise it shows **Not
+The area applies when an AI SDK import or declaration, a model call, a supported
+LLM configuration declaration or parseable committed agent or MCP configuration
+is recognized. Otherwise it shows **Not
 applicable**, carries `applicable: false` in JSON/YAML and does not affect the
 overall verdict. Incomplete processing, a check subset or unresolved source
 coverage never establish absence; the area is then Not assessed.
@@ -141,10 +142,29 @@ coverage never establish absence; the area is then Not assessed.
 | `AI-AGENT-SANDBOX` | medium | Pre-approved tools beyond read access without a sandbox | Enabled sandbox |
 
 `AI-INTEGRATION` is a positive-only inventory rule: it makes the area applicable
-and never earns credit. Its locations name SDK imports, model calls and
-model-callable tools (AI SDK `tool()`, MCP `server.tool()`, Python `@tool`
-decorators and function-tool definitions), which `--details` shows as the AI
-profile. Request data means `req.body`, `req.query`, `request.json()` and similar
+and never earns credit. Its locations name SDK imports, provider API families,
+model calls, declared models, selected call options and model-callable tools
+(AI SDK `tool()`, MCP `server.tool()`, Python `@tool` decorators and function-tool
+definitions), which `--details` shows as the AI profile. Provider families come
+from imports and do not identify the service behind a configurable endpoint.
+Literal model options and supported provider factories/constructors are recognized;
+variable aliases, imported settings and dynamic expressions stay unresolved.
+Direct environment/config references name the reference without reading its value.
+Call options cover temperature/top-p, output token limits, tool choice, parallel
+tool calls, streaming, retries and step limits, including `stepCountIs(n)`.
+Missing settings produce neither findings nor control evidence.
+
+JSON/YAML files under `config/` or `configs/` also contribute selected declarations
+directly inside `llm`, `chatBot`, `openai`, `anthropic` and `ollama` mappings.
+Model identifiers and endpoint classes (loopback/non-loopback, HTTP/HTTPS) are
+shown; endpoint URLs, credentials, query strings and prompts are omitted.
+YAML evidence uses field lines; JSON evidence locates the document at line 1.
+Unsupported YAML, duplicate values and interpolation remain unresolved or
+unrecognized; tags and aliases are never executed. Configuration files are not
+merged, and neither the active model nor runtime locality is verified.
+Configuration-only model evidence makes the area applicable but earns no credit.
+
+Request data means `req.body`, `req.query`, `request.json()` and similar
 request objects, plus parameters of Python route functions except injected
 dependencies. Model output is followed only in Python and
 JavaScript/TypeScript files that import an AI SDK, from the assignment of a

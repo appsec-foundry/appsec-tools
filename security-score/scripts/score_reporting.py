@@ -482,7 +482,7 @@ def identity_profile(style, architecture, *, concise=False):
 
 
 def ai_profile(style, checks, *, concise=False):
-    """Recognized SDK imports, model calls, tools and agent configuration; no score credit."""
+    """Declared models, provider APIs, calls, tools and agent configuration; no score credit."""
     found = {}
     for check in checks:
         if check["rule"] != "AI-INTEGRATION":
@@ -510,7 +510,12 @@ def ai_profile(style, checks, *, concise=False):
     return profile_rows(
         style,
         (
+            ("Provider APIs", calls("provider API")),
+            ("Models", calls("model")),
+            ("Configured models", calls("configured model")),
+            ("Model endpoints", calls("model endpoint")),
             ("Model calls", calls("model call")),
+            ("Call options", calls("call options")),
             ("Tools", tool_text),
             ("SDK imports", files("import")),
             ("Agent config", files("agent configuration")),

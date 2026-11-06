@@ -45,6 +45,162 @@ def area(result, name):
     return next(row for row in result["subscores"] if row["id"] == name)
 
 
+def inventory(files):
+    _, checks = scan({path: {"text": text} for path, text in files.items()}, Budget())
+    return [(check["file"], row["line"], row.get("detail", ""))
+            for check in checks if check["rule"] == "AI-INTEGRATION"
+            for row in check["locations"]]
+
+
+class ModelProfileTests(unittest.TestCase):
+    def test_vercel_model_factory_options_and_provider_api(self):
+        source = (
+            "import { streamText, stepCountIs } from 'ai';\n"
+            "import { openai } from '@ai-sdk/openai';\n"
+            "const reply = streamText({model: openai('gpt-example'), messages,\n"
+            "  temperature: 0.2, maxOutputTokens: 512, toolChoice: 'required',\n"
+            "  stopWhen: stepCountIs(10), maxRetries: retryCount});\n"
+        )
+        rows = inventory({"chat.ts": source})
+        self.assertIn(("chat.ts", 2, "provider API: OpenAI-compatible"), rows)
+        self.assertIn(("chat.ts", 3, "model: gpt-example"), rows)
+        self.assertIn(("chat.ts", 3, "call options: temperature=0.2, maxOutputTokens=512, toolChoice=required, stopWhen=stepCountIs(10), maxRetries=unresolved"), rows)
+
+    def test_python_direct_models_environment_and_constructor(self):
+        source = (
+            "from openai import OpenAI\nimport os\n"
+            "from langchain_anthropic import ChatAnthropic\n"
+            "a = OpenAI().responses.create(model='gpt-example', max_output_tokens=500, stream=True)\n"
+            "b = OpenAI().responses.create(model=os.getenv('LLM_MODEL'), input=prompt)\n"
+            "c = ChatAnthropic(model_name='claude-example', temperature=0)\n"
+        )
+        rows = inventory({"chat.py": source})
+        for row in (
+            ("chat.py", 1, "provider API: OpenAI-compatible"),
+            ("chat.py", 3, "provider API: Anthropic"),
+            ("chat.py", 4, "model: gpt-example"),
+            ("chat.py", 4, "call options: max_output_tokens=500, stream=true"),
+            ("chat.py", 5, "model: environment LLM_MODEL (unresolved)"),
+            ("chat.py", 6, "model: claude-example"),
+        ):
+            self.assertIn(row, rows)
+
+    def test_js_constructor_and_dynamic_models_do_not_invent_a_model(self):
+        source = (
+            "import { ChatOllama } from '@langchain/ollama';\n"
+            "const llm = new ChatOllama({model: 'llama-example:8b'});\n"
+            "llm.invoke(prompt);\n"
+            "llm.invoke({model: process.env.LLM_MODEL});\n"
+            "llm.invoke({model: config.get<string>('ai.model')});\n"
+        )
+        rows = inventory({"chat.ts": source})
+        self.assertIn(("chat.ts", 1, "provider API: Ollama"), rows)
+        self.assertIn(("chat.ts", 2, "model: llama-example:8b"), rows)
+        self.assertIn(("chat.ts", 3, "model: unresolved (options or model not literal)"), rows)
+        self.assertIn(("chat.ts", 4, "model: environment LLM_MODEL (unresolved)"), rows)
+        self.assertIn(("chat.ts", 5, "model: config ai.model (unresolved)"), rows)
+
+    def test_spreads_duplicates_computed_fields_and_large_objects_stay_unresolved(self):
+        for fields in (
+            "model: 'visible', ...options", "...options, model: 'visible'",
+            "model: 'visible', model: other", "['model']: 'visible'",
+            "model: 'visible', prompt: '" + "x" * 9000 + "'",
+        ):
+            with self.subTest(fields=fields[:80]):
+                rows = inventory({"chat.js": OPENAI_JS + f"client.responses.create({{{fields}}});\n"})
+                self.assertTrue(any("model: unresolved" in row[2] for row in rows))
+                self.assertFalse(any("model: visible" == row[2] for row in rows))
+        rows = inventory({"chat.py": OPENAI_PY + "client.responses.create(model='visible', **options)\n"})
+        self.assertIn(("chat.py", 3, "model: unresolved (options or model not literal)"), rows)
+
+    def test_comments_strings_and_non_ai_files_are_not_model_evidence(self):
+        source = (OPENAI_JS + "// client.responses.create({model: 'fake-one'});\n"
+                  "const text = `client.responses.create({model: 'fake-two'})`;\n"
+                  "// import ollama from 'ollama';\n")
+        rows = inventory({"chat.js": source, "unrelated.js": "client.responses.create({model: 'fake-three'});"})
+        self.assertFalse(any("fake-" in row[2] or "Ollama" in row[2] for row in rows))
+
+    def test_yaml_configuration_models_and_endpoint_class_have_locations(self):
+        files = {"config/default.yml": "application:\n  chatBot:\n    model: 'gemma-example:4b'\n    llmApiUrl: 'http://localhost:11434/v1?key=private-query'\n    llmMaxRetries: 2\n"}
+        rows = inventory(files)
+        self.assertIn(("config/default.yml", 3, "configured model: gemma-example:4b (declared)"), rows)
+        self.assertIn(("config/default.yml", 4, "model endpoint: loopback HTTP (declared)"), rows)
+        self.assertNotIn("private-query", str(rows))
+        _, output = invoke(files, "--json")
+        ai = area(json.loads(output), "ai")
+        self.assertTrue(ai["applicable"])
+        self.assertIsNone(ai["score"])
+        self.assertEqual(ai["controls"], [])
+
+    def test_json_configuration_is_document_evidence_and_not_merged(self):
+        files = {
+            "config/a.json": '{"llm":{"model":"first-model","base_url":"https://llm.example/v1"}}',
+            "config/b.json": '{"llm":{"model":"second-model"}}',
+        }
+        rows = inventory(files)
+        self.assertIn(("config/a.json", 1, "configured model: first-model (declared)"), rows)
+        self.assertIn(("config/b.json", 1, "configured model: second-model (declared)"), rows)
+        self.assertIn(("config/a.json", 1, "model endpoint: non-loopback HTTPS (declared)"), rows)
+
+    def test_endpoint_classes_require_literal_valid_http_destinations(self):
+        for endpoint, label in (
+            ("http://[::1]:11434/v1", "loopback HTTP (declared)"),
+            ("https://llm.example:8443/v1", "non-loopback HTTPS (declared)"),
+            ("http://${LLM_HOST}/v1", "unresolved"),
+            ("http://localhost:99999/v1", "unresolved"),
+            ("http://localhost:0/v1", "unresolved"),
+            ("file:///private/path", "unresolved"),
+            ("http://user:pass@localhost/v1", "unresolved"),
+            ("http://localhost\n.example/v1", "unresolved"),
+        ):
+            with self.subTest(endpoint=endpoint):
+                rows = inventory({"config/llm.json": json.dumps({"llm": {"endpoint": endpoint}})})
+                self.assertIn(("config/llm.json", 1, "model endpoint: " + label), rows)
+
+    def test_configuration_does_not_read_unrelated_models_or_unsafe_yaml(self):
+        for text in (
+            "database:\n  model: private-value\n",
+            "llm:\n  prompt: |\n    model: private-value\n",
+            "llm:\n  tools:\n    model: private-value\n",
+            "llm: !custom\n  model: private-value\n",
+            "llm:\n  model: !python/object:private-value\n",
+            "llm:\n  model: first\n  model: private-value\n",
+            "llm:\n  model: &alias private-value\n",
+        ):
+            with self.subTest(text=text):
+                self.assertNotIn("private-value", str(inventory({"config/default.yml": text})))
+        self.assertEqual(inventory({"data/models.yml": "llm:\n  model: unselected\n"}), [])
+        self.assertEqual(inventory({"config/default.json": '{"llm":{"model":"first","model":"private-value"}}'}), [])
+
+    def test_inventory_omits_prompts_credentials_urls_and_terminal_controls(self):
+        sensitive = ["sk-" + "XyZ123" * 8, "person@example.test", "https://private.example/model", "name\x1b[2J"]
+        for value in sensitive:
+            files = {
+                "chat.js": OPENAI_JS + "client.responses.create({model: " + json.dumps(value) + ", input: 'private-prompt', apiKey: 'private-key'});\n",
+                "chat.py": OPENAI_PY + "client.responses.create(model=" + repr(value) + ", input='private-prompt')\n",
+                "config/default.json": json.dumps({"llm": {"model": value, "apiKey": "private-key", "endpoint": "https://user:private-password@private.example/?key=private-query"}}),
+            }
+            for flags in (("--json",), ("--details",), ("--yaml",)):
+                with self.subTest(value=value, flags=flags):
+                    _, output = invoke(files, *flags)
+                    for hidden in (value, "private-prompt", "private-key", "private-password", "private-query"):
+                        self.assertNotIn(hidden, output)
+
+    def test_profile_details_and_structured_modes_keep_same_security_result(self):
+        files = {"chat.js": OPENAI_JS + "client.responses.create({model: 'example-model', max_output_tokens: 512});\n"}
+        status, output = invoke(files, "--details")
+        self.assertIn("Provider APIs", output)
+        self.assertIn("OpenAI-compatible (chat.js:1)", output)
+        self.assertIn("example-model (chat.js:3)", output)
+        self.assertIn("max_output_tokens=512 (chat.js:3)", output)
+        plain_status, plain = invoke(files, "--json")
+        detail_status, detailed = invoke(files, "--json", "--details")
+        self.assertEqual((status, plain_status, detail_status), (2, 2, 2))
+        plain, detailed = json.loads(plain), json.loads(detailed)
+        for key in ("subscores", "overall", "checks", "findings"):
+            self.assertEqual(plain[key], detailed[key])
+
+
 class ModelOutputFlowTests(unittest.TestCase):
     def test_model_output_is_followed_within_its_scope_only(self):
         source = OPENAI_JS + (

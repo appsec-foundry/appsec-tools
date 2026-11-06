@@ -983,7 +983,7 @@ def applies(rule, path):
     if kind.startswith("tf-"):
         return suffix == ".tf"
     if kind in {"ai-integration", "ai-output", "agent-config"}:
-        from score_ai import agent_config
+        from score_ai import agent_config, model_config_path
 
         if agent_config(path):
             return kind != "ai-output"
@@ -995,6 +995,7 @@ def applies(rule, path):
             and (
                 name in {"package.json", "pyproject.toml", "pom.xml"} | GRADLE_BUILD_FILES
                 or (name.startswith("requirements") and suffix == ".txt")
+                or model_config_path(path)
             )
         )
     return container_build_file(Path(path).name)

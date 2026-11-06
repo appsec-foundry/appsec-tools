@@ -13,8 +13,9 @@ summary. Internal states and formula traces remain in JSON/YAML, which retain
 every occurrence and unresolved question. The repository overview and service,
 cloud/IaC and supply-chain profiles provide located context. See the
 [subscore reference](subscores.md) for criteria, arithmetic and profile limits.
-AI & agents shows Not applicable when no AI SDK, model call or agent
-configuration is recognized; the overview then has no AI SDKs row.
+AI & agents shows Not applicable when no AI SDK, model call, supported LLM
+configuration declaration or agent configuration is recognized; the overview
+then has no AI SDKs row.
 
 ## Reading legacy `--legacy-score --details`
 

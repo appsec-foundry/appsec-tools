@@ -2851,7 +2851,7 @@
       "area": "ai",
       "severity": "low",
       "title": "AI SDK, model API or agent configuration recognized",
-      "criteria": "Inventory only. Recognize imports of LLM, agent and MCP SDKs in Python and JavaScript/TypeScript with the model calls and model-callable tools in those files, their declarations in package.json, requirements files, pyproject.toml, Maven and Gradle builds, and parseable committed agent or MCP configuration. It makes the AI area applicable, fills the AI profile and never earns score credit.",
+      "criteria": "Inventory only. Recognize imports of LLM, agent and MCP SDKs in Python and JavaScript/TypeScript with provider API families, model declarations, selected call options and model-callable tools in those files, package declarations in supported manifests, selected model and endpoint-class declarations in explicit LLM sections of JSON/YAML files under config/ or configs/, and parseable committed agent or MCP configuration. Dynamic values remain unresolved; configuration files are not merged. It makes the AI area applicable, fills the AI profile and never earns score credit.",
       "next_action": "Review how model output, tools and agent permissions are constrained.",
       "examples": [
         {
@@ -3223,7 +3223,7 @@
       ]
     }
   ],
-  "rule_version": 14,
+  "rule_version": 15,
   "change_relevance": {
     "version": 8,
     "documentation_extensions": [
