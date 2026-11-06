@@ -44,8 +44,19 @@ to retain the previous single-score JSON/YAML schema.
 `--details` adds the tool version, repository overview, colored bars and up to
 three grouped finding types per area, with point deductions, readable dependency
 check outcomes and one coverage summary.
-The overview counts recognized route declarations by HTTP method or WebSocket,
-for example `Routes 12 recognized; GET 8, POST 3, WebSocket 1`, without listing paths.
+The overview separates route counts, HTTP methods and recognized API types,
+without listing paths:
+
+```text
+Routes          12 recognized
+HTTP methods    ALL 1, GET 7, POST 3
+API types       GraphQL 1, HTTP (unclassified) 2, REST (inferred) 8, WebSocket 1
+```
+
+GraphQL needs a supported server-handler registration. REST is inferred from API
+namespaces such as `/api/` or `/rest/`, versioned API paths, or inline JSON response
+handlers; this does not verify REST architectural constraints. Counts refer to
+declarations, not verified live endpoints.
 Route collection runs only with `--details` and adds no score credit; supported
 patterns and counting limits are described in the [usage reference](references/usage.md#overview).
 JSON/YAML retain every occurrence, deduction and gap. The screenshot below shows

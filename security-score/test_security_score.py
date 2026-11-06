@@ -3691,6 +3691,7 @@ def dynamic(): pass
             "total": 6,
             "by_type": {"GET": 3, "PATCH": 1, "POST": 1, "PUT": 1,
                         "WebSocket": 1, "unspecified": 1},
+            "by_kind": {"HTTP": 5, "WebSocket": 1},
         })
         self.assertNotIn("/items", json.dumps(routes))
         self.assertNotIn("allowed_methods", json.dumps(routes))
@@ -3720,6 +3721,7 @@ object.app.get('/nested', handler);
                 self.assertEqual(self.overview_of(f"app.{suffix}", text)["routes"], {
                     "total": 6,
                     "by_type": {"ALL": 1, "DELETE": 1, "GET": 2, "POST": 1, "WebSocket": 1},
+                    "by_kind": {"HTTP": 5, "WebSocket": 1},
                 })
 
     def test_python_route_counts_ignore_comments_strings_calls_and_malformed_source(self):
@@ -3731,7 +3733,7 @@ object.app.get('/nested', handler);
         ):
             with self.subTest(text=text):
                 self.assertEqual(self.overview_of("app.py", text)["routes"], {
-                    "total": 0, "by_type": {},
+                    "total": 0, "by_type": {}, "by_kind": {},
                 })
 
     def test_routes_exclude_tests_examples_dependencies_and_fragments(self):
@@ -3739,7 +3741,135 @@ object.app.get('/nested', handler);
         files = {path: {"text": "@app.get('/items')\ndef items(): pass\n"} for path in paths}
         files["src/app.py"]["fragment"] = True
         result = overview.repository_overview(files, paths, True, sources.Budget())
-        self.assertEqual(result["routes"], {"total": 0, "by_type": {}})
+        self.assertEqual(result["routes"], {"total": 0, "by_type": {}, "by_kind": {}})
+
+    def test_graphql_route_kinds_require_registered_imported_server_handlers(self):
+        for module, factory in (
+            ("graphql-http/lib/use/express", "createHandler"),
+            ("express-graphql", "graphqlHTTP"),
+            ("@apollo/server/express4", "expressMiddleware"),
+            ("@as-integrations/express4", "expressMiddleware"),
+            ("@as-integrations/express5", "expressMiddleware"),
+            ("graphql-yoga", "createYoga"),
+        ):
+            for binding, handler in (
+                (f"import {{ {factory} as serve }} from '{module}';", "serve({schema})"),
+                (f"const {{ {factory}: serve }} = require('{module}');", "serve({schema})"),
+                (f"import * as gql from '{module}';", f"gql.{factory}({{schema}})"),
+                (f"const gql = require('{module}');", f"gql.{factory}({{schema}})"),
+            ):
+                with self.subTest(module=module, binding=binding):
+                    source = f"{binding}\napp.use('/api', auth, {handler});\napp.get('/items', list);"
+                    self.assertEqual(self.overview_of("app.ts", source)["routes"], {
+                        "total": 2, "by_type": {"ALL": 1, "GET": 1},
+                        "by_kind": {"GraphQL": 1, "HTTP": 1},
+                    })
+
+    def test_graphql_handlers_in_const_bindings_and_method_routes_count_once(self):
+        source = """
+import { createYoga } from 'graphql-yoga';
+const yoga = createYoga({schema});
+app.use('/query', yoga);
+router.post('/other', createYoga({schema}));
+server.websocket('/events', handler);
+"""
+        self.assertEqual(self.overview_of("app.js", source)["routes"], {
+            "total": 3, "by_type": {"ALL": 1, "POST": 1, "WebSocket": 1},
+            "by_kind": {"GraphQL": 2, "WebSocket": 1},
+        })
+
+    def test_graphql_route_kind_does_not_guess_from_names_strings_or_dependencies(self):
+        source = """
+// import { createHandler } from 'graphql-http/lib/use/express';
+import { createYoga } from 'graphql-yoga';
+import { expressMiddleware } from 'unrelated';
+const graphql = createYoga({schema});
+const example = "app.use('/fake', createYoga({schema}))";
+// app.use('/comment', createYoga({schema}));
+app.post('/graphql', handler);
+app.get('/api/rest/items', handler);
+app.post('/unknown', createHandler({schema}));
+app.post('/wrong-import', expressMiddleware(server));
+app.use('/middleware', auth);
+app.use('/factory-only', createYoga);
+app.use('/nested', wrapper(createYoga({schema})));
+app.use(dynamicPath, graphql);
+app.use(`/dynamic/${id}`, graphql);
+"""
+        self.assertEqual(self.overview_of("app.js", source)["routes"], {
+            "total": 4, "by_type": {"GET": 1, "POST": 3}, "by_kind": {"HTTP": 3, "REST": 1},
+        })
+
+    def test_rest_routes_use_api_namespaces_and_preserve_graphql_websocket_kinds(self):
+        source = """
+import { createHandler } from 'graphql-http/lib/use/express';
+app.get('/api/items', list);
+router.post('/rest/items', create);
+server.delete('/v1/items/:id', remove);
+app.put('/b2b/v2/orders/:id', update);
+app.post('/api/query', createHandler({schema}));
+app.websocket('/api/events', handler);
+"""
+        self.assertEqual(self.overview_of("app.ts", source)["routes"], {
+            "total": 6,
+            "by_type": {"DELETE": 1, "GET": 1, "POST": 2, "PUT": 1, "WebSocket": 1},
+            "by_kind": {"GraphQL": 1, "REST": 4, "WebSocket": 1},
+        })
+
+    def test_rest_routes_can_use_inline_json_responses_without_api_prefixes(self):
+        source = """
+app.get('/items', (_req, res) => res.json(items));
+app.post('/orders', function (req, response) { response.status(201).json(order); });
+app.get('/page', (_req, res) => res.render('index'));
+app.get('/string', (_req, res) => res.send('res.json(items)'));
+app.get('/comment', (_req, res) => { /* res.json(items) */ res.end(); });
+app.get('/page-with-json-error', (_req, res) => { if (failed) res.json(error); else res.render('index'); });
+app.get('/has-json-middleware', (_req, res, next) => { res.json(error); }, page);
+"""
+        self.assertEqual(self.overview_of("app.js", source)["routes"], {
+            "total": 7, "by_type": {"GET": 6, "POST": 1},
+            "by_kind": {"HTTP": 5, "REST": 2},
+        })
+
+    def test_rest_routes_leave_other_protocols_files_and_pages_unclassified(self):
+        paths = (
+            '/api/graphql', '/api/graphql/query', '/rest/rpc', '/api/trpc', '/api/soap',
+            '/api/socket.io', '/api/ws', '/api/index.html', '/api/report.pdf',
+            '/api-docs', '/restful', '/apiculture', '/profile', '/v1',
+        )
+        source = '\n'.join(f"app.get('{path}', handler);" for path in paths)
+        source += "\napp.get('/api/page', (req, res) => res.render('index'));"
+        self.assertEqual(self.overview_of("app.js", source)["routes"], {
+            "total": len(paths) + 1, "by_type": {"GET": len(paths) + 1},
+            "by_kind": {"HTTP": len(paths) + 1},
+        })
+
+    def test_python_rest_route_namespaces_keep_websocket_and_dynamic_method_counts(self):
+        source = """
+@app.route('/api/items', methods=['GET', 'POST'])
+def items(): pass
+@router.get('/rest/orders')
+def orders(): pass
+@app.websocket('/api/events')
+async def events(): pass
+@app.route('/api/graphql', methods=['POST'])
+def graphql(): pass
+@app.route('/api/dynamic', methods=allowed)
+def dynamic(): pass
+"""
+        self.assertEqual(self.overview_of("app.py", source)["routes"], {
+            "total": 5,
+            "by_type": {"GET": 2, "POST": 2, "WebSocket": 1, "unspecified": 1},
+            "by_kind": {"HTTP": 1, "REST": 3, "WebSocket": 1},
+        })
+
+    def test_graphql_route_kinds_keep_source_exclusions_and_expression_limits(self):
+        source = "import { createYoga } from 'graphql-yoga'; app.use('/query', createYoga({schema}));"
+        for path in ("tests/app.ts", "examples/app.ts", "vendor/app.ts"):
+            with self.subTest(path=path):
+                self.assertEqual(self.overview_of(path, source)["routes"]["total"], 0)
+        source = "import { createYoga } from 'graphql-yoga';\napp.use('/query', createYoga({padding:'" + "x" * 5000 + "'}));"
+        self.assertEqual(self.overview_of("app.ts", source)["routes"]["total"], 0)
 
     def test_route_summary_appears_only_in_details_and_adds_no_score_credit(self):
         self.write("app.js", "app.get('/private-route', handler);\nrouter.post('/submit', handler);\n")
@@ -3749,8 +3879,10 @@ object.app.get('/nested', handler);
         self.assertNotIn("overview", plain)
         for key in ("score", "grade", "findings", "checks", "areas"):
             self.assertEqual(detailed[key], plain[key])
-        self.assertIn("Routes 2 recognized; GET 1, POST 1",
-                      " ".join(cli.render(detailed, details=True).split()))
+        rendered = " ".join(cli.render(detailed, details=True).split())
+        self.assertIn("Routes 2 recognized", rendered)
+        self.assertIn("HTTP methods GET 1, POST 1", rendered)
+        self.assertIn("API types HTTP (unclassified) 2", rendered)
         self.assertNotIn("Routes", cli.render(detailed))
         self.assertNotIn("/private-route", json.dumps(detailed["overview"]))
 

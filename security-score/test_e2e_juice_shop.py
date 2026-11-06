@@ -340,6 +340,9 @@ class JuiceShopE2ETests(unittest.TestCase):
         self.assertGreater(routes["total"], 0)
         self.assertGreater(routes["by_type"]["GET"], 0)
         self.assertGreater(routes["by_type"]["POST"], 0)
+        self.assertEqual(sum(routes["by_kind"].values()), routes["total"])
+        self.assertGreater(routes["by_kind"]["HTTP"], 0)
+        self.assertGreater(routes["by_kind"]["REST"], 0)
         self.assertTrue(architecture["limitations"])
         self.assertNotIn("Traceback", result.stderr)
 
@@ -361,7 +364,10 @@ class JuiceShopE2ETests(unittest.TestCase):
         self.assertIn("DESIGN-DATA-BOUNDARY", result.stdout)
         self.assertIn("https://accounts.google.com", result.stdout)
         self.assertIn("Coverage", result.stdout)
-        self.assertRegex(result.stdout, r"(?m)^ +Routes +[1-9]\d* recognized;")
+        self.assertRegex(result.stdout, r"(?m)^ +Routes +[1-9]\d* recognized$")
+        self.assertRegex(result.stdout, r"(?m)^ +HTTP methods +.*GET [1-9]\d*")
+        self.assertRegex(result.stdout, r"(?m)^ +API types +.*HTTP \(unclassified\) [1-9]\d*")
+        self.assertRegex(result.stdout, r"(?m)^ +API types +.*REST \(inferred\) [1-9]\d*")
         self.assertEqual(result.stdout.count("Duration:"), 1)
         self.assertNotIn("Calculation:", result.stdout)
         for internal in ("Open:", "Supported criteria:", "Evidence: limited", "unresolved check",

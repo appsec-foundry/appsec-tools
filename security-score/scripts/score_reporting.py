@@ -867,13 +867,18 @@ def overview_section(style, overview, *, concise=False):
         ci += "; runs " + " and ".join(development["ci_steps"])
     risks = risk_rows(overview["technology_risks"])
     routes = overview.get("routes")
-    route_summary = ""
+    route_summary, route_methods, route_kinds = "", "", ""
     if routes is not None:
         route_summary = f"{routes['total']} recognized"
-        if routes["by_type"]:
-            route_summary += "; " + ", ".join(
-                f"{safe(kind)} {count}" for kind, count in routes["by_type"].items()
-            )
+        route_methods = ", ".join(
+            f"{safe(method)} {count}" for method, count in routes["by_type"].items()
+            if method != "WebSocket"
+        )
+        route_labels = {"HTTP": "HTTP (unclassified)", "REST": "REST (inferred)"}
+        route_kinds = ", ".join(
+            f"{route_labels.get(kind, safe(kind))} {count}"
+            for kind, count in routes.get("by_kind", {}).items()
+        )
     lines = ["", style.paint("Overview", "bold")]
     lines += profile_rows(
         style,
@@ -882,6 +887,8 @@ def overview_section(style, overview, *, concise=False):
             ("Files", f"{overview['files']['read']:,} read, {overview['files']['lines']:,} lines" if concise else file_row(overview["files"])),
             ("Frameworks", names(overview["frameworks"])),
             ("Routes", route_summary),
+            ("HTTP methods", route_methods),
+            ("API types", route_kinds),
             ("AI SDKs", names(overview.get("ai_sdks", []))),
             ("Test tools", names(overview["test_tools"])),
             ("Runtimes", runtimes),

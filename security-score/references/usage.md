@@ -77,7 +77,7 @@ scan does not load this code, reads no Git history and sends no extra API reques
 
 | Block | Content |
 | --- | --- |
-| Technology | Languages, files by kind, frameworks, route counts by HTTP method or WebSocket, test tools, declared runtimes, package tools |
+| Technology | Languages, files by kind, frameworks, route totals, HTTP methods and API types, test tools, declared runtimes, package tools |
 | Technology risks | Entries of a bundled list: dependencies that are insecure in every version or end of life, such as `node-serialize` or Log4j 1; runtimes and base images past end of life; DES, RC4, ECB mode and TLS below 1.2; Flash and Silverlight content |
 | Development | Branches, up to the last 100 commits with pull or merge request markers, merges, authors and latest date; CODEOWNERS and other process files; CI system, whether it runs on pull or merge requests and runs tests; quality and security tools |
 
@@ -95,12 +95,55 @@ Python recognizes path decorators such as `@app.get('/items')`,
 The total counts declarations; a declaration with several methods contributes to
 each method count. Python `route`/`api_route` without `methods` counts as GET;
 dynamic or unsupported method lists count as `unspecified`. JavaScript `.all()`
-counts as ALL. Implicit HEAD/OPTIONS handlers, dynamic paths, chained registrations,
+counts as ALL.
+
+The display separates `Routes` (total), `HTTP methods` and `API types`:
+
+```text
+Routes          12 recognized
+HTTP methods    ALL 1, GET 7, POST 3
+API types       GraphQL 1, HTTP (unclassified) 2, REST (inferred) 8, WebSocket 1
+```
+
+API types partition the declarations: WebSocket, recognized GraphQL, inferred
+REST, and other HTTP declarations. `REST (inferred)` uses literal `/api` or `/rest`
+namespaces, versioned paths such as `/v1/items` or `/b2b/v2/orders`, or a final
+inline JavaScript/TypeScript callback calling `res.json()` or `response.json()`
+(optionally after `.status(...)`). Other response variable names and imported or
+named JSON handlers are not resolved. Python currently uses the path evidence only.
+Recognized GraphQL and WebSocket registrations take precedence over REST inference.
+Explicit page/file response calls in the inspected JavaScript handler, common page
+or file extensions and paths containing protocol segments such as `graphql`,
+`rpc`, `soap` or `socket.io` prevent REST inference. These are static API-style
+hints, not verification of REST architecture or runtime behavior; an HTTP method
+alone supplies no REST evidence. `HTTP (unclassified)` can include HTML pages,
+downloads, RPC and API registrations outside these patterns, including other REST
+or GraphQL handlers.
+GraphQL recognition covers JavaScript/TypeScript registrations at literal paths
+on `app`, `router` or `server`, with imported `createHandler` from
+`graphql-http/lib/use/express`, `graphqlHTTP` from `express-graphql`,
+`expressMiddleware` from `@apollo/server/express4` or `@as-integrations/express4`
+or `express5`, and `createYoga` from `graphql-yoga`.
+Named imports, namespace imports, CommonJS destructuring and module bindings with
+aliases are supported. Handlers must be direct factory calls in registration
+arguments or simple preceding local `const` factory results; expressions over
+4 KiB remain unresolved. A recognized GraphQL `.use('/query', handler)` counts
+as one declaration with method ALL; ordinary middleware `.use()` calls do not count.
+GraphQL declarations also contribute to their registered HTTP method counts;
+WebSocket declarations appear only under API types in text.
+
+Implicit HEAD/OPTIONS handlers, dynamic paths, chained registrations,
 other receiver names in JavaScript, and other frameworks or languages are not
 resolved, so these counts are not a complete inventory of deployed endpoints.
+Re-exports, imported handler instances, router mounts, binding shadowing and
+GraphQL schemas or operations are not resolved; the count describes registration
+patterns, without proving what is mounted or reachable at runtime.
 No route paths or handlers are emitted. `--details --json` and `--details --yaml`
-include the same counts under `overview.routes` (`total` and `by_type`); without
-`--details`, route collection does not run.
+include the same counts under `overview.routes`: `total`, the existing `by_type`
+method counts (including WebSocket), and `by_kind` with nonzero `GraphQL`, `HTTP`,
+`REST` and `WebSocket` counts. API kind counts sum to the total; method counts may overlap
+for Python declarations with multiple methods. Without `--details`, route
+collection does not run.
 
 Commits follow the first-parent line. A commit without a marker may still have been
 reviewed, because a rebase or an unmarked squash merge leaves no trace in the

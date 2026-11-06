@@ -42,12 +42,44 @@ class SubscoreTests(Invocation, unittest.TestCase):
         detail_status, detailed = self.invoke(files, "--details")
         self.assertEqual(plain_status, detail_status)
         self.assertNotIn("overview", plain)
-        self.assertEqual(detailed["overview"]["routes"], {"total": 1, "by_type": {"GET": 1}})
+        self.assertEqual(detailed["overview"]["routes"], {
+            "total": 1, "by_type": {"GET": 1}, "by_kind": {"HTTP": 1},
+        })
         for key in ("overall", "subscores", "findings", "checks"):
             self.assertEqual(plain[key], detailed[key])
-        self.assertIn("Routes 1 recognized; GET 1",
-                      " ".join(score.render(detailed, details=True).split()))
+        rendered = " ".join(score.render(detailed, details=True).split())
+        self.assertIn("Routes 1 recognized", rendered)
+        self.assertIn("HTTP methods GET 1", rendered)
+        self.assertIn("API types HTTP (unclassified) 1", rendered)
         self.assertNotIn("Routes", score.render(detailed))
+
+    def test_route_api_types_are_readable_and_preserve_security_results(self):
+        files = {"app.ts": """
+import { createHandler } from 'graphql-http/lib/use/express';
+app.use('/private-query', createHandler({schema}));
+app.get('/private-items', handler);
+app.get('/api/items', handler);
+app.websocket('/private-events', handler);
+"""}
+        plain_status, plain = self.invoke(files)
+        detail_status, detailed = self.invoke(files, "--details")
+        self.assertEqual(plain_status, detail_status)
+        for key in ("overall", "subscores", "findings", "checks"):
+            self.assertEqual(plain[key], detailed[key])
+        self.assertEqual(detailed["overview"]["routes"], {
+            "total": 4, "by_type": {"ALL": 1, "GET": 2, "WebSocket": 1},
+            "by_kind": {"GraphQL": 1, "HTTP": 1, "REST": 1, "WebSocket": 1},
+        })
+        _, legacy = self.invoke(files, "--details", "--legacy-score")
+        for result in (detailed, legacy):
+            rendered = score.render(result, details=True)
+            self.assertRegex(rendered, r"(?m)^ +Routes +4 recognized$")
+            self.assertRegex(rendered, r"(?m)^ +HTTP methods +ALL 1, GET 2$")
+            self.assertRegex(rendered, r"(?m)^ +API types +GraphQL 1, HTTP \(unclassified\) 1, REST \(inferred\) 1, WebSocket 1$")
+        serialized = json.dumps(detailed["overview"])
+        self.assertNotIn("/private-", serialized)
+        self.assertNotIn("/api/items", serialized)
+        self.assertNotIn("createHandler", serialized)
 
     def test_score_alias_matches_default_in_text_json_and_yaml(self):
         with tempfile.TemporaryDirectory(prefix="default-score-test-") as directory:

@@ -15,7 +15,7 @@ import re
 from urllib.parse import quote
 
 from score_ai import package_name as ai_package
-from score_architecture import COMMENT_LINE
+from score_architecture import COMMENT_LINE, JS_NAME, bracket_pairs, js_arguments, js_imports
 from score_core import GRADLE_BUILD_FILES, JS_EXTENSIONS, javascript_code
 from score_infrastructure import OWN_CODE, ci_file, document, line_of, logical_lines
 from score_remote import json_get, repository_url, select_token
@@ -32,10 +32,84 @@ ROUTE_METHODS.update(all="ALL", websocket="WebSocket")
 # Narrow declaration shapes, rather than every .get() call (HTTP clients, maps).
 JS_ROUTE = re.compile(
     r"(?<![\w$.])(?:app|router|server)\s*\.\s*("
-    + "|".join(ROUTE_METHODS)
+    + "|".join((*ROUTE_METHODS, "use"))
     + r")\s*\("
 )
-JS_ROUTE_PATH = re.compile(r"\s*(['\"`])/[^'\"`\n]{0,2048}\1\s*,")
+JS_ROUTE_PATH = re.compile(r"\s*(['\"`])(/[^'\"`\n]{0,2048})\1\s*,")
+REST_PATH = re.compile(r"^/(?:api|rest)(?:/|$)|^/(?:[a-z][\w-]*/)?v[0-9]+/")
+OTHER_API_PATH = re.compile(
+    r"(?:^|/)(?:graphql|graphiql|gql|rpc|trpc|jsonrpc|xmlrpc|soap|ws|websocket|socket\.io)(?:/|$)",
+    re.IGNORECASE,
+)
+PAGE_OR_FILE_PATH = re.compile(
+    r"\.(?:html?|css|[cm]?js|png|jpe?g|gif|svg|ico|txt|xml|pdf|mp4|zip)$", re.IGNORECASE
+)
+JS_RESPONSE = r"\b(?:res|response)\s*(?:\.\s*status\s*\([^()]{1,200}\)\s*)?\.\s*"
+JS_JSON_RESPONSE = re.compile(JS_RESPONSE + r"json\s*\(")
+JS_PAGE_RESPONSE = re.compile(JS_RESPONSE + r"(?:render|sendFile|download|redirect)\s*\(")
+GRAPHQL_FACTORIES = {
+    "graphql-http/lib/use/express": "createHandler",
+    "express-graphql": "graphqlHTTP",
+    "@apollo/server/express4": "expressMiddleware",
+    "@as-integrations/express4": "expressMiddleware",
+    "@as-integrations/express5": "expressMiddleware",
+    "graphql-yoga": "createYoga",
+}
+JS_CONST_HANDLER = re.compile(
+    rf"\bconst\s+({JS_NAME})\s*=\s*({JS_NAME}(?:\s*\.\s*{JS_NAME})?)\s*\("
+)
+JS_HANDLER_END = re.compile(r"[ \t]*(?:;|\n|$)")
+
+
+def graphql_bindings(text, code, pairs, budget):
+    """Recognize imported factories and simple local const handlers, never run them."""
+    factories, handlers = set(), {}
+    for local, module, member in js_imports(text, code):
+        budget.check()
+        expected = GRAPHQL_FACTORIES.get(module)
+        if expected and member == expected:
+            factories.add(local)
+        elif expected and member in {"*", "="}:
+            factories.add(f"{local}.{expected}")
+    for match in JS_CONST_HANDLER.finditer(code):
+        budget.check()
+        if re.sub(r"\s", "", match[2]) not in factories:
+            continue
+        opening = match.end() - 1
+        if js_arguments(code, opening, pairs) is not None:
+            end = pairs[opening] + 1
+            if JS_HANDLER_END.match(code, end):
+                handlers[match[1]] = end
+    return factories, handlers
+
+
+def graphql_argument(code, span, pairs, factories, handlers, registration):
+    start, end = span
+    value = code[start:end].strip()
+    if value in handlers and handlers[value] < registration:
+        return True
+    call = re.match(rf"\s*({JS_NAME}(?:\s*\.\s*{JS_NAME})?)\s*\(", code[start:end])
+    if not call or re.sub(r"\s", "", call[1]) not in factories:
+        return False
+    opening = start + call.end() - 1
+    closing = pairs.get(opening)
+    return (js_arguments(code, opening, pairs) is not None
+            and closing is not None and not code[closing + 1:end].strip())
+
+
+def rest_route(path, handler_code=""):
+    """Infer an HTTP API style from namespaces or an inline JSON handler.
+
+    This is overview evidence, not verification of REST architectural constraints.
+    Other known protocol paths and page/file responses take precedence.
+    """
+    if ("\\" in path or OTHER_API_PATH.search(path) or PAGE_OR_FILE_PATH.search(path)
+            or JS_PAGE_RESPONSE.search(handler_code)):
+        return False
+    return bool(REST_PATH.match(path) or (
+        ("=>" in handler_code or re.match(r"\s*(?:async\s+)?function\b", handler_code))
+        and JS_JSON_RESPONSE.search(handler_code)
+    ))
 
 
 def route_counts(path, text, budget):
@@ -44,24 +118,44 @@ def route_counts(path, text, budget):
     Method counts can overlap: one Python decorator can declare GET and POST.
     Framework-generated HEAD/OPTIONS routes and dynamic registrations stay out.
     """
-    counts, total = Counter(), 0
+    counts, kinds, total = Counter(), Counter(), 0
     suffix = Path(path).suffix.lower()
     if suffix in JS_EXTENSIONS:
         try:
             code = javascript_code(text)
         except SyntaxError:
-            return 0, counts
+            return 0, counts, kinds
+        pairs = bracket_pairs(code)
+        factories, handlers = graphql_bindings(text, code, pairs, budget)
         for match in JS_ROUTE.finditer(code):
             budget.check()
             path_match = JS_ROUTE_PATH.match(text, match.end())
             if path_match and not (path_match[1] == "`" and "${" in path_match[0]):
-                counts[ROUTE_METHODS[match[1]]] += 1
+                arguments = js_arguments(code, match.end() - 1, pairs)
+                graphql = arguments is not None and any(
+                    graphql_argument(code, span, pairs, factories, handlers, match.start())
+                    for span in arguments[1:]
+                )
+                if match[1] == "use" and not graphql:
+                    continue
+                method = ROUTE_METHODS.get(match[1], "ALL")
+                handler = code[slice(*arguments[-1])] if arguments else ""
+                if method == "WebSocket":
+                    kind = "WebSocket"
+                elif graphql:
+                    kind = "GraphQL"
+                elif rest_route(path_match[2], handler):
+                    kind = "REST"
+                else:
+                    kind = "HTTP"
+                counts[method] += 1
+                kinds[kind] += 1
                 total += 1
     elif suffix == ".py":
         try:
             tree = ast.parse(text)
         except (SyntaxError, ValueError, RecursionError):
-            return 0, counts
+            return 0, counts, kinds
         for node in ast.walk(tree):
             budget.check()
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -97,8 +191,13 @@ def route_counts(path, text, budget):
                 else:
                     recognized = {ROUTE_METHODS[method]}
                 counts.update(recognized)
+                if "WebSocket" in recognized:
+                    kind = "WebSocket"
+                else:
+                    kind = "REST" if rest_route(path_node.value) else "HTTP"
+                kinds[kind] += 1
                 total += 1
-    return total, counts
+    return total, counts, kinds
 
 
 LANGUAGES = {
@@ -504,7 +603,7 @@ def repository_overview(files, paths, listed, budget):
     frameworks, test_tools, runtimes, risks = set(), set(), {}, {}
     ai_sdks = set()
     ci_steps, security_tools = set(), set()
-    routes, route_types = 0, Counter()
+    routes, route_types, route_kinds = 0, Counter(), Counter()
 
     def risk(category, technology, reason, path, line=None):
         row = risks.setdefault(
@@ -526,9 +625,10 @@ def repository_overview(files, paths, listed, budget):
             continue
         text = files[path]["text"]
         if not files[path].get("fragment") and not files[path].get("fragments"):
-            count, types = route_counts(path, text, budget)
+            count, types, kinds = route_counts(path, text, budget)
             routes += count
             route_types.update(types)
+            route_kinds.update(kinds)
         for ecosystem, package, line in declared_packages(path, text):
             key = (ecosystem, package)
             group = (ecosystem, package.split(":")[0])
@@ -595,6 +695,7 @@ def repository_overview(files, paths, listed, budget):
         "routes": {
             "total": routes,
             "by_type": dict(sorted(route_types.items())),
+            "by_kind": dict(sorted(route_kinds.items())),
         },
         "ai_sdks": sorted(ai_sdks),
         "test_tools": sorted(test_tools),
