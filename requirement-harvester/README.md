@@ -5,7 +5,7 @@ Reads requirements from websites and wikis and writes them to an
 file sets which pages are read and how requirements are recognized on them.
 Runs are deterministic and need no LLM.
 
-Requires Python 3.10+ on Linux or macOS, `pipx`, and Git. Installation uses
+Requires Python 3.12+ on Linux or macOS, `pipx`, and Git. Installation uses
 HTTPS; public repositories need no GitHub account or SSH key.
 
 ## Quick start

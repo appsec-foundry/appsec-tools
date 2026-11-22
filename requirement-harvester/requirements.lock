@@ -1,4 +1,4 @@
-# Resolved on Python 3.10; PyPI wheel hashes verified 2026-10-28.
+# Resolved on Python 3.12; PyPI wheel hashes verified 2026-11-22.
 --only-binary=:all:
 attrs==26.1.0 \
     --hash=sha256:c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309

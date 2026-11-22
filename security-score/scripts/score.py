@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Standalone security score. Requires only Python 3.10+; Git for comparisons."""
+"""Standalone security score. Requires only Python 3.12+; Git for comparisons."""
 
 from __future__ import annotations
 

@@ -4,7 +4,7 @@ Security Score has two engines. The internal engine runs by default. The Analyze
 
 | Engine | What it returns | What it needs |
 | --- | --- | --- |
-| Internal | Repository score, or security relevance for changes | Python 3.10+; Git for local comparisons; no extra Python packages |
+| Internal | Repository score, or security relevance for changes | Python 3.12+; Git for local comparisons; no extra Python packages |
 | Analyzer | Repository score only | A separately installed, compatible AppSec Analyzer |
 
 The engines use different scoring policies. Do not compare their numbers as if they measured the same thing. Internal scoring version 2 counts each finding at its full weight; version 1 used a logarithmic formula for repeated findings. Compare internal scores only when their scoring versions and coverage match.

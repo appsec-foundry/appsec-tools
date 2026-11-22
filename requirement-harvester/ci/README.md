@@ -8,7 +8,7 @@ hosted pipeline runs were not started.
 ## GitLab CI/CD
 
 1. Adopt `ci/gitlab-ci.yml` as the project pipeline or include it with `include:local`.
-2. Provide a dedicated shell runner tagged `python-nonroot` with Python >=3.10,
+2. Provide a dedicated shell runner tagged `python-nonroot` with Python >=3.12,
    `venv`, write access to the job directory, and execution without root. Production
    crawl jobs need a protected runner; untrusted projects must not share it.
 3. Keep the project private and the default branch protected. Configure a schedule

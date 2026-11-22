@@ -47,8 +47,8 @@
       "Source Code": "https://github.com/python-cffi/cffi"
     },
     "known-vulnerabilities": [],
-    "verified-wheel": "cffi-2.1.1-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
-    "sha256": "194cffa889098ced9976c3fc6340305e43f6303657d298da55366907c05c22d6"
+    "verified-wheel": "cffi-2.1.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl",
+    "sha256": "c1453022f490d2459a11819d83ad1d586e9ff65a12ac3e705ffebd46d3685dcf"
   },
   {
     "name": "charset-normalizer",
@@ -60,8 +60,8 @@
       "Issue tracker": "https://github.com/jawah/charset_normalizer/issues"
     },
     "known-vulnerabilities": [],
-    "verified-wheel": "charset_normalizer-3.5.2-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
-    "sha256": "8a893cc101149f80a653f82062ebc95b34525a2614382e1da5458fe7c6997249"
+    "verified-wheel": "charset_normalizer-3.5.2-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+    "sha256": "3d31298449090ab8d47b7b1b2a555ff73cac7ed438a08b7ac160980c7ebed649"
   },
   {
     "name": "cryptography",
@@ -74,20 +74,8 @@
       "source": "https://github.com/pyca/cryptography/"
     },
     "known-vulnerabilities": [],
-    "verified-wheel": "cryptography-50.0.2-cp39-abi3-manylinux_2_34_x86_64.whl",
-    "sha256": "1981f1db4630889b9ef7803fadef12b056f428cb6b85c27ba57b774793b6093c"
-  },
-  {
-    "name": "exceptiongroup",
-    "version": "1.3.1",
-    "upstream": {
-      "Changelog": "https://github.com/agronholm/exceptiongroup/blob/main/CHANGES.rst",
-      "Issue Tracker": "https://github.com/agronholm/exceptiongroup/issues",
-      "Source code": "https://github.com/agronholm/exceptiongroup"
-    },
-    "known-vulnerabilities": [],
-    "verified-wheel": "exceptiongroup-1.3.1-py3-none-any.whl",
-    "sha256": "a7a39a3bd276781e98394987d3a5701d0c4edffb633bb7a5144577f82c773598"
+    "verified-wheel": "cryptography-50.0.2-cp311-abi3-manylinux_2_34_x86_64.whl",
+    "sha256": "9dab55f57c74c3cad24c323bacbbd04be4705ba6eb0d92e920b1fc4837ed5079"
   },
   {
     "name": "idna",
@@ -244,8 +232,8 @@
       "Source Code": "https://github.com/yaml/pyyaml"
     },
     "known-vulnerabilities": [],
-    "verified-wheel": "pyyaml-6.0.3-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
-    "sha256": "9c7708761fccb9397fe64bbc0395abcae8c4bf7b0eac081e12b809bf47700d0b"
+    "verified-wheel": "pyyaml-6.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+    "sha256": "ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc"
   },
   {
     "name": "referencing",
@@ -270,8 +258,8 @@
       "Homepage": "https://github.com/mrabarnett/mrab-regex"
     },
     "known-vulnerabilities": [],
-    "verified-wheel": "regex-2026.9.29-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
-    "sha256": "4fb41211d2333eb930a51e0546a65999761cf1f572a4da56ef9b8a62966c06f2"
+    "verified-wheel": "regex-2026.9.29-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl",
+    "sha256": "39ab5894d971f9ac68baa6eca5c50387db579cfcacf36ae8df3feceb1815e6d0"
   },
   {
     "name": "requests",
@@ -297,8 +285,8 @@
       "Upstream": "https://github.com/orium/rpds"
     },
     "known-vulnerabilities": [],
-    "verified-wheel": "rpds_py-0.30.0-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
-    "sha256": "0c0e95f6819a19965ff420f65578bacb0b00f251fefe2c8b23347c37174271f3"
+    "verified-wheel": "rpds_py-0.30.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+    "sha256": "47f236970bccb2233267d89173d3ad2703cd36a0e2a6e92d0560d333871a3d23"
   },
   {
     "name": "soupsieve",
@@ -309,17 +297,6 @@
     "known-vulnerabilities": [],
     "verified-wheel": "soupsieve-2.10-py3-none-any.whl",
     "sha256": "8596eb8967d744174820280fa62b4542a2e955bfaccca73ed8a13c6eb8e9b502"
-  },
-  {
-    "name": "tomli",
-    "version": "2.5.0",
-    "upstream": {
-      "Changelog": "https://github.com/hukkin/tomli/blob/master/CHANGELOG.md",
-      "Homepage": "https://github.com/hukkin/tomli"
-    },
-    "known-vulnerabilities": [],
-    "verified-wheel": "tomli-2.5.0-py3-none-any.whl",
-    "sha256": "32a7b79ac57a2e83670ce329ccf675798bc5a2094783a63676866b70503f2e2b"
   },
   {
     "name": "typing_extensions",

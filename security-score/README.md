@@ -15,7 +15,7 @@ Changes retain security relevance.
 
 ## Quick start
 
-Requires Python 3.10+, `pipx`, and Git. Installation uses HTTPS; public
+Requires Python 3.12+, `pipx`, and Git. Installation uses HTTPS; public
 repositories need no GitHub account or SSH key.
 
 ```sh

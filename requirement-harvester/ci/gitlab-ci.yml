@@ -1,5 +1,5 @@
 # Use as .gitlab-ci.yml or include with include:local.
-# Prerequisite: dedicated non-root shell runner with Python >=3.10,
+# Prerequisite: dedicated non-root shell runner with Python >=3.12,
 # tagged python-nonroot; internal sources need appropriate network access.
 stages: [verify, harvest]
 

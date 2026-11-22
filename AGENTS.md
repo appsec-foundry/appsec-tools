@@ -9,7 +9,7 @@ belong in the main repository.
 
 ## Current state
 
-The repository contains two standalone Python tools (Python >=3.10). Run
+The repository contains two standalone Python tools (Python >=3.12). Run
 tests in the tool directory:
 
 - `requirement-harvester/`: local lockfiles and pytest;
