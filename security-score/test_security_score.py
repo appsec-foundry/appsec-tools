@@ -1447,6 +1447,42 @@ class ScoreTests(unittest.TestCase):
             os.mkfifo(self.repo / "fifo.py")
             self.assertEqual(self.invoke()[0], 1)
 
+    def test_untracked_special_files_in_a_checkout_are_not_source(self):
+        # A sandbox covers files it protects with devices. Git still lists such a
+        # path as an untracked file; only lstat shows the device. A FIFO stands in.
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("needs os.mkfifo")
+        self.init()
+        os.mkfifo(self.repo / "fifo.py")
+        tracked = sources.inventory
+        with (
+            mock.patch.object(sources, "untracked_paths", return_value={"fifo.py"}),
+            mock.patch.object(
+                sources,
+                "inventory",
+                side_effect=lambda root, budget: sorted(
+                    {*tracked(root, budget), "fifo.py"}
+                ),
+            ),
+        ):
+            status, result, errors = self.invoke()
+            self.assertEqual(status, 0, errors)
+            self.assertEqual(result["grade"], "A")
+            status, _, errors = self.invoke("--worktree")
+            self.assertEqual(status, 0, errors)
+        # Any other path stays fail-closed, and the error names the file.
+        with self.assertRaises(sources.SourceError) as caught:
+            sources.working(self.repo, ["fifo.py"], sources.Budget())
+        self.assertIn("fifo.py", str(caught.exception))
+        os.unlink(self.repo / "fifo.py")
+        outside = self.root / "private.py"
+        outside.write_text("eval(secret)\n")
+        (self.repo / "link.py").symlink_to(outside)
+        status, result, errors = self.invoke()
+        self.assertEqual(status, 1)
+        self.assertIsNone(result)
+        self.assertIn("link.py", errors)
+
     def test_size_exclusions_keep_findings_but_withhold_grade(self):
         self.write("safe.py", "eval(payload)\n")
         self.write("large.py", "x" * (sources.MAX_FILE + 1))

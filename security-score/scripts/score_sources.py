@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -297,7 +298,9 @@ def regular_read(root, path, budget, maximum=MAX_FILE):
         with os.fdopen(descriptor, "rb") as handle:
             before = os.fstat(handle.fileno())
             if not stat.S_ISREG(before.st_mode):
-                raise SourceError("Selected source contains a link or special file.")
+                raise SourceError(
+                    f"Selected source {label(path)} is a link or special file."
+                )
             if before.st_size > maximum:
                 return None, "oversized", bool(before.st_mode & 0o111)
             data = handle.read(maximum + 1)
@@ -311,9 +314,14 @@ def regular_read(root, path, budget, maximum=MAX_FILE):
             if len(data) > maximum:
                 return None, "oversized", bool(after.st_mode & 0o111)
             return data, None, bool(after.st_mode & 0o111)
-    except OSError:
+    except OSError as error:
+        why = (
+            "without following links"
+            if error.errno == errno.ELOOP
+            else f"({error.strerror or 'not accessible'})"
+        )
         raise SourceError(
-            "Cannot read selected source without following links; no score is available."
+            f"Cannot read selected source {label(path)} {why}; no score is available."
         ) from None
     finally:
         os.close(directory)
@@ -362,13 +370,47 @@ def inventory(root, budget):
     return paths
 
 
-def working(root, paths, budget, context=False):
+def untracked_paths(root, budget):
+    """Working files that a Git checkout neither tracks nor ignores."""
+    return {
+        relative(value)
+        for value in git(
+            root, budget, "ls-files", "--others", "--exclude-standard", "-z"
+        )
+        .decode("utf-8")
+        .split("\0")
+        if value
+    }
+
+
+def special(root, path):
+    """Whether a working file is a device, FIFO or socket, which holds no source.
+
+    Git cannot track such files, so in a checkout an untracked one comes from the
+    local environment; a sandbox, for example, places devices over files it
+    protects. Outside Git, and for links, reading stays fail-closed.
+    """
+    try:
+        mode = os.lstat(root / path).st_mode
+    except OSError:
+        return False
+    return (
+        stat.S_ISCHR(mode)
+        or stat.S_ISBLK(mode)
+        or stat.S_ISFIFO(mode)
+        or stat.S_ISSOCK(mode)
+    )
+
+
+def working(root, paths, budget, context=False, untracked=frozenset()):
     files, exclusions = {}, []
     size = 0
     for path in paths:
         budget.check()
-        if excluded(path) or not (
-            change_supported(path) if context else supported(path)
+        if (
+            excluded(path)
+            or not (change_supported(path) if context else supported(path))
+            or (path in untracked and special(root, path))
         ):
             exclusions.append(
                 {"file": label(path), "reason": "excluded or unsupported"}
@@ -663,11 +705,14 @@ def select(options, budget):
     )
     if not is_change:
         paths = inventory(root, budget)
-        after, exclusions = working(root, paths, budget)
+        untracked = (
+            untracked_paths(root, budget) if (root / ".git").exists() else frozenset()
+        )
+        after, exclusions = working(root, paths, budget, untracked=untracked)
 
         def verify():
             if inventory(root, budget) != paths or fingerprint(
-                working(root, paths, budget)[0]
+                working(root, paths, budget, untracked=untracked)[0]
             ) != fingerprint(after):
                 raise SourceError(
                     "Selected source changed during analysis; rerun against a stable source."
@@ -725,25 +770,18 @@ def select(options, budget):
             if value
         }
         if options.worktree:
-            selected.update(
-                relative(value)
-                for value in git(
-                    root, budget, "ls-files", "--others", "--exclude-standard", "-z"
-                )
-                .decode("utf-8")
-                .split("\0")
-                if value
-            )
+            selected.update(untracked_paths(root, budget))
         return sorted(selected)
 
     paths = selected_paths()
+    untracked = untracked_paths(root, budget) if options.worktree else frozenset()
     if len(paths) > MAX_FILES:
         raise SourceError("Change exceeds the file limit.")
     before, old_exclusions = objects(
         root, base, paths, budget, index=base == "index", context=True
     )
     after, exclusions = (
-        working(root, paths, budget, context=True)
+        working(root, paths, budget, context=True, untracked=untracked)
         if head == "worktree"
         else objects(root, head, paths, budget, index=head == "index", context=True)
     )
@@ -754,7 +792,7 @@ def select(options, budget):
         ) and selected_paths() != paths:
             raise SourceError("Selected change scope changed during analysis.")
         if head == "worktree" and fingerprint(
-            working(root, paths, budget, context=True)[0]
+            working(root, paths, budget, context=True, untracked=untracked)[0]
         ) != fingerprint(after):
             raise SourceError("Working source changed during analysis.")
         if base == "index" or head == "index":
